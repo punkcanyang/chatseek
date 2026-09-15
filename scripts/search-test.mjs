@@ -1,8 +1,10 @@
 import "fake-indexeddb/auto";
 import {
   upsertMessages,
+  upsertConversations,
   searchConversations,
   stats,
+  openDb,
 } from "../src/db.js";
 
 const longBody =
@@ -10,6 +12,13 @@ const longBody =
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
+}
+
+function requestDone(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 const origTx = IDBDatabase.prototype.transaction;
@@ -31,6 +40,8 @@ IDBObjectStore.prototype.getAll = function (...args) {
   return origGetAll.apply(this, args);
 };
 
+const pageUpdatedAt = Date.UTC(2025, 5, 10, 12, 0, 0); // 2025-06-10
+
 await upsertMessages(
   {
     id: "chatgpt:11111111-1111-1111-1111-111111111111",
@@ -38,6 +49,8 @@ await upsertMessages(
     platformId: "11111111-1111-1111-1111-111111111111",
     title: "Alpha planning notes",
     url: "https://chatgpt.com/c/11111111-1111-1111-1111-111111111111",
+    updatedAt: pageUpdatedAt,
+    createdAt: pageUpdatedAt,
   },
   [
     { id: "chatgpt:m1", role: "user", body: longBody },
@@ -52,6 +65,7 @@ await upsertMessages(
     platformId: "22222222-2222-2222-2222-222222222222",
     title: "Claude travel list",
     url: "https://claude.ai/chat/22222222-2222-2222-2222-222222222222",
+    updatedAt: Date.UTC(2024, 11, 1, 8, 0, 0),
   },
   [
     {
@@ -70,6 +84,7 @@ await upsertMessages(
     platformId: "33333333-3333-3333-3333-333333333333",
     title: "Grok rocket notes",
     url: "https://grok.com/c/33333333-3333-3333-3333-333333333333",
+    updatedAt: Date.UTC(2025, 0, 15, 9, 30, 0),
   },
   [
     {
@@ -88,6 +103,53 @@ await upsertMessages(
 const s = await stats();
 assert(s.messages === 5, `expected 5 messages, got ${s.messages}`);
 assert(longBody.length > 4000, "fixture must be a long message");
+
+// Page updatedAt must survive message upsert and title-only conversation refresh.
+const db = await openDb();
+let row = await requestDone(
+  db.transaction("conversations").objectStore("conversations")
+    .get("chatgpt:11111111-1111-1111-1111-111111111111"),
+);
+assert(row?.updatedAt === pageUpdatedAt, `page updatedAt lost after upsertMessages: ${row?.updatedAt}`);
+assert(row?.createdAt === pageUpdatedAt, `page createdAt lost: ${row?.createdAt}`);
+
+await upsertConversations([
+  {
+    id: "chatgpt:11111111-1111-1111-1111-111111111111",
+    platform: "chatgpt",
+    platformId: "11111111-1111-1111-1111-111111111111",
+    title: "Alpha planning notes (renamed)",
+    url: "https://chatgpt.com/c/11111111-1111-1111-1111-111111111111",
+    // no updatedAt — title refresh must not stomp page date with Date.now()
+  },
+]);
+row = await requestDone(
+  db.transaction("conversations").objectStore("conversations")
+    .get("chatgpt:11111111-1111-1111-1111-111111111111"),
+);
+assert(
+  row?.updatedAt === pageUpdatedAt,
+  `title refresh overwrote page updatedAt with ${row?.updatedAt}`,
+);
+assert(row?.title.includes("renamed"), "title should update on refresh");
+
+// Explicit newer page date should replace the old one.
+const newer = Date.UTC(2025, 7, 1, 10, 0, 0);
+await upsertConversations([
+  {
+    id: "chatgpt:11111111-1111-1111-1111-111111111111",
+    platform: "chatgpt",
+    platformId: "11111111-1111-1111-1111-111111111111",
+    title: "Alpha planning notes (renamed)",
+    url: "https://chatgpt.com/c/11111111-1111-1111-1111-111111111111",
+    updatedAt: newer,
+  },
+]);
+row = await requestDone(
+  db.transaction("conversations").objectStore("conversations")
+    .get("chatgpt:11111111-1111-1111-1111-111111111111"),
+);
+assert(row?.updatedAt === newer, `incoming page updatedAt not applied: ${row?.updatedAt}`);
 
 recording = true;
 const byNeedle = await searchConversations({ query: "UNIQUE_NEEDLE" });
@@ -118,4 +180,5 @@ console.log("search-test ok", {
   longBody: longBody.length,
   stores: [...new Set(openedDuringSearch)],
   stats: s,
+  pageUpdatedAtPreserved: true,
 });

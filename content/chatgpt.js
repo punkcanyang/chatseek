@@ -2,6 +2,8 @@
   const PLATFORM = "chatgpt";
   let lastListFp = "";
   let lastMsgFp = "";
+  let cachedJsonTimes = null;
+  let cachedJsonAt = 0;
 
   function canonicalUrl(id) {
     return `https://chatgpt.com/c/${id}`;
@@ -19,22 +21,47 @@
       .trim();
   }
 
+  function jsonTimes() {
+    const now = Date.now();
+    // Re-scan occasionally; page may hydrate more history into scripts.
+    if (!cachedJsonTimes || now - cachedJsonAt > 15000) {
+      cachedJsonTimes = Chatseek.pageTimesFromDocument();
+      cachedJsonAt = now;
+    }
+    return cachedJsonTimes;
+  }
+
   function extractSidebar() {
     const byId = new Map();
+    const times = jsonTimes();
     document.querySelectorAll('a[href*="/c/"]').forEach((a) => {
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) return;
       const title = Chatseek.textOf(a);
       if (!title) return;
-      byId.set(id, {
+      const conv = {
         id: `${PLATFORM}:${id}`,
         platform: PLATFORM,
         platformId: id,
         title,
         url: canonicalUrl(id),
-      });
+      };
+      // Prefer time near this row; ChatGPT usually only has section buckets
+      // (Today / Yesterday / Previous 7 Days / month) above groups of links.
+      Chatseek.attachPageTime(conv, a, times);
+      const prev = byId.get(id);
+      if (!prev || (conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt))) {
+        byId.set(id, conv);
+      } else if (prev && !isGenericish(conv.title) && isGenericish(prev.title)) {
+        byId.set(id, { ...prev, title: conv.title });
+      }
     });
     return [...byId.values()];
+  }
+
+  function isGenericish(title) {
+    const t = (title || "").trim();
+    return !t || /^(new chat|chatgpt|untitled)$/i.test(t);
   }
 
   function extractMessages(conversationId) {
@@ -68,7 +95,7 @@
   async function capture() {
     const sidebar = extractSidebar();
     const listFp = Chatseek.fingerprint(
-      sidebar.map((c) => c.id + ":" + c.title),
+      sidebar.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
     );
     if (listFp && listFp !== lastListFp) {
       lastListFp = listFp;
@@ -82,9 +109,8 @@
     const platformId = conversationIdFromLocation();
     if (!platformId) return;
 
-    const title = titleFromDoc() ||
-      sidebar.find((c) => c.platformId === platformId)?.title ||
-      platformId;
+    const fromSidebar = sidebar.find((c) => c.platformId === platformId);
+    const title = titleFromDoc() || fromSidebar?.title || platformId;
     const conversation = {
       id: `${PLATFORM}:${platformId}`,
       platform: PLATFORM,
@@ -92,10 +118,18 @@
       title,
       url: canonicalUrl(platformId),
     };
+    if (fromSidebar?.updatedAt) {
+      conversation.updatedAt = fromSidebar.updatedAt;
+      conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+    } else {
+      Chatseek.attachPageTime(conversation, null, jsonTimes());
+    }
+
     const messages = extractMessages(platformId);
     const msgFp = Chatseek.fingerprint([
       conversation.id,
       conversation.title,
+      conversation.updatedAt || "",
       ...messages.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
     if (msgFp === lastMsgFp) return;

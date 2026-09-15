@@ -114,6 +114,32 @@ if (!/ChatGPT/i.test(readme) || !/Claude/i.test(readme) || !/Grok/i.test(readme)
   fail("README should mention ChatGPT, Claude, and Grok");
 }
 
+
+const sharedSrc = read("content/shared.js");
+if (!/parsePageTime/.test(sharedSrc) || !/findTimeNear/.test(sharedSrc)) {
+  fail("shared.js should expose parsePageTime and findTimeNear");
+}
+if (!/pageTimesFromDocument/.test(sharedSrc)) {
+  fail("shared.js should scan static page JSON for conversation times");
+}
+for (const rel of ["content/chatgpt.js", "content/claude.js", "content/grok.js"]) {
+  const src = read(rel);
+  if (!/attachPageTime|updatedAt/.test(src)) {
+    fail(`${rel} should attach page updatedAt in extractSidebar`);
+  }
+}
+const dbForDates = read("src/db.js");
+if (!/isValidPageMs|pageMs/.test(dbForDates)) {
+  fail("db.js should validate page timestamps");
+}
+if (!/incomingUpdated/.test(dbForDates)) {
+  fail("db.js should prefer incoming page updatedAt over Date.now()");
+}
+const readmeDates = read("README.md");
+if (!/真实会话时间/.test(readmeDates) || !/采集时间/.test(readmeDates)) {
+  fail("README should mention page dates vs capture time");
+}
+
 if (errors.length) {
   console.error(errors.map((e) => "x " + e).join("\n"));
   process.exit(1);

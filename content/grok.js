@@ -2,6 +2,8 @@
   const PLATFORM = "grok";
   let lastListFp = "";
   let lastMsgFp = "";
+  let cachedJsonTimes = null;
+  let cachedJsonAt = 0;
 
   function canonicalUrl(id) {
     return `https://grok.com/c/${id}`;
@@ -20,8 +22,18 @@
       .trim();
   }
 
+  function jsonTimes() {
+    const now = Date.now();
+    if (!cachedJsonTimes || now - cachedJsonAt > 15000) {
+      cachedJsonTimes = Chatseek.pageTimesFromDocument();
+      cachedJsonAt = now;
+    }
+    return cachedJsonTimes;
+  }
+
   function extractSidebar() {
     const byId = new Map();
+    const times = jsonTimes();
     document
       .querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')
       .forEach((a) => {
@@ -32,13 +44,19 @@
         if (!id) return;
         const title = Chatseek.textOf(a);
         if (!title) return;
-        byId.set(id, {
+        const conv = {
           id: `${PLATFORM}:${id}`,
           platform: PLATFORM,
           platformId: id,
           title,
           url: canonicalUrl(id),
-        });
+        };
+        // Grok history uses sticky time-header buckets; rows may also have <time>.
+        Chatseek.attachPageTime(conv, a, times);
+        const prev = byId.get(id);
+        if (!prev || (conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt))) {
+          byId.set(id, conv);
+        }
       });
     return [...byId.values()];
   }
@@ -174,7 +192,7 @@
   async function capture() {
     const sidebar = extractSidebar();
     const listFp = Chatseek.fingerprint(
-      sidebar.map((c) => c.id + ":" + c.title),
+      sidebar.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
     );
     if (listFp && listFp !== lastListFp) {
       lastListFp = listFp;
@@ -188,9 +206,8 @@
     const platformId = conversationIdFromLocation();
     if (!platformId) return;
 
-    const title = titleFromDoc() ||
-      sidebar.find((c) => c.platformId === platformId)?.title ||
-      platformId;
+    const fromSidebar = sidebar.find((c) => c.platformId === platformId);
+    const title = titleFromDoc() || fromSidebar?.title || platformId;
     const conversation = {
       id: `${PLATFORM}:${platformId}`,
       platform: PLATFORM,
@@ -198,10 +215,18 @@
       title,
       url: canonicalUrl(platformId),
     };
+    if (fromSidebar?.updatedAt) {
+      conversation.updatedAt = fromSidebar.updatedAt;
+      conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+    } else {
+      Chatseek.attachPageTime(conversation, null, jsonTimes());
+    }
+
     const messages = extractMessages(platformId);
     const msgFp = Chatseek.fingerprint([
       conversation.id,
       conversation.title,
+      conversation.updatedAt || "",
       ...messages.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
     if (msgFp === lastMsgFp) return;

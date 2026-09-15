@@ -82,7 +82,16 @@ function relativeTime(ts) {
   if (m < 60) return t.minutes(m);
   const h = Math.floor(m / 60);
   if (h < 48) return t.hours(h);
-  return t.days(Math.floor(h / 24));
+  const days = Math.floor(h / 24);
+  // Older than ~7 days: show absolute calendar date from the real timestamp.
+  if (days >= 7) {
+    const d = new Date(ts);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return t.days(days);
 }
 
 function platformLabel(id) {

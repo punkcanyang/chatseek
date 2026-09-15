@@ -56,6 +56,21 @@ function isGenericTitle(title) {
   return /^(new chat|chatgpt|claude|grok|untitled|无标题)$/i.test(t);
 }
 
+/** Plausible millisecond epoch from a page (rejects unix seconds). */
+function isValidPageMs(ts) {
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return false;
+  return ts >= 1e11 && ts <= Date.now() + 86400000 * 366;
+}
+
+function pageMs(value) {
+  if (isValidPageMs(value)) return Math.floor(value);
+  if (typeof value === "number" && value >= 1e9 && value < 1e11) {
+    const ms = Math.floor(value * 1000);
+    return isValidPageMs(ms) ? ms : null;
+  }
+  return null;
+}
+
 function writeTokens(tokenStore, tokens, conversationId, source) {
   for (const token of tokens) {
     tokenStore.put({ token, conversationId, source });
@@ -77,12 +92,17 @@ export async function upsertConversations(list) {
 
   for (const incoming of list) {
     const old = await requestDone(convStore.get(incoming.id));
+    const incomingUpdated = pageMs(incoming.updatedAt);
+    const incomingCreated = pageMs(incoming.createdAt);
+    const now = Date.now();
+
     const next = old ? { ...old } : {
       id: incoming.id,
       platform: incoming.platform,
       platformId: incoming.platformId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      // Prefer page dates when creating; else capture time.
+      createdAt: incomingCreated || incomingUpdated || now,
+      updatedAt: incomingUpdated || now,
       messageCount: 0,
     };
     next.platform = incoming.platform;
@@ -92,6 +112,17 @@ export async function upsertConversations(list) {
       next.title = (incoming.title || next.title || "").trim() || next.title;
     }
     if (!next.title) next.title = next.platformId;
+
+    // Title-only refresh must NOT stomp a good page updatedAt with Date.now().
+    if (incomingUpdated) {
+      next.updatedAt = incomingUpdated;
+    }
+    // createdAt from page only when creating (handled above) or still missing.
+    if (!old && incomingCreated) {
+      next.createdAt = incomingCreated;
+    } else if (old && !isValidPageMs(next.createdAt) && incomingCreated) {
+      next.createdAt = incomingCreated;
+    }
 
     const oldTitleTokens = tokenize(old?.title || "");
     const newTitleTokens = tokenize(next.title || "");
@@ -152,7 +183,18 @@ export async function upsertMessages(conversation, messages) {
       const prevTitle = conv.title;
       if (!isGenericTitle(conversation.title)) conv.title = conversation.title;
       if (conversation.url) conv.url = conversation.url;
-      conv.updatedAt = Date.now();
+      const incomingUpdated = pageMs(conversation.updatedAt);
+      if (incomingUpdated) {
+        // Trust the page date when the content script found one.
+        conv.updatedAt = incomingUpdated;
+      } else if (!isValidPageMs(conv.updatedAt)) {
+        // Keep an existing page date; only fall back when none exists yet.
+        conv.updatedAt = Date.now();
+      }
+      const incomingCreated = pageMs(conversation.createdAt);
+      if (incomingCreated && !isValidPageMs(conv.createdAt)) {
+        conv.createdAt = incomingCreated;
+      }
       conv.messageCount = await requestDone(
         msgStore.index("conversationId").count(conversation.id),
       );
