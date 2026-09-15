@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chatseek</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="top">
+      <img class="logo" src="../icons/icon32.png" width="28" height="28" alt="" />
+      <div class="brand">
+        <h1>Chatseek</h1>
+        <p class="tag" id="tag"></p>
+      </div>
+    </header>
+
+    <label class="search-label" for="q" id="searchLabel"></label>
+    <div class="search">
+      <input
+        id="q"
+        type="search"
+        autocomplete="off"
+        spellcheck="false"
+        enterkeyhint="search"
+      />
+    </div>
+
+    <div class="filters" role="tablist">
+      <button type="button" class="chip is-on" data-platform="" id="filterAll"></button>
+      <button type="button" class="chip" data-platform="chatgpt">ChatGPT</button>
+      <button type="button" class="chip" data-platform="claude">Claude</button>
+      <button type="button" class="chip" data-platform="grok">Grok</button>
+    </div>
+
+    <p class="status" id="status" hidden></p>
+    <ul class="list" id="list"></ul>
+
+    <footer class="foot">
+      <p class="hint" id="hint"></p>
+      <p class="meta">
+        <span id="counts"></span>
+        <button type="button" class="link" id="clearBtn"></button>
+      </p>
+    </footer>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

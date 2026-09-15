@@ -1,0 +1,7 @@
+.DS_Store
+.netlify
+*.crx
+*.pem
+node_modules
+
+tmp/
