@@ -20,11 +20,31 @@ function txDone(tx) {
   });
 }
 
+function dropIfCurrent(db) {
+  const pending = dbPromise;
+  if (!pending) return;
+  pending.then((current) => {
+    if (current === db) dbPromise = null;
+  }).catch(() => {
+    dbPromise = null;
+  });
+}
+
 export function openDb() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onerror = () => reject(req.error);
+      let req;
+      try {
+        req = indexedDB.open(DB_NAME, DB_VERSION);
+      } catch (err) {
+        dbPromise = null;
+        reject(err);
+        return;
+      }
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error || new Error("indexedDB open failed"));
+      };
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains("conversations")) {
@@ -44,10 +64,42 @@ export function openDb() {
           });
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onclose = () => dropIfCurrent(db);
+        db.onversionchange = () => {
+          dropIfCurrent(db);
+          try { db.close(); } catch { /* already closing */ }
+        };
+        resolve(db);
+      };
     });
   }
   return dbPromise;
+}
+
+function isDeadConnection(err) {
+  if (!err) return false;
+  if (err.name === "InvalidStateError") return true;
+  return /database connection is closed|connection is closing/i.test(
+    String(err.message || err),
+  );
+}
+
+/** One retry after Chrome drops the extension IDB connection. */
+async function withDb(fn) {
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const db = await openDb();
+    try {
+      return await fn(db);
+    } catch (err) {
+      lastErr = err;
+      if (!isDeadConnection(err)) throw err;
+      dbPromise = null;
+    }
+  }
+  throw lastErr;
 }
 
 function isGenericTitle(title) {
@@ -85,7 +137,10 @@ function deleteTokens(tokenStore, tokens, conversationId, source) {
 
 export async function upsertConversations(list) {
   if (!list?.length) return;
-  const db = await openDb();
+  return withDb((db) => writeConversations(db, list));
+}
+
+async function writeConversations(db, list) {
   const tx = db.transaction(["conversations", "tokenMap"], "readwrite");
   const convStore = tx.objectStore("conversations");
   const tokenStore = tx.objectStore("tokenMap");
@@ -141,8 +196,10 @@ export async function upsertConversations(list) {
 export async function upsertMessages(conversation, messages) {
   if (!conversation?.id || !messages?.length) return;
   await upsertConversations([conversation]);
+  return withDb((db) => writeMessages(db, conversation, messages));
+}
 
-  const db = await openDb();
+async function writeMessages(db, conversation, messages) {
   const tx = db.transaction(
     ["conversations", "messages", "tokenMap"],
     "readwrite",
@@ -223,11 +280,25 @@ function cursorEach(indexOrStore, { range, direction } = {}, visit) {
   });
 }
 
+function titleContainsQuery(title, needle) {
+  const hay = (title || "").toLowerCase().normalize("NFKC");
+  if (!needle || !hay.includes(needle)) return false;
+  // CJK phrases have no word boundaries; latin must match a whole token
+  // so "star" does not hit "starship" and "not" does not hit "notes".
+  if (/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(needle)) {
+    return true;
+  }
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(hay);
+}
+
 async function collectConvIdsForToken(tokenStore, token) {
   const ids = new Set();
-  const range = IDBKeyRange.bound([token], [token + "\uffff"]);
+  // Compound key [token, conversationId, source]. Stay inside this token so
+  // a shorter word does not match a longer one.
+  const range = IDBKeyRange.bound([token], [token, "\uffff", "\uffff"]);
   await cursorEach(tokenStore, { range }, (row) => {
-    ids.add(row.conversationId);
+    if (row.token === token) ids.add(row.conversationId);
   });
   return ids;
 }
@@ -254,18 +325,19 @@ function intersectSets(sets) {
  * Uses the token inverted index and conversation cursors.
  * Does not load the messages object store into an array.
  */
-export async function searchConversations({
+export async function searchConversations(options = {}) {
+  const q = (options.query || "").trim();
+  if (!q) return listRecent(options);
+  return withDb((db) => searchOn(db, options));
+}
+
+async function searchOn(db, {
   query = "",
   platform = "",
   limit = 80,
 } = {}) {
-  const db = await openDb();
   const q = query.trim();
   const tokens = queryTokens(q);
-
-  if (!q) {
-    return listRecent({ platform, limit });
-  }
 
   const tx = db.transaction(["conversations", "tokenMap"], "readonly");
   const convStore = tx.objectStore("conversations");
@@ -277,11 +349,11 @@ export async function searchConversations({
   }
   const fromIndex = tokens.length ? intersectSets(tokenSets) : new Set();
 
-  const needle = q.toLowerCase();
+  const needle = q.toLowerCase().normalize("NFKC");
   const fromTitle = new Set();
   await cursorEach(convStore, {}, (conv) => {
     if (platform && conv.platform !== platform) return;
-    if ((conv.title || "").toLowerCase().includes(needle)) {
+    if (titleContainsQuery(conv.title, needle)) {
       fromTitle.add(conv.id);
     }
   });
@@ -298,8 +370,11 @@ export async function searchConversations({
   return matches.slice(0, limit);
 }
 
-export async function listRecent({ platform = "", limit = 80 } = {}) {
-  const db = await openDb();
+export async function listRecent(options = {}) {
+  return withDb((db) => listRecentOn(db, options));
+}
+
+async function listRecentOn(db, { platform = "", limit = 80 } = {}) {
   const tx = db.transaction("conversations", "readonly");
   const index = tx.objectStore("conversations").index("updatedAt");
   const items = [];
@@ -312,21 +387,23 @@ export async function listRecent({ platform = "", limit = 80 } = {}) {
 }
 
 export async function stats() {
-  const db = await openDb();
-  const tx = db.transaction(["conversations", "messages"], "readonly");
-  const conversations = await requestDone(tx.objectStore("conversations").count());
-  const messages = await requestDone(tx.objectStore("messages").count());
-  return { conversations, messages };
+  return withDb(async (db) => {
+    const tx = db.transaction(["conversations", "messages"], "readonly");
+    const conversations = await requestDone(tx.objectStore("conversations").count());
+    const messages = await requestDone(tx.objectStore("messages").count());
+    return { conversations, messages };
+  });
 }
 
 export async function clearAll() {
-  const db = await openDb();
-  const tx = db.transaction(
-    ["conversations", "messages", "tokenMap"],
-    "readwrite",
-  );
-  tx.objectStore("conversations").clear();
-  tx.objectStore("messages").clear();
-  tx.objectStore("tokenMap").clear();
-  await txDone(tx);
+  return withDb(async (db) => {
+    const tx = db.transaction(
+      ["conversations", "messages", "tokenMap"],
+      "readwrite",
+    );
+    tx.objectStore("conversations").clear();
+    tx.objectStore("messages").clear();
+    tx.objectStore("tokenMap").clear();
+    await txDone(tx);
+  });
 }

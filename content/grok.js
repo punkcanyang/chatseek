@@ -1,7 +1,6 @@
 (() => {
   const PLATFORM = "grok";
-  let lastListFp = "";
-  let lastMsgFp = "";
+  const state = { lastListFp: "", lastMsgFp: "" };
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
@@ -9,11 +8,18 @@
     return `https://grok.com/c/${id}`;
   }
 
+  function idFromHref(href) {
+    const uuid = Chatseek.uuidFrom(href);
+    if (uuid) return uuid;
+    // Some Grok paths are not UUIDs. Keep a stable slug; ignore short UI routes.
+    const m = String(href || "").match(
+      /\/(?:c|chat)\/([A-Za-z0-9_-]{16,128})(?=[/?#]|$)/,
+    );
+    return m ? m[1].toLowerCase() : null;
+  }
+
   function conversationIdFromLocation() {
-    const path = location.pathname || "";
-    // Current Grok uses /c/{uuid}; older builds used /chat/{uuid}.
-    if (!/\/(c|chat)\//.test(path)) return null;
-    return Chatseek.uuidFrom(path);
+    return idFromHref(location.pathname || "");
   }
 
   function titleFromDoc() {
@@ -34,30 +40,34 @@
   function extractSidebar() {
     const byId = new Map();
     const times = jsonTimes();
+    const anchors = [];
     document
       .querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')
       .forEach((a) => {
         const href = a.getAttribute("href") || a.href || "";
         if (/^https?:/i.test(href) && !/grok\.com|x\.ai/i.test(href)) return;
-        if (/\/chat\/new\b/i.test(href)) return;
-        const id = Chatseek.uuidFrom(href);
+        if (/\/(?:chat|c)\/new\b/i.test(href)) return;
+        const id = idFromHref(href);
         if (!id) return;
-        const title = Chatseek.textOf(a);
-        if (!title) return;
-        const conv = {
-          id: `${PLATFORM}:${id}`,
-          platform: PLATFORM,
-          platformId: id,
-          title,
-          url: canonicalUrl(id),
-        };
-        // Grok history uses sticky time-header buckets; rows may also have <time>.
-        Chatseek.attachPageTime(conv, a, times);
-        const prev = byId.get(id);
-        if (!prev || (conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt))) {
-          byId.set(id, conv);
-        }
+        anchors.push(a);
       });
+    const sectionMap = Chatseek.sectionTimesFor(anchors);
+    for (const a of anchors) {
+      const href = a.getAttribute("href") || a.href || "";
+      const id = idFromHref(href);
+      if (!id) continue;
+      const title = Chatseek.textOf(a);
+      if (!title) continue;
+      const conv = {
+        id: `${PLATFORM}:${id}`,
+        platform: PLATFORM,
+        platformId: id,
+        title,
+        url: canonicalUrl(id),
+      };
+      Chatseek.attachPageTime(conv, a, times, sectionMap);
+      Chatseek.rememberConv(byId, conv);
+    }
     return [...byId.values()];
   }
 
@@ -115,12 +125,19 @@
     return null;
   }
 
+  function blockedMessageNode(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (el.closest("nav, form, textarea, [role='navigation']")) return true;
+    const links = el.querySelectorAll?.('a[href*="/c/"], a[href*="/chat/"]');
+    return !!(links && links.length >= 3);
+  }
+
   function extractMessages(conversationId) {
     const candidates = [];
     const pushUnique = (el, role) => {
-      if (!el || !role) return;
+      if (!el || blockedMessageNode(el)) return;
       if (candidates.some((c) => c.el === el)) return;
-      candidates.push({ el, role });
+      candidates.push({ el, role: role || null });
     };
 
     document.querySelectorAll("[data-message-author-role]").forEach((el) => {
@@ -137,21 +154,31 @@
     if (!candidates.length) {
       document
         .querySelectorAll(
-          '[data-testid*="message"], [role="article"], [class*="message"], [class*="Message"]',
+          '[data-testid*="message"], [data-testid*="Message"], [role="article"], [class*="message"], [class*="Message"]',
         )
         .forEach((el) => {
           const classList =
             typeof el.className === "string" ? el.className.toLowerCase() : "";
-          if (
-            /sidebar|nav|header|footer|button|input|composer/.test(classList)
-          ) {
+          if (/sidebar|nav|footer|button|input|composer|history/.test(classList)) {
             return;
           }
+          // Role may be unknown; alternating roles are applied below.
           pushUnique(el, roleFromNode(el));
         });
     }
 
-    candidates.sort((a, b) => {
+    const candidateSet = new Set(candidates.map((item) => item.el));
+    const hasCandidateChild = new Set();
+    for (const item of candidates) {
+      let parent = item.el.parentElement;
+      while (parent) {
+        if (candidateSet.has(parent)) hasCandidateChild.add(parent);
+        parent = parent.parentElement;
+      }
+    }
+    const leaves = candidates.filter((item) => !hasCandidateChild.has(item.el));
+
+    leaves.sort((a, b) => {
       const pos = a.el.compareDocumentPosition(b.el);
       if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
       if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
@@ -160,14 +187,11 @@
 
     const seen = new Set();
     const messages = [];
-    candidates.forEach((item, index) => {
+    leaves.forEach((item, index) => {
       if (seen.has(item.el)) return;
-      for (const other of candidates) {
-        if (other.el !== item.el && other.el.contains(item.el)) return;
-      }
       seen.add(item.el);
       const body = Chatseek.cleanClone(item.el);
-      if (!body || body.length < 1) return;
+      if (!body || Chatseek.isUiNoise(body)) return;
       const role =
         item.role ||
         (messages.length
@@ -178,6 +202,7 @@
             ? "user"
             : "assistant");
       const platformMessageId = item.el.getAttribute("data-message-id") ||
+        item.el.querySelector?.("[data-message-id]")?.getAttribute("data-message-id") ||
         item.el.id ||
         Chatseek.hash(role + ":" + body.slice(0, 180));
       messages.push({
@@ -191,64 +216,33 @@
 
   async function capture() {
     const sidebar = extractSidebar();
-    const listFp = Chatseek.fingerprint(
-      sidebar.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
-    );
-    if (listFp && listFp !== lastListFp) {
-      lastListFp = listFp;
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: sidebar,
-      });
-    }
-
     const platformId = conversationIdFromLocation();
-    if (!platformId) return;
-
-    const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-    const title = titleFromDoc() || fromSidebar?.title || platformId;
-    const conversation = {
-      id: `${PLATFORM}:${platformId}`,
+    let conversation = null;
+    let messages = [];
+    if (platformId) {
+      const fromSidebar = sidebar.find((c) => c.platformId === platformId);
+      const title = titleFromDoc() || fromSidebar?.title || platformId;
+      conversation = {
+        id: `${PLATFORM}:${platformId}`,
+        platform: PLATFORM,
+        platformId,
+        title,
+        url: canonicalUrl(platformId),
+      };
+      if (fromSidebar?.updatedAt) {
+        conversation.updatedAt = fromSidebar.updatedAt;
+        conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+      } else {
+        Chatseek.attachPageTime(conversation, null, jsonTimes());
+      }
+      messages = extractMessages(platformId);
+    }
+    await Chatseek.runCapture(state, {
       platform: PLATFORM,
-      platformId,
-      title,
-      url: canonicalUrl(platformId),
-    };
-    if (fromSidebar?.updatedAt) {
-      conversation.updatedAt = fromSidebar.updatedAt;
-      conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
-    } else {
-      Chatseek.attachPageTime(conversation, null, jsonTimes());
-    }
-
-    const messages = extractMessages(platformId);
-    const msgFp = Chatseek.fingerprint([
-      conversation.id,
-      conversation.title,
-      conversation.updatedAt || "",
-      ...messages.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
-    ]);
-    if (msgFp === lastMsgFp) return;
-    lastMsgFp = msgFp;
-
-    if (sidebar.every((c) => c.platformId !== platformId)) {
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: [conversation],
-      });
-    }
-
-    const chunk = 20;
-    for (let i = 0; i < messages.length; i += chunk) {
-      await Chatseek.send({
-        type: "CAPTURE_MESSAGES",
-        platform: PLATFORM,
-        conversation,
-        messages: messages.slice(i, i + chunk),
-      });
-    }
+      sidebar,
+      conversation,
+      messages,
+    });
   }
 
   Chatseek.observe(capture);

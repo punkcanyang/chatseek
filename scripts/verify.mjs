@@ -2,6 +2,7 @@
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createContext, runInContext } from "node:vm";
 import { tokenize, queryTokens } from "../src/tokenize.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -138,6 +139,48 @@ if (!/incomingUpdated/.test(dbForDates)) {
 const readmeDates = read("README.md");
 if (!/真实会话时间/.test(readmeDates) || !/采集时间/.test(readmeDates)) {
   fail("README should mention page dates vs capture time");
+}
+
+const sandbox = {
+  Date,
+  Math,
+  Number,
+  String,
+  RegExp,
+  Map,
+  Set,
+  document: { scripts: [], querySelectorAll() { return []; } },
+  location: { href: "https://chatgpt.com/" },
+  chrome: { runtime: {} },
+  NodeFilter: { SHOW_ELEMENT: 1 },
+  clearTimeout,
+  setTimeout,
+  setInterval,
+};
+createContext(sandbox);
+const pageTime = runInContext(`${sharedSrc}\nChatseek;\n`, sandbox);
+const iso = pageTime.parsePageTime("2025-06-10T12:00:00.000Z");
+if (iso !== Date.parse("2025-06-10T12:00:00.000Z")) fail("ISO parsePageTime failed");
+const sec = pageTime.parsePageTime(1718000000);
+if (sec !== 1718000000 * 1000) fail("unix seconds parsePageTime failed");
+const noon = Date.UTC(2026, 0, 15, 12, 0, 0);
+const yest = pageTime.parsePageTime("Yesterday", noon);
+if (!(yest < noon && noon - yest < 3 * 86400000)) fail("Yesterday parsePageTime failed");
+if (!pageTime.parsePageTime("Previous 7 Days", noon)) {
+  fail("Previous 7 Days parsePageTime failed");
+}
+if (pageTime.parsePageTime("not a date") !== null) {
+  fail("parsePageTime should reject junk");
+}
+if (pageTime.parsePageTime("2h", noon) !== noon - 2 * 3600000) {
+  fail("compact 2h parsePageTime failed");
+}
+if (!/runCapture/.test(sharedSrc) || !/sectionTimesFor/.test(sharedSrc)) {
+  fail("shared.js should serialize capture and assign section dates");
+}
+if (!/withDb/.test(dbForDates)) fail("db.js should reopen a closed IndexedDB connection");
+if (!/row\.token === token/.test(dbSrc)) {
+  fail("token lookup must ignore longer tokens that share a prefix");
 }
 
 if (errors.length) {

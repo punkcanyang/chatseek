@@ -1,7 +1,6 @@
 (() => {
   const PLATFORM = "chatgpt";
-  let lastListFp = "";
-  let lastMsgFp = "";
+  const state = { lastListFp: "", lastMsgFp: "" };
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
@@ -34,11 +33,18 @@
   function extractSidebar() {
     const byId = new Map();
     const times = jsonTimes();
+    const anchors = [];
     document.querySelectorAll('a[href*="/c/"]').forEach((a) => {
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) return;
+      anchors.push(a);
+    });
+    const sectionMap = Chatseek.sectionTimesFor(anchors);
+    for (const a of anchors) {
+      const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+      if (!id) continue;
       const title = Chatseek.textOf(a);
-      if (!title) return;
+      if (!title) continue;
       const conv = {
         id: `${PLATFORM}:${id}`,
         platform: PLATFORM,
@@ -46,22 +52,10 @@
         title,
         url: canonicalUrl(id),
       };
-      // Prefer time near this row; ChatGPT usually only has section buckets
-      // (Today / Yesterday / Previous 7 Days / month) above groups of links.
-      Chatseek.attachPageTime(conv, a, times);
-      const prev = byId.get(id);
-      if (!prev || (conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt))) {
-        byId.set(id, conv);
-      } else if (prev && !isGenericish(conv.title) && isGenericish(prev.title)) {
-        byId.set(id, { ...prev, title: conv.title });
-      }
-    });
+      Chatseek.attachPageTime(conv, a, times, sectionMap);
+      Chatseek.rememberConv(byId, conv);
+    }
     return [...byId.values()];
-  }
-
-  function isGenericish(title) {
-    const t = (title || "").trim();
-    return !t || /^(new chat|chatgpt|untitled)$/i.test(t);
   }
 
   function extractMessages(conversationId) {
@@ -69,20 +63,31 @@
     if (!nodes.length) {
       nodes = [...document.querySelectorAll('[data-testid^="conversation-turn"]')];
     }
+    if (!nodes.length) {
+      nodes = [...document.querySelectorAll("main article")];
+    }
+    nodes = nodes.filter((node) => {
+      if (node.closest("nav, form, textarea")) return false;
+      const links = node.querySelectorAll('a[href*="/c/"]');
+      if (links.length >= 3) return false;
+      return !nodes.some((other) => other !== node && node.contains(other));
+    });
     const messages = [];
     nodes.forEach((node) => {
       const roleAttr = node.getAttribute("data-message-author-role") || "";
+      if (roleAttr === "system" || roleAttr === "tool") return;
       const heading = Chatseek.textOf(node.querySelector("h5, h6"));
       const role = roleAttr === "assistant" || /^chatgpt/i.test(heading)
         ? "assistant"
         : "user";
       const platformMessageId = node.getAttribute("data-message-id") ||
+        node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
         Chatseek.hash(role + ":" + Chatseek.textOf(node).slice(0, 180));
       const markdown = node.querySelector(".markdown");
       const pre = node.querySelector(".whitespace-pre-wrap");
       const body = Chatseek.textOf(markdown) || Chatseek.textOf(pre) ||
         Chatseek.cleanClone(node);
-      if (!body) return;
+      if (!body || Chatseek.isUiNoise(body)) return;
       messages.push({
         id: `${PLATFORM}:${conversationId}:${platformMessageId}`,
         role,
@@ -94,64 +99,33 @@
 
   async function capture() {
     const sidebar = extractSidebar();
-    const listFp = Chatseek.fingerprint(
-      sidebar.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
-    );
-    if (listFp && listFp !== lastListFp) {
-      lastListFp = listFp;
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: sidebar,
-      });
-    }
-
     const platformId = conversationIdFromLocation();
-    if (!platformId) return;
-
-    const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-    const title = titleFromDoc() || fromSidebar?.title || platformId;
-    const conversation = {
-      id: `${PLATFORM}:${platformId}`,
+    let conversation = null;
+    let messages = [];
+    if (platformId) {
+      const fromSidebar = sidebar.find((c) => c.platformId === platformId);
+      const title = titleFromDoc() || fromSidebar?.title || platformId;
+      conversation = {
+        id: `${PLATFORM}:${platformId}`,
+        platform: PLATFORM,
+        platformId,
+        title,
+        url: canonicalUrl(platformId),
+      };
+      if (fromSidebar?.updatedAt) {
+        conversation.updatedAt = fromSidebar.updatedAt;
+        conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+      } else {
+        Chatseek.attachPageTime(conversation, null, jsonTimes());
+      }
+      messages = extractMessages(platformId);
+    }
+    await Chatseek.runCapture(state, {
       platform: PLATFORM,
-      platformId,
-      title,
-      url: canonicalUrl(platformId),
-    };
-    if (fromSidebar?.updatedAt) {
-      conversation.updatedAt = fromSidebar.updatedAt;
-      conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
-    } else {
-      Chatseek.attachPageTime(conversation, null, jsonTimes());
-    }
-
-    const messages = extractMessages(platformId);
-    const msgFp = Chatseek.fingerprint([
-      conversation.id,
-      conversation.title,
-      conversation.updatedAt || "",
-      ...messages.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
-    ]);
-    if (msgFp === lastMsgFp) return;
-    lastMsgFp = msgFp;
-
-    if (sidebar.every((c) => c.platformId !== platformId)) {
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: [conversation],
-      });
-    }
-
-    const chunk = 20;
-    for (let i = 0; i < messages.length; i += chunk) {
-      await Chatseek.send({
-        type: "CAPTURE_MESSAGES",
-        platform: PLATFORM,
-        conversation,
-        messages: messages.slice(i, i + chunk),
-      });
-    }
+      sidebar,
+      conversation,
+      messages,
+    });
   }
 
   Chatseek.observe(capture);

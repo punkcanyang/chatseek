@@ -151,6 +151,45 @@ row = await requestDone(
 );
 assert(row?.updatedAt === newer, `incoming page updatedAt not applied: ${row?.updatedAt}`);
 
+const closed = await openDb();
+closed.close();
+const afterClose = await searchConversations({ query: "bananas" });
+assert(
+  afterClose.length === 1 && afterClose[0].platform === "chatgpt",
+  "search should work after the IndexedDB connection closes",
+);
+
+const byStar = await searchConversations({ query: "star" });
+assert(
+  byStar.length === 0,
+  `prefix token star should not match starship, got ${byStar.length}`,
+);
+const byPlan = await searchConversations({ query: "plan" });
+assert(
+  byPlan.length === 0,
+  `prefix plan should not match planning, got ${byPlan.map((c) => c.title).join("|")}`,
+);
+const byStarship = await searchConversations({ query: "StArShIp" });
+assert(
+  byStarship.length === 1 && byStarship[0].platform === "grok",
+  "case-insensitive whole word should hit Grok",
+);
+const byNotes = await searchConversations({ query: "notes" });
+assert(
+  byNotes.some((c) => c.id.startsWith("chatgpt:")),
+  "whole word notes should match the ChatGPT title",
+);
+const byMulti = await searchConversations({ query: "planning bananas" });
+assert(
+  byMulti.length === 1 && byMulti[0].id.startsWith("chatgpt:"),
+  "multi-word query should match across title and body in one conversation",
+);
+const byCross = await searchConversations({ query: "京都 STARSHIP_NEEDLE" });
+assert(
+  byCross.length === 0,
+  "tokens that live in different conversations must not combine into a hit",
+);
+
 recording = true;
 const byNeedle = await searchConversations({ query: "UNIQUE_NEEDLE" });
 const byEnd = await searchConversations({ query: "END_MARKER" });

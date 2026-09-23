@@ -1,7 +1,6 @@
 (() => {
   const PLATFORM = "claude";
-  let lastListFp = "";
-  let lastMsgFp = "";
+  const state = { lastListFp: "", lastMsgFp: "" };
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
@@ -33,13 +32,21 @@
   function extractSidebar() {
     const byId = new Map();
     const times = jsonTimes();
+    const anchors = [];
     document.querySelectorAll('a[href*="/chat/"]').forEach((a) => {
       const href = a.getAttribute("href") || a.href || "";
       if (/\/chat\/new\b/i.test(href)) return;
       const id = Chatseek.uuidFrom(href);
       if (!id) return;
+      anchors.push(a);
+    });
+    const sectionMap = Chatseek.sectionTimesFor(anchors);
+    for (const a of anchors) {
+      const href = a.getAttribute("href") || a.href || "";
+      const id = Chatseek.uuidFrom(href);
+      if (!id) continue;
       const title = Chatseek.textOf(a);
-      if (!title) return;
+      if (!title) continue;
       const conv = {
         id: `${PLATFORM}:${id}`,
         platform: PLATFORM,
@@ -47,13 +54,9 @@
         title,
         url: canonicalUrl(id),
       };
-      // Claude often renders <time datetime="..."> near each row.
-      Chatseek.attachPageTime(conv, a, times);
-      const prev = byId.get(id);
-      if (!prev || (conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt))) {
-        byId.set(id, conv);
-      }
-    });
+      Chatseek.attachPageTime(conv, a, times, sectionMap);
+      Chatseek.rememberConv(byId, conv);
+    }
     return [...byId.values()];
   }
 
@@ -115,64 +118,33 @@
 
   async function capture() {
     const sidebar = extractSidebar();
-    const listFp = Chatseek.fingerprint(
-      sidebar.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
-    );
-    if (listFp && listFp !== lastListFp) {
-      lastListFp = listFp;
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: sidebar,
-      });
-    }
-
     const platformId = conversationIdFromLocation();
-    if (!platformId) return;
-
-    const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-    const title = titleFromDoc() || fromSidebar?.title || platformId;
-    const conversation = {
-      id: `${PLATFORM}:${platformId}`,
+    let conversation = null;
+    let messages = [];
+    if (platformId) {
+      const fromSidebar = sidebar.find((c) => c.platformId === platformId);
+      const title = titleFromDoc() || fromSidebar?.title || platformId;
+      conversation = {
+        id: `${PLATFORM}:${platformId}`,
+        platform: PLATFORM,
+        platformId,
+        title,
+        url: canonicalUrl(platformId),
+      };
+      if (fromSidebar?.updatedAt) {
+        conversation.updatedAt = fromSidebar.updatedAt;
+        conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+      } else {
+        Chatseek.attachPageTime(conversation, null, jsonTimes());
+      }
+      messages = extractMessages(platformId);
+    }
+    await Chatseek.runCapture(state, {
       platform: PLATFORM,
-      platformId,
-      title,
-      url: canonicalUrl(platformId),
-    };
-    if (fromSidebar?.updatedAt) {
-      conversation.updatedAt = fromSidebar.updatedAt;
-      conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
-    } else {
-      Chatseek.attachPageTime(conversation, null, jsonTimes());
-    }
-
-    const messages = extractMessages(platformId);
-    const msgFp = Chatseek.fingerprint([
-      conversation.id,
-      conversation.title,
-      conversation.updatedAt || "",
-      ...messages.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
-    ]);
-    if (msgFp === lastMsgFp) return;
-    lastMsgFp = msgFp;
-
-    if (sidebar.every((c) => c.platformId !== platformId)) {
-      await Chatseek.send({
-        type: "CAPTURE_CONVERSATIONS",
-        platform: PLATFORM,
-        conversations: [conversation],
-      });
-    }
-
-    const chunk = 20;
-    for (let i = 0; i < messages.length; i += chunk) {
-      await Chatseek.send({
-        type: "CAPTURE_MESSAGES",
-        platform: PLATFORM,
-        conversation,
-        messages: messages.slice(i, i + chunk),
-      });
-    }
+      sidebar,
+      conversation,
+      messages,
+    });
   }
 
   Chatseek.observe(capture);

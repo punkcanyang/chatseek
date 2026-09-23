@@ -16,6 +16,7 @@ const t = zh
         "还没有收录任何对话。打开 ChatGPT、Claude 或 Grok 标签页并浏览会话列表或进入对话后，标题和可见消息会写入本地索引。",
       none: "没有匹配的对话。",
       loading: "正在搜索…",
+      booting: "正在读取本地索引…",
       hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。",
       counts: (c, m) => `${c} 条对话 · ${m} 条消息`,
       clear: "清除本地索引",
@@ -38,6 +39,7 @@ const t = zh
         "Nothing indexed yet. Open a ChatGPT, Claude, or Grok tab and browse the sidebar or a thread. Titles and visible messages are stored locally.",
       none: "No matching conversations.",
       loading: "Searching…",
+      booting: "Reading the local index…",
       hint: "Chats are captured only while a ChatGPT, Claude, or Grok tab is open. This extension does not scan your disk or upload conversations.",
       counts: (c, m) => `${c} chats · ${m} messages`,
       clear: "Clear local index",
@@ -73,9 +75,13 @@ filterAll.textContent = t.all;
 let platform = "";
 let searchTimer = 0;
 let requestSeq = 0;
+let loadedOnce = false;
+let composing = false;
 
 function relativeTime(ts) {
-  if (!ts) return "";
+  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
+    return zh ? "无日期" : "no date";
+  }
   const delta = Date.now() - ts;
   const m = Math.floor(delta / 60000);
   if (m < 1) return t.justNow;
@@ -132,8 +138,18 @@ function render(items, { emptyKind, error }) {
     const plat = document.createElement("span");
     plat.className = `plat ${conv.platform}`;
     plat.textContent = platformLabel(conv.platform);
-    const time = document.createElement("span");
+    const time = document.createElement("time");
     time.textContent = relativeTime(conv.updatedAt);
+    if (typeof conv.updatedAt === "number" && Number.isFinite(conv.updatedAt)) {
+      const d = new Date(conv.updatedAt);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mi = String(d.getMinutes()).padStart(2, "0");
+      time.dateTime = d.toISOString();
+      time.title = `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    }
     meta.append(plat, time);
     btn.append(title, meta);
     li.append(btn);
@@ -158,8 +174,9 @@ async function openChat(url) {
 async function refresh() {
   const seq = ++requestSeq;
   const query = qEl.value;
-  statusEl.hidden = !query.trim();
-  statusEl.textContent = t.loading;
+  const showStatus = !loadedOnce || !!query.trim();
+  statusEl.hidden = !showStatus;
+  statusEl.textContent = !loadedOnce && !query.trim() ? t.booting : t.loading;
   try {
     const items = await searchConversations({
       query,
@@ -167,6 +184,7 @@ async function refresh() {
       limit: 80,
     });
     if (seq !== requestSeq) return;
+    loadedOnce = true;
     statusEl.hidden = true;
     render(items, { emptyKind: query.trim() ? "search" : "idle" });
     const s = await stats();
@@ -176,6 +194,7 @@ async function refresh() {
     if (seq !== requestSeq) return;
     statusEl.hidden = true;
     render([], { error: true });
+    if (!loadedOnce) countsEl.textContent = t.error;
   }
 }
 
@@ -184,7 +203,16 @@ function scheduleRefresh() {
   searchTimer = setTimeout(refresh, 180);
 }
 
-qEl.addEventListener("input", scheduleRefresh);
+qEl.addEventListener("compositionstart", () => {
+  composing = true;
+});
+qEl.addEventListener("compositionend", () => {
+  composing = false;
+  scheduleRefresh();
+});
+qEl.addEventListener("input", () => {
+  if (!composing) scheduleRefresh();
+});
 
 document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
@@ -197,8 +225,19 @@ document.querySelectorAll(".chip").forEach((chip) => {
 
 clearBtn.addEventListener("click", async () => {
   if (!confirm(t.confirm)) return;
-  await clearAll();
+  try {
+    await clearAll();
+  } catch {
+    render([], { error: true });
+    return;
+  }
+  listEl.replaceChildren();
+  countsEl.textContent = t.counts(0, 0);
   refresh();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refresh();
 });
 
 if (chrome.runtime?.onMessage) {
