@@ -32,4 +32,4 @@ npm run verify
 npm run test:search
 ```
 
-当前包版本 1.0.1。搜索按完整词匹配（`musicmap` 能中，`music` 不会误中 `musicmap`）。侧栏日期：页面上有精确时间用精确时间，否则用分组标题（Today / Previous 7 Days 等），再没有才用采集时间。扩展 Reload 后本地索引还在；网站标签页需要刷新一次，内容脚本才会重新采集。细节见 `notes/CHANGELOG-grok47.md`。
+当前包版本 1.0.2。搜索按完整词匹配（`musicmap` 能中，`music` 不会误中 `musicmap`）。侧栏日期：页面上有精确时间用精确时间，否则用分组标题（Today / Previous 7 Days 等），再没有才用采集时间。扩展 Reload 后本地索引还在；网站标签页需要刷新一次，内容脚本才会重新采集。细节见 `notes/CHANGELOG-grok47.md`。
