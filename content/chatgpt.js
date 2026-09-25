@@ -15,9 +15,7 @@
   }
 
   function titleFromDoc() {
-    return (document.title || "")
-      .replace(/\s*[|·—-]\s*(ChatGPT|OpenAI).*$/i, "")
-      .trim();
+    return Chatseek.stripTitleSuffix(document.title, ["ChatGPT", "OpenAI"]);
   }
 
   function jsonTimes() {
@@ -120,7 +118,7 @@
       }
       messages = extractMessages(platformId);
     }
-    await Chatseek.runCapture(state, {
+    return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
       conversation,

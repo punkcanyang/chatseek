@@ -108,10 +108,13 @@ function isGenericTitle(title) {
   return /^(new chat|chatgpt|claude|grok|untitled|无标题)$/i.test(t);
 }
 
+// 2020-01-01; must match Chatseek.MIN_MS in content/shared.js.
+const MIN_PAGE_MS = 1577836800000;
+
 /** Plausible millisecond epoch from a page (rejects unix seconds). */
 function isValidPageMs(ts) {
   if (typeof ts !== "number" || !Number.isFinite(ts)) return false;
-  return ts >= 1e11 && ts <= Date.now() + 86400000 * 366;
+  return ts >= MIN_PAGE_MS && ts <= Date.now() + 86400000 * 366;
 }
 
 function pageMs(value) {
@@ -171,12 +174,13 @@ async function writeConversations(db, list) {
     // Title-only refresh must NOT stomp a good page updatedAt with Date.now().
     if (incomingUpdated) {
       next.updatedAt = incomingUpdated;
+    } else if (!isValidPageMs(next.updatedAt)) {
+      // Pre-1.0.2 builds could store a bogus 2001 date parsed from a title.
+      next.updatedAt = now;
     }
     // createdAt from page only when creating (handled above) or still missing.
-    if (!old && incomingCreated) {
-      next.createdAt = incomingCreated;
-    } else if (old && !isValidPageMs(next.createdAt) && incomingCreated) {
-      next.createdAt = incomingCreated;
+    if (!isValidPageMs(next.createdAt)) {
+      next.createdAt = incomingCreated || next.updatedAt;
     }
 
     const oldTitleTokens = tokenize(old?.title || "");

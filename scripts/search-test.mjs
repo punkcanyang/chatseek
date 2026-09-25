@@ -151,6 +151,42 @@ row = await requestDone(
 );
 assert(row?.updatedAt === newer, `incoming page updatedAt not applied: ${row?.updatedAt}`);
 
+// Older builds could store a 2001 date parsed from a title like "Top 10".
+const bogusId = "chatgpt:44444444-4444-4444-4444-444444444444";
+const bogus = Date.UTC(2001, 9, 1);
+{
+  const tx = db.transaction("conversations", "readwrite");
+  tx.objectStore("conversations").put({
+    id: bogusId,
+    platform: "chatgpt",
+    platformId: "44444444-4444-4444-4444-444444444444",
+    title: "Top 10 ideas",
+    url: "https://chatgpt.com/c/44444444-4444-4444-4444-444444444444",
+    createdAt: bogus,
+    updatedAt: bogus,
+    messageCount: 0,
+  });
+  await new Promise((resolve) => { tx.oncomplete = resolve; });
+}
+const beforeRepair = Date.now();
+await upsertConversations([
+  {
+    id: bogusId,
+    platform: "chatgpt",
+    platformId: "44444444-4444-4444-4444-444444444444",
+    title: "Top 10 ideas",
+    url: "https://chatgpt.com/c/44444444-4444-4444-4444-444444444444",
+    updatedAt: bogus,
+  },
+]);
+row = await requestDone(
+  db.transaction("conversations").objectStore("conversations").get(bogusId),
+);
+assert(
+  row.updatedAt >= beforeRepair && row.createdAt >= beforeRepair,
+  `pre-2020 dates should fall back to capture time, got ${row.updatedAt}/${row.createdAt}`,
+);
+
 const closed = await openDb();
 closed.close();
 const afterClose = await searchConversations({ query: "bananas" });
