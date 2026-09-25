@@ -78,8 +78,15 @@ let requestSeq = 0;
 let loadedOnce = false;
 let composing = false;
 
+// 2020-01-01; older values are parse artifacts from pre-1.0.2 builds.
+const MIN_DATE_MS = 1577836800000;
+
+function hasDate(ts) {
+  return typeof ts === "number" && Number.isFinite(ts) && ts >= MIN_DATE_MS;
+}
+
 function relativeTime(ts) {
-  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
+  if (!hasDate(ts)) {
     return zh ? "无日期" : "no date";
   }
   const delta = Date.now() - ts;
@@ -140,7 +147,7 @@ function render(items, { emptyKind, error }) {
     plat.textContent = platformLabel(conv.platform);
     const time = document.createElement("time");
     time.textContent = relativeTime(conv.updatedAt);
-    if (typeof conv.updatedAt === "number" && Number.isFinite(conv.updatedAt)) {
+    if (hasDate(conv.updatedAt)) {
       const d = new Date(conv.updatedAt);
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");

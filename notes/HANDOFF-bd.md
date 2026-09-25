@@ -16,7 +16,7 @@
 
 ## 在 box 上怎么复测（ChatGPT + Grok）
 
-1. 代码在 `/workspace/saas-scout/chatseek`（版本 1.0.1）。
+1. 代码在 `/workspace/saas-scout/chatseek`（版本 1.0.2 或更新；1.0.2 的改动见 `notes/CHANGELOG-grok47.md`）。
 2. Chrome 打开 `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序 / Load unpacked → 选这个目录。已经装过的话点 **Reload**。
 3. **刷新**已打开的 chatgpt.com 和 grok.com 标签页（Reload 扩展不会自动给旧页面换上新的内容脚本）。
 4. 用验收号 **auraelement** 登录。

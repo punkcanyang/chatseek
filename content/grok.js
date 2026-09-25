@@ -23,9 +23,7 @@
   }
 
   function titleFromDoc() {
-    return (document.title || "")
-      .replace(/\s*[|·—-]\s*(Grok|x\.ai|X).*$/i, "")
-      .trim();
+    return Chatseek.stripTitleSuffix(document.title, ["Grok", "x\\.ai", "xAI", "X"]);
   }
 
   function jsonTimes() {
@@ -237,7 +235,7 @@
       }
       messages = extractMessages(platformId);
     }
-    await Chatseek.runCapture(state, {
+    return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
       conversation,

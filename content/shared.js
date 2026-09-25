@@ -57,7 +57,30 @@ const Chatseek = {
   observe(handler) {
     let running = false;
     let queued = false;
+    let retryTimer = 0;
+    let retryDelay = 0;
+    let mo = null;
+    let poll = 0;
+    const onVisible = () => {
+      if (!document.hidden) run();
+    };
+    // After an extension reload this script is orphaned: every send fails
+    // and nothing would ever stop the DOM scans.
+    const alive = () => {
+      if (globalThis.chrome?.runtime?.id) return true;
+      mo?.disconnect();
+      clearInterval(poll);
+      clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      return false;
+    };
+    const scheduleRetry = () => {
+      retryDelay = Math.min(retryDelay ? retryDelay * 2 : 3000, 60000);
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(run, retryDelay);
+    };
     const invoke = () => {
+      if (!alive()) return;
       if (running) {
         queued = true;
         return;
@@ -66,7 +89,14 @@ const Chatseek = {
       queued = false;
       Promise.resolve()
         .then(() => handler())
-        .catch(() => {})
+        .then((ok) => {
+          if (ok === false) {
+            scheduleRetry();
+          } else {
+            retryDelay = 0;
+            clearTimeout(retryTimer);
+          }
+        }, scheduleRetry)
         .finally(() => {
           running = false;
           if (queued) {
@@ -78,22 +108,21 @@ const Chatseek = {
     const run = Chatseek.debounce(invoke, 800);
     const root = document.documentElement || document.body;
     if (!root) return;
-    const mo = new MutationObserver(run);
+    mo = new MutationObserver(run);
     mo.observe(root, {
       childList: true,
       subtree: true,
       characterData: true,
     });
     let href = location.href;
-    setInterval(() => {
+    poll = setInterval(() => {
+      if (!alive()) return;
       if (location.href !== href) {
         href = location.href;
         run();
       }
     }, 1200);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) run();
-    });
+    document.addEventListener("visibilitychange", onVisible);
     run();
   },
 
@@ -111,11 +140,35 @@ const Chatseek = {
     return (h >>> 0).toString(16);
   },
 
+  // 2020-01-01. No indexed chat predates this; V8 turns "Top 10" into 2001.
+  MIN_MS: 1577836800000,
+
   /** True for a plausible millisecond epoch (not unix seconds). */
   isValidMs(ts) {
     if (typeof ts !== "number" || !Number.isFinite(ts)) return false;
-    // ~1973-03 … far future; rejects unix-seconds (~1.7e9).
-    return ts >= 1e11 && ts <= Date.now() + 86400000 * 366;
+    return ts >= Chatseek.MIN_MS && ts <= Date.now() + 86400000 * 366;
+  },
+
+  /**
+   * Date.parse accepts "Chapter 3" or "Step 1". Only let through strings made
+   * of month/weekday names, digits and separators, or a d/m/y triple.
+   */
+  looksLikeDate(s) {
+    if (/^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}(?:[ ,T]|$)/.test(s)) return true;
+    let hasMonth = false;
+    const rest = s.toLowerCase()
+      .replace(
+        /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\.?/g,
+        () => {
+          hasMonth = true;
+          return " ";
+        },
+      )
+      .replace(
+        /\b(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day)?\b\.?|\b(?:wednesday|saturday)\b|\b(?:at|am|pm|utc|gmt)\b/g,
+        " ",
+      );
+    return hasMonth && /\d/.test(rest) && !/[a-z\u00c0-\uffff]/.test(rest);
   },
 
   /**
@@ -293,6 +346,14 @@ const Chatseek = {
     }
 
     // Last resort: Date.parse for things like "Sep 12, 2025"
+    if (!Chatseek.looksLikeDate(s)) return null;
+    if (!/\d{4}/.test(s)) {
+      // V8 fills a missing year with 2001.
+      const year = new Date(now).getFullYear();
+      let ms = Date.parse(`${s} ${year}`);
+      if (ms > now + dayMs) ms = Date.parse(`${s} ${year - 1}`);
+      return Chatseek.isValidMs(ms) ? ms : null;
+    }
     const parsed = Date.parse(s);
     if (Chatseek.isValidMs(parsed)) return parsed;
     return null;
@@ -594,6 +655,18 @@ const Chatseek = {
     return result;
   },
 
+  /** Drop trailing " - ChatGPT" / " | Grok" site names; never cut mid-title. */
+  stripTitleSuffix(title, names) {
+    const re = new RegExp(`\\s*[|·—–-]\\s*(?:${names.join("|")})\\s*$`, "i");
+    let t = String(title || "").trim();
+    let prev;
+    do {
+      prev = t;
+      t = t.replace(re, "").trim();
+    } while (t && t !== prev);
+    return t;
+  },
+
   isGenericTitle(title) {
     const t = (title || "").trim();
     if (!t) return true;
@@ -668,30 +741,52 @@ const Chatseek = {
    * Index the sidebar and the open thread. Fingerprints advance only after
    * the service worker acks, so a failed write is retried on the next pass.
    * Empty threads do not lock the message fingerprint.
+   * Resolves false when a write failed so the caller can retry.
    */
   async runCapture(state, { platform, sidebar, conversation, messages }) {
+    let ok = true;
     const list = sidebar || [];
     const listFp = Chatseek.fingerprint(
       list.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
     );
     if (listFp && listFp !== state.lastListFp) {
-      const ok = await Chatseek.sendConversations(platform, list);
-      if (ok) state.lastListFp = listFp;
+      if (await Chatseek.sendConversations(platform, list)) {
+        state.lastListFp = listFp;
+      } else {
+        ok = false;
+      }
     }
 
-    if (!conversation) return;
+    if (!conversation) return ok;
 
     const msgs = (messages || []).filter((m) => m && m.id && m.body);
     const inSidebar = list.some((c) => c.platformId === conversation.platformId);
     if (!msgs.length) {
       if (!inSidebar) {
-        await Chatseek.send({
+        const res = await Chatseek.send({
           type: "CAPTURE_CONVERSATIONS",
           platform,
           conversations: [conversation],
         });
+        if (!res || !res.ok) ok = false;
       }
-      return;
+      return ok;
+    }
+
+    // SPA navigation changes the URL before the thread re-renders. If every
+    // message on screen belongs to the thread we just stored, wait for the
+    // next mutation instead of filing them under the new conversation id.
+    const prefix = `${platform}:${conversation.platformId}:`;
+    const keys = msgs.map((m) =>
+      m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id
+    );
+    if (
+      state.lastMsgConvId &&
+      state.lastMsgConvId !== conversation.id &&
+      state.lastMsgKeys &&
+      keys.every((k) => state.lastMsgKeys.has(k))
+    ) {
+      return ok;
     }
 
     const msgFp = Chatseek.fingerprint([
@@ -700,7 +795,7 @@ const Chatseek = {
       conversation.updatedAt || "",
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
-    if (msgFp === state.lastMsgFp) return;
+    if (msgFp === state.lastMsgFp) return ok;
 
     if (!inSidebar) {
       const res = await Chatseek.send({
@@ -708,7 +803,7 @@ const Chatseek = {
         platform,
         conversations: [conversation],
       });
-      if (!res || !res.ok) return;
+      if (!res || !res.ok) return false;
     }
 
     for (const chunk of Chatseek.chunkMessages(msgs)) {
@@ -718,9 +813,12 @@ const Chatseek = {
         conversation,
         messages: chunk,
       });
-      if (!res || !res.ok) return;
+      if (!res || !res.ok) return false;
     }
     state.lastMsgFp = msgFp;
+    state.lastMsgConvId = conversation.id;
+    state.lastMsgKeys = new Set(keys);
+    return ok;
   },
 
   /**

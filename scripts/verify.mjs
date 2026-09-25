@@ -154,7 +154,11 @@ const sandbox = {
   chrome: { runtime: {} },
   NodeFilter: { SHOW_ELEMENT: 1 },
   clearTimeout,
-  setTimeout,
+  setTimeout: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    timer.unref?.();
+    return timer;
+  },
   setInterval,
 };
 createContext(sandbox);
@@ -175,6 +179,96 @@ if (pageTime.parsePageTime("not a date") !== null) {
 if (pageTime.parsePageTime("2h", noon) !== noon - 2 * 3600000) {
   fail("compact 2h parsePageTime failed");
 }
+for (const junk of ["Chapter 3", "Top 10", "Step 1", "Idea 7", "Roadmap 2025", "2024"]) {
+  if (pageTime.parsePageTime(junk, noon) !== null) {
+    fail(`parsePageTime turned title text "${junk}" into a date`);
+  }
+}
+if (pageTime.parsePageTime(Date.UTC(2001, 2, 1)) !== null) {
+  fail("parsePageTime should reject pre-2020 epochs");
+}
+if (pageTime.parsePageTime("Sep 12, 2025", noon) !== Date.parse("Sep 12, 2025")) {
+  fail("month-day-year parsePageTime failed");
+}
+const yearless = pageTime.parsePageTime("Mar 3", noon);
+if (!yearless || new Date(yearless).getFullYear() !== 2025) {
+  fail(`yearless "Mar 3" should resolve to the latest past Mar 3, got ${yearless}`);
+}
+for (const [raw, names, want] of [
+  ["Sales - Xbox plan - Grok", ["Grok", "x\\.ai", "xAI", "X"], "Sales - Xbox plan"],
+  ["Ideas - Claude Shannon bio - Claude", ["Claude"], "Ideas - Claude Shannon bio"],
+  ["Tips | ChatGPT vs Claude", ["ChatGPT", "OpenAI"], "Tips | ChatGPT vs Claude"],
+  ["Trip plan - ChatGPT", ["ChatGPT", "OpenAI"], "Trip plan"],
+  ["ChatGPT", ["ChatGPT", "OpenAI"], "ChatGPT"],
+]) {
+  const got = pageTime.stripTitleSuffix(raw, names);
+  if (got !== want) fail(`stripTitleSuffix(${raw}) = ${got}, want ${want}`);
+}
+
+const sent = [];
+let reply = { ok: true };
+sandbox.chrome.runtime.sendMessage = (payload, cb) => {
+  sent.push(payload);
+  cb(reply);
+};
+const capState = { lastListFp: "", lastMsgFp: "" };
+const conv = (id) => ({
+  id: `chatgpt:${id}`,
+  platform: "chatgpt",
+  platformId: id,
+  title: `Thread ${id}`,
+});
+const msg = (convId, mid, body) => ({ id: `chatgpt:${convId}:${mid}`, role: "user", body });
+const sentMessages = () => sent.filter((p) => p.type === "CAPTURE_MESSAGES");
+
+let capOk = await pageTime.runCapture(capState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("aaa"),
+  messages: [msg("aaa", "m1", "alpha question"), msg("aaa", "m2", "alpha answer")],
+});
+if (capOk !== true || sentMessages().length !== 1) fail("runCapture should store the first thread");
+
+sent.length = 0;
+await pageTime.runCapture(capState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("bbb"),
+  messages: [msg("bbb", "m1", "alpha question"), msg("bbb", "m2", "alpha answer")],
+});
+if (sentMessages().length) {
+  fail("runCapture must not file the previous thread's messages under a new URL");
+}
+
+sent.length = 0;
+await pageTime.runCapture(capState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("bbb"),
+  messages: [msg("bbb", "m9", "beta question")],
+});
+if (sentMessages().length !== 1) fail("runCapture should store the new thread once it renders");
+
+reply = { ok: false };
+capOk = await pageTime.runCapture(capState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("bbb"),
+  messages: [msg("bbb", "m9", "beta question"), msg("bbb", "m10", "beta answer")],
+});
+if (capOk !== false) fail("runCapture should report a failed write");
+reply = { ok: true };
+sent.length = 0;
+capOk = await pageTime.runCapture(capState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("bbb"),
+  messages: [msg("bbb", "m9", "beta question"), msg("bbb", "m10", "beta answer")],
+});
+if (capOk !== true || sentMessages().length !== 1) {
+  fail("runCapture should resend after a failed write");
+}
+
 if (!/runCapture/.test(sharedSrc) || !/sectionTimesFor/.test(sharedSrc)) {
   fail("shared.js should serialize capture and assign section dates");
 }
