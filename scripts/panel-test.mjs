@@ -8,6 +8,7 @@ import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import {
   activeTabUrl,
   eventInWindow,
+  injectionUnloaded,
   locationFromMessage,
   readableTabUrl,
 } from "../src/current-tab.js";
@@ -54,6 +55,11 @@ assert(eventInWindow(2, 1) === false && eventInWindow(1, 1) === true && eventInW
   assert(await activeTabUrl(api, null) === "" && calls[1].currentWindow === true, "no window id asks for currentWindow");
   assert(await activeTabUrl({ query: () => Promise.reject(new Error("gone")) }, 1) === "", "query errors clear");
 }
+assert(injectionUnloaded({ url: "https://chatgpt.com/c/x", loaded: false }) === true, "a chat tab with no content script warns");
+assert(injectionUnloaded({ url: "https://claude.ai/chat/x", loaded: false }) === true, "claude is one of the four hosts");
+assert(injectionUnloaded({ url: "https://chatgpt.com/c/x", loaded: true }) === false, "a loaded chat tab stays quiet");
+assert(injectionUnloaded({ url: "https://example.com/", loaded: false }) === false, "other sites do not warn");
+assert(injectionUnloaded({ url: "", loaded: false }) === false, "an unreadable tab does not warn");
 
 const uuid = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const chatgpt = (n) => ({

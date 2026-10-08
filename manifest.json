@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "default_locale": "en",
   "description": "__MSG_extDescription__",
   "minimum_chrome_version": "116",
@@ -46,6 +46,9 @@
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": ["content/shared.js", "content/images.js", "content/chatgpt.js"],
       "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
       "world": "ISOLATED"
     },
     {

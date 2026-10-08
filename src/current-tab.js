@@ -4,6 +4,36 @@
  * chat hosts in host_permissions; any other page reads as "" and clears the frame.
  */
 
+const CHAT_HOSTS = new Set([
+  "chatgpt.com",
+  "chat.openai.com",
+  "claude.ai",
+  "grok.com",
+  "www.grok.com",
+  "grok.x.com",
+  "x.ai",
+  "gemini.google.com",
+]);
+
+/** True for the four chat hosts already in host_permissions. No extra permission. */
+export function isChatTabUrl(raw) {
+  try {
+    const url = new URL(String(raw || ""));
+    if (url.protocol !== "https:") return false;
+    return CHAT_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The side panel warns only when the active tab is one of the four hosts and
+ * its content script did not answer. Other tabs stay quiet.
+ */
+export function injectionUnloaded({ url, loaded }) {
+  return isChatTabUrl(url) && !loaded;
+}
+
 export function readableTabUrl(tab) {
   const url = tab?.url;
   return typeof url === "string" && /^https:\/\//i.test(url) ? url : "";

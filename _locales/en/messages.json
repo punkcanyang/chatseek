@@ -349,5 +349,8 @@
   },
   "copyDiagEmpty": {
     "message": "No diagnostics yet. Open a conversation and refresh the page."
+  },
+  "injectMissing": {
+    "message": "This tab has not loaded Chatseek. Refresh the tab and confirm the extension is allowed to access this site."
   }
 }

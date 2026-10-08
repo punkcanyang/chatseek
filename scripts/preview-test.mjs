@@ -193,6 +193,16 @@ assert(
   ),
   "ChatGPT project URLs and chat.openai.com share the stored id",
 );
+const gizmoDecoy = "77777777-7777-4777-8777-777777777777";
+const afterSlashC = "66666666-6666-4666-8666-666666666666";
+assert(
+  conversationKeyFromUrl(`https://chatgpt.com/g/${gizmoDecoy}/c/${afterSlashC}?model=gpt-4`) === `chatgpt:${afterSlashC}`,
+  "the stored id is the uuid after /c/, not the earlier gizmo uuid",
+);
+assert(
+  conversationKeyFromUrl(`https://chatgpt.com/g/g-p-abc/c/${afterSlashC}`) === `chatgpt:${afterSlashC}`,
+  "project urls use the uuid after /c/",
+);
 assert(!rowMatchesUrl({ id: `chatgpt:${chatgptId}` }, "https://chatgpt.com/"), "home is not a conversation");
 assert(
   !rowMatchesUrl(

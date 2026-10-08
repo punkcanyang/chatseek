@@ -27,9 +27,7 @@
   }
 
   function conversationIdFromLocation(loc) {
-    const path = (loc || location).pathname || "";
-    if (!/\/c\//.test(path)) return null;
-    return Chatseek.uuidFrom(path);
+    return Chatseek.conversationIdFromPath((loc || location).pathname || "");
   }
 
   function titleFromDoc(doc) {
@@ -46,7 +44,7 @@
   }
 
   function rowFromAnchor(a, times, sectionMap, slot) {
-    const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+    const id = Chatseek.conversationIdFromPath(a.getAttribute("href") || a.href);
     if (!id) return null;
     const title = Chatseek.textOf(a);
     if (!title) return null;
@@ -69,7 +67,7 @@
     const times = jsonTimes(root);
     const anchors = [];
     archiveRoot.querySelectorAll('a[href*="/c/"]').forEach((a) => {
-      const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+      const id = Chatseek.conversationIdFromPath(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
     });
@@ -93,7 +91,7 @@
     const liveIds = new Set();
     root.querySelectorAll('a[href*="/c/"]').forEach((a) => {
       if (archiveRoot && archiveRoot.contains(a)) return;
-      const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+      const id = Chatseek.conversationIdFromPath(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
       if (Chatseek.inLiveSidebar(a, archiveRoot)) liveIds.add(id);
@@ -227,27 +225,65 @@
     return { messages, selector, selectorsTried, selectorHits };
   }
 
+  function scopeLabel(scope, got) {
+    if (!got) return null;
+    if (!scope || scope.kind === "top") return got;
+    return `${scope.kind} ${got}`;
+  }
+
+  function noteScopeHits(selectorHits, scope) {
+    if (!scope || scope.kind === "top") return;
+    const hits = Chatseek.countSelectors(scope.node, MESSAGE_LAYERS);
+    const prefix = scope.kind === "iframe" ? "iframe" : "shadow";
+    for (const [name, count] of Object.entries(hits)) {
+      if (!count) continue;
+      const key = `${prefix} ${name}`;
+      selectorHits[key] = (selectorHits[key] || 0) + count;
+    }
+  }
+
+  function heuristicFromBlock(block, conversationId) {
+    const role = block?.role === "user" || block?.role === "assistant" ? block.role : "unknown";
+    const rendered = Chatseek.safeDomText(block.el, role === "user");
+    const body = rendered.text;
+    if (!Chatseek.isSubstantive(body) || String(body).trim().length < 24) return null;
+    const platformMessageId = Chatseek.hash(role + ":" + body.slice(0, 180));
+    const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    return {
+      node: block.el,
+      layer: "heuristic",
+      message: { id, role, body },
+      host: { el: block.el, messageId: id, role, body, offsets: rendered.offsets },
+    };
+  }
+
+  function takeHeuristic(scopes, chosen, conversationId) {
+    if (chosen.length) return null;
+    for (const block of Chatseek.heuristicBlocks(scopes)) {
+      const built = heuristicFromBlock(block, conversationId);
+      if (built) chosen.push(built);
+    }
+    return chosen.length ? "heuristic" : null;
+  }
+
   function extractMessages(conversationId, doc) {
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
+    const scopes = Chatseek.readScopes(root);
     imageHosts = [];
     const chosen = [];
     chosen.conversationId = conversationId;
-    let selector = takeLayer(root, chosen);
-    if (!chosen.length) {
-      for (const shadowRoot of Chatseek.openShadowRoots(root)) {
-        const shadowHits = Chatseek.countSelectors(shadowRoot, MESSAGE_LAYERS);
-        for (const [name, count] of Object.entries(shadowHits)) {
-          if (count) selectorHits[`shadow ${name}`] = (selectorHits[`shadow ${name}`] || 0) + count;
-        }
-        const shadowSelector = takeLayer(shadowRoot, chosen);
-        if (chosen.length) {
-          selector = shadowSelector ? `shadow ${shadowSelector}` : selector;
-          break;
-        }
+    let selector = null;
+    for (const scope of scopes) {
+      noteScopeHits(selectorHits, scope);
+      const got = takeLayer(scope.node, chosen);
+      if (chosen.length) {
+        selector = scopeLabel(scope, got);
+        break;
       }
     }
+    if (!chosen.length) selector = takeHeuristic(scopes, chosen, conversationId);
     return packMessages(chosen, selector, selectorsTried, selectorHits);
   }
 
@@ -255,25 +291,22 @@
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
+    const scopes = Chatseek.readScopes(root);
     imageHosts = [];
     const chosen = [];
     chosen.conversationId = conversationId;
     Chatseek._paceAt = Date.now();
-    let selector = await takeLayerPaced(root, chosen);
-    if (!chosen.length) {
-      for (const shadowRoot of Chatseek.openShadowRoots(root)) {
-        const shadowHits = Chatseek.countSelectors(shadowRoot, MESSAGE_LAYERS);
-        for (const [name, count] of Object.entries(shadowHits)) {
-          if (count) selectorHits[`shadow ${name}`] = (selectorHits[`shadow ${name}`] || 0) + count;
-        }
-        const shadowSelector = await takeLayerPaced(shadowRoot, chosen);
-        if (chosen.length) {
-          selector = shadowSelector ? `shadow ${shadowSelector}` : selector;
-          break;
-        }
-        await Chatseek.paceDom();
+    let selector = null;
+    for (const scope of scopes) {
+      noteScopeHits(selectorHits, scope);
+      const got = await takeLayerPaced(scope.node, chosen);
+      if (chosen.length) {
+        selector = scopeLabel(scope, got);
+        break;
       }
+      await Chatseek.paceDom();
     }
+    if (!chosen.length) selector = takeHeuristic(scopes, chosen, conversationId);
     return packMessages(chosen, selector, selectorsTried, selectorHits);
   }
 
@@ -349,6 +382,11 @@
       extracted = await extractMessagesPaced(platformId, root);
     }
     const stats = Chatseek.messageStats(extracted.messages);
+    const pathKind = Chatseek.pageKind(here, !!platformId);
+    const structure = Chatseek.structureDiag(root);
+    if (typeof Chatseek.noteEmptyConversation === "function") {
+      Chatseek.noteEmptyConversation(pathKind === "conversation" && !extracted.messages.length);
+    }
     const result = await Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
@@ -356,11 +394,12 @@
       conversation,
       messages: extracted.messages,
       health: {
-        pathKind: Chatseek.pageKind(here, !!platformId),
+        pathKind,
         selector: extracted.selector,
         selectorsTried: extracted.selectorsTried,
         selectorHits: extracted.selectorHits,
         untitled: !!titled && Chatseek.isGenericTitle(titled),
+        structure,
         ...stats,
       },
     });
@@ -397,7 +436,9 @@
       health.pathKind = "temporary";
       health.warn = false;
     }
-    return { sidebar, ...extracted, health, platformId };
+    const structure = Chatseek.structureDiag(root);
+    health.structure = structure;
+    return { sidebar, ...extracted, health, platformId, structure };
   }
 
   Chatseek.platforms = Chatseek.platforms || {};
@@ -410,5 +451,10 @@
     healthFor,
   };
 
-  if (Chatseek.autoStart !== false) Chatseek.observe(() => capture());
+  if (Chatseek.autoStart !== false) {
+    let child = false;
+    try { child = window.top !== window; } catch { child = true; }
+    if (child) Chatseek.watchChildFrame();
+    else Chatseek.observe(() => capture());
+  }
 })();

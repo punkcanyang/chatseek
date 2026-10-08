@@ -440,6 +440,47 @@ assert(m2After.capturedAt === m2Before.capturedAt && m2After.captureIndex === 1,
 const reread = await readConversation(id);
 assert(reread.messages.map((msg) => msg.id.split(":").pop()).join() === "m1,m2,m3,m4", "order holds after a rewrite");
 
+const titleId = "chatgpt:99999999-9999-4999-8999-999999999999";
+const titleConv = {
+  id: titleId,
+  platform: "chatgpt",
+  platformId: "99999999-9999-4999-8999-999999999999",
+  title: "Seeded title",
+  url: "https://chatgpt.com/c/99999999-9999-4999-8999-999999999999",
+  updatedAt: Date.now(),
+  updatedAtSource: "page-exact",
+};
+await upsertMessages(titleConv, [
+  { id: `${titleId}:old`, role: "assistant", body: "pangolin prefix and the rest of the stored habitat note" },
+]);
+const titleDb = await openDb();
+await new Promise((resolve, reject) => {
+  const tx = titleDb.transaction("conversations", "readwrite");
+  tx.oncomplete = () => resolve();
+  tx.onerror = () => reject(tx.error);
+  const store = tx.objectStore("conversations");
+  const req = store.get(titleId);
+  req.onsuccess = () => {
+    const row = req.result;
+    if (!row) {
+      reject(new Error("missing title row"));
+      return;
+    }
+    row.messageCount = 0;
+    store.put(row);
+  };
+});
+await upsertMessages(titleConv, [
+  { id: `${titleId}:new`, role: "unknown", body: "pangolin prefix" },
+], { pageMessageIds: [`${titleId}:new`], captureId: "title-only-overwrite" });
+const orphan = await requestDone(titleDb.transaction("messages").objectStore("messages").get(`${titleId}:old`));
+assert(!orphan, "a title-only row must drop the stored prefix instead of keeping it beside the new body");
+const replaced = await requestDone(titleDb.transaction("messages").objectStore("messages").get(`${titleId}:new`));
+assert(replaced?.body === "pangolin prefix", "the substantive capture replaces the title-only row");
+assert(replaced?.role === "assistant", "an unknown heuristic role is stored as assistant");
+const titleRow = await requestDone(titleDb.transaction("conversations").objectStore("conversations").get(titleId));
+assert(titleRow.messageCount === 1, `title-only overwrite count ${titleRow?.messageCount}`);
+
 const convRow = await requestDone(db.transaction("conversations").objectStore("conversations").get(id));
 assert(!("messageOrder" in convRow), "page order is not carried on the conversation row that list and search scan");
 const orderRow = await requestDone(db.transaction("meta").objectStore("meta").get(`order:${id}`));

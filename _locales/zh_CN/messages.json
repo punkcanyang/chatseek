@@ -349,5 +349,8 @@
   },
   "copyDiagEmpty": {
     "message": "还没有诊断。请先打开一段对话并刷新页面。"
+  },
+  "injectMissing": {
+    "message": "此标签页未加载 Chatseek：请刷新页面，并确认扩展的网站访问权限允许此网站"
   }
 }

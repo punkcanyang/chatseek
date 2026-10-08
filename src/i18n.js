@@ -108,6 +108,7 @@ export const CATALOG = {
     copyDiagDone: "診斷已複製",
     copyDiagManual: "無法寫入剪貼簿，請從下方文字框複製。",
     copyDiagEmpty: "還沒有診斷。請先打開一段對話並重新整理頁面。",
+    injectMissing: "此分頁未載入 Chatseek：請重新整理分頁，並確認擴充的網站存取權允許此網站",
   },
   "zh-CN": {
     extName: "Chatseek",
@@ -190,6 +191,7 @@ export const CATALOG = {
     copyDiagDone: "诊断已复制",
     copyDiagManual: "无法写入剪贴板，请从下方文本框复制。",
     copyDiagEmpty: "还没有诊断。请先打开一段对话并刷新页面。",
+    injectMissing: "此标签页未加载 Chatseek：请刷新页面，并确认扩展的网站访问权限允许此网站",
   },
   en: {
     extName: "Chatseek",
@@ -272,6 +274,7 @@ export const CATALOG = {
     copyDiagDone: "Diagnostics copied",
     copyDiagManual: "Couldn't write to the clipboard. Select the text below and copy it.",
     copyDiagEmpty: "No diagnostics yet. Open a conversation and refresh the page.",
+    injectMissing: "This tab has not loaded Chatseek. Refresh the tab and confirm the extension is allowed to access this site.",
   },
   ja: {
     extName: "Chatseek",
@@ -354,6 +357,7 @@ export const CATALOG = {
     copyDiagDone: "診断をコピーしました",
     copyDiagManual: "クリップボードに書けません。下のテキストを選んでコピーしてください。",
     copyDiagEmpty: "診断はまだありません。会話を開いてページを再読み込みしてください。",
+    injectMissing: "このタブには Chatseek が読み込まれていません。タブを再読み込みし、拡張機能がこのサイトへのアクセスを許可されているか確認してください。",
   },
   ko: {
     extName: "Chatseek",
@@ -436,6 +440,7 @@ export const CATALOG = {
     copyDiagDone: "진단을 복사했습니다",
     copyDiagManual: "클립보드에 쓸 수 없습니다. 아래 텍스트를 선택해 복사하세요.",
     copyDiagEmpty: "아직 진단이 없습니다. 대화를 연 뒤 페이지를 새로고침하세요.",
+    injectMissing: "이 탭에는 Chatseek이 로드되지 않았습니다. 탭을 새로고침하고 확장 프로그램이 이 사이트에 접근할 수 있는지 확인하세요.",
   },
   es: {
     extName: "Chatseek",
@@ -518,6 +523,7 @@ export const CATALOG = {
     copyDiagDone: "Diagnóstico copiado",
     copyDiagManual: "No se pudo escribir en el portapapeles. Selecciona el texto de abajo y cópialo.",
     copyDiagEmpty: "Aún no hay diagnóstico. Abre una conversación y actualiza la página.",
+    injectMissing: "Esta pestaña no ha cargado Chatseek. Actualízala y confirma que la extensión puede acceder a este sitio.",
   },
   fr: {
     extName: "Chatseek",
@@ -600,6 +606,7 @@ export const CATALOG = {
     copyDiagDone: "Diagnostic copié",
     copyDiagManual: "Impossible d'écrire dans le presse-papiers. Sélectionnez le texte ci-dessous.",
     copyDiagEmpty: "Pas encore de diagnostic. Ouvrez une conversation et actualisez la page.",
+    injectMissing: "Cet onglet n'a pas chargé Chatseek. Actualisez-le et vérifiez que l'extension peut accéder à ce site.",
   },
   de: {
     extName: "Chatseek",
@@ -682,6 +689,7 @@ export const CATALOG = {
     copyDiagDone: "Diagnose kopiert",
     copyDiagManual: "Die Zwischenablage ist nicht beschreibbar. Text unten markieren und kopieren.",
     copyDiagEmpty: "Noch keine Diagnose. Öffne ein Gespräch und lade die Seite neu.",
+    injectMissing: "Dieser Tab hat Chatseek nicht geladen. Lade den Tab neu und prüfe, ob die Erweiterung auf diese Website zugreifen darf.",
   },
   "pt-BR": {
     extName: "Chatseek",
@@ -764,6 +772,7 @@ export const CATALOG = {
     copyDiagDone: "Diagnóstico copiado",
     copyDiagManual: "Não foi possível gravar na área de transferência. Selecione o texto abaixo.",
     copyDiagEmpty: "Ainda não há diagnóstico. Abra uma conversa e atualize a página.",
+    injectMissing: "Esta aba não carregou o Chatseek. Atualize a aba e confirme que a extensão pode acessar este site.",
   },
 };
 

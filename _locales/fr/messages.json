@@ -349,5 +349,8 @@
   },
   "copyDiagEmpty": {
     "message": "Pas encore de diagnostic. Ouvrez une conversation et actualisez la page."
+  },
+  "injectMissing": {
+    "message": "Cet onglet n'a pas chargé Chatseek. Actualisez-le et vérifiez que l'extension peut accéder à ce site."
   }
 }

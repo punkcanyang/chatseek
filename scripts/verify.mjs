@@ -85,7 +85,20 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.1") fail(`version should be 1.6.1, got ${manifest.version}`);
+if (manifest.version !== "1.6.2") fail(`version should be 1.6.2, got ${manifest.version}`);
+let chatgptFrames = false;
+for (const script of manifest.content_scripts || []) {
+  const isChatgpt = (script.js || []).includes("content/chatgpt.js");
+  if (isChatgpt) {
+    if (script.all_frames !== true || script.match_about_blank !== true || script.match_origin_as_fallback !== true) {
+      fail("chatgpt content script must set all_frames, match_about_blank, and match_origin_as_fallback");
+    }
+    chatgptFrames = true;
+  } else if (script.all_frames || script.match_about_blank || script.match_origin_as_fallback) {
+    fail("only the chatgpt content script may match child frames");
+  }
+}
+if (!chatgptFrames) fail("chatgpt content script missing frame matching");
 if ((manifest.permissions || []).includes("unlimitedStorage")) {
   fail("unlimitedStorage is not allowed");
 }
@@ -319,6 +332,15 @@ const sandbox = {
 };
 createContext(sandbox);
 const pageTime = runInContext(`${sharedSrc}\nChatseek;\n`, sandbox);
+const afterSlashC = "66666666-6666-4666-8666-666666666666";
+const gizmoDecoy = "77777777-7777-4777-8777-777777777777";
+if (pageTime.conversationIdFromPath(`/g/${gizmoDecoy}/c/${afterSlashC}?model=gpt`) !== afterSlashC) {
+  fail("conversation id must be the uuid after /c/");
+}
+if (pageTime.conversationIdFromPath(`/g/g-p-abc/c/${afterSlashC}#x`) !== afterSlashC) {
+  fail("project urls must keep the uuid after /c/");
+}
+if (pageTime.conversationIdFromPath("/c/not-a-uuid") !== null) fail("a non-uuid after /c/ is not an id");
 const iso = pageTime.parsePageTime("2025-06-10T12:00:00.000Z");
 if (iso !== Date.parse("2025-06-10T12:00:00.000Z")) fail("ISO parsePageTime failed");
 const sec = pageTime.parsePageTime(1718000000);
@@ -695,6 +717,16 @@ if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc))
 if (!/FOCUS_ORIGINAL/.test(backgroundSrc) || !/FOCUS_READER/.test(backgroundSrc) || !/getContexts/.test(backgroundSrc)) {
   fail("background should reuse an open conversation tab before creating one");
 }
+if (!/fitHealth/.test(backgroundSrc)) fail("health payload should be trimmed without dropping the warning");
+if (/stringify\(health\)\.length > 2000/.test(backgroundSrc)) {
+  fail("a long diag must not reject the whole health warning");
+}
+if (!/senderPageUrl/.test(backgroundSrc)) fail("health should accept sender.url when tab.url is empty");
+if (!/\[Chatseek\] loaded v=/.test(sharedSrc)) fail("content script must log once when it loads");
+if (!/CHATSEEK_PING/.test(sharedSrc)) fail("content script must answer the side panel ping");
+if (!/openOrClosedShadowRoot/.test(sharedSrc)) fail("closed shadow roots must be readable without a new permission");
+if (!/readScopes/.test(read("content/chatgpt.js"))) fail("chatgpt capture must walk shadow and iframe scopes");
+if (!/conversationIdFromPath/.test(read("content/chatgpt.js"))) fail("chatgpt ids must come from the /c/ uuid");
 
 for (const rel of [
   "content/chatgpt.js",
@@ -751,6 +783,33 @@ const leaked = pageTime.formatDiag({
 });
 if (!leaked.startsWith("[Chatseek] diag ")) fail(`diag prefix missing: ${leaked}`);
 if (/SECRET|zebrafox|11111111|chatgpt\.com\/c/.test(leaked)) fail(`diag leaked content: ${leaked}`);
+const structureLine = pageTime.formatStructure({
+  main: "shadow+iframe",
+  top: 4,
+  body: "41-160",
+  frames: ["chatgpt.com:script", "https://evil.example/runner.html?q=1:script"],
+  shadows: [{ tag: "div", mode: "closed" }, { tag: "!!!", mode: "open" }],
+  skeleton: "iframe>main>div{turn}~41-160 SECRET BODY zebrafox",
+});
+if (!/main=shadow\+iframe/.test(structureLine) || !/top=4/.test(structureLine) || !/body=41-160/.test(structureLine)) {
+  fail(`structure line missing counts: ${structureLine}`);
+}
+if (!/frames=1:chatgpt\.com:script/.test(structureLine)) fail(`frame host leaked a path: ${structureLine}`);
+if (!/shadows=1:div:closed/.test(structureLine)) fail(`shadow list drifted: ${structureLine}`);
+if (!/skeleton=-/.test(structureLine) || /SECRET|zebrafox|evil\.example|runner/.test(structureLine)) {
+  fail(`structure diag leaked text: ${structureLine}`);
+}
+const uuidSkeleton = pageTime.formatStructure({
+  main: "top",
+  top: 1,
+  body: "0",
+  frames: [],
+  shadows: [],
+  skeleton: "main>div~1-40 11111111-1111-4111-8111-111111111111",
+});
+if (/11111111/.test(uuidSkeleton) || !/skeleton=-/.test(uuidSkeleton)) {
+  fail(`uuid must not survive in the skeleton: ${uuidSkeleton}`);
+}
 if (!/user=1/.test(leaked) || !/assistant=1/.test(leaked) || !/imgHold=1/.test(leaked) || !/path=conversation/.test(leaked)) {
   fail(`diag missing counts: ${leaked}`);
 }

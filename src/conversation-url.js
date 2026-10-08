@@ -14,6 +14,13 @@ function uuidFrom(pathname) {
   return match ? match[0].toLowerCase() : "";
 }
 
+/** ChatGPT id is the UUID after /c/, never an earlier id in /g/<gpt>/c/. */
+function chatgptConversationId(pathname) {
+  const path = String(pathname || "").split(/[?#]/)[0];
+  const match = path.match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  return match ? match[1].toLowerCase() : "";
+}
+
 function cleanGeminiId(raw) {
   const id = String(raw || "").trim();
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(id)) return "";
@@ -63,8 +70,7 @@ export function conversationFromUrl(raw) {
   const path = url.pathname || "/";
 
   if (host === "chatgpt.com" || host === "chat.openai.com") {
-    if (!/\/c\//i.test(path)) return null;
-    const id = uuidFrom(path);
+    const id = chatgptConversationId(path);
     if (!id) return null;
     return { platform: "chatgpt", platformId: id, id: `chatgpt:${id}` };
   }

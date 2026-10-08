@@ -386,6 +386,21 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   const conv = await requestDone(convStore.get(conversation.id));
   let baselineCount = conv?.messageCount || 0;
   let baselineTail = conv?.tailMessageId || "";
+  // A title-only row (0 stored messages) must accept the next real capture.
+  // Prefix protection stays for rows that already have a body.
+  const titleOnly = !(Number(conv?.messageCount) > 0);
+  let replacedTitleOnly = false;
+  if (titleOnly) {
+    const oldRows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+    for (const row of oldRows || []) {
+      if (!row?.id) continue;
+      deleteTokens(tokenStore, tokensForDelete(row.body), conversation.id, row.id);
+      msgStore.delete(row.id);
+      replacedTitleOnly = true;
+    }
+    baselineCount = 0;
+    baselineTail = "";
+  }
   if (conv && meta.captureId && conv.captureToken !== meta.captureId) {
     conv.captureToken = meta.captureId;
     conv.captureBaselineCount = baselineCount;
@@ -406,7 +421,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
     if (existing && (existing.body === msg.body || poorerBody(existing.body, msg.body))) continue;
-    if (!existing && baselineCount > pageCount && pageCount > 0) {
+    if (!titleOnly && !existing && baselineCount > pageCount && pageCount > 0) {
       const needle = msg.body.trim();
       if (needle.length >= 12) {
         if (!storedRows) {
@@ -436,7 +451,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     const record = {
       id: msg.id,
       conversationId: conversation.id,
-      role: msg.role === "assistant" ? "assistant" : "user",
+      role: msg.role === "assistant" || msg.role === "unknown" ? "assistant" : "user",
       body: msg.body,
       // First capture time and page position order turns that share a
       // millisecond. A streamed body rewrite keeps both so the turn stays put.
@@ -454,6 +469,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     changed += 1;
   }
 
+  if (replacedTitleOnly) changed += 1;
   if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
     const fields = nextPreviewFields(conv, messages, meta.pageMessageIds, { freshIds });
     if (fields.firstUserPreview && !poorerPreview(conv.firstUserPreview, fields.firstUserPreview)) {
@@ -508,11 +524,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       : messages.map((msg) => msg?.id).filter(Boolean)
     ).filter((id) => !skippedIds.has(id));
     const orderKey = ORDER_PREFIX + conv.id;
-    const storedOrder = await requestDone(metaStore.get(orderKey));
+    const storedOrder = titleOnly ? null : await requestDone(metaStore.get(orderKey));
     metaStore.put({
       key: orderKey,
       conversationId: conv.id,
-      ids: mergeMessageOrder(storedOrder?.ids || conv.messageOrder, orderIds),
+      ids: mergeMessageOrder(titleOnly ? [] : (storedOrder?.ids || conv.messageOrder), orderIds),
     });
     delete conv.messageOrder;
     convStore.put(conv);
@@ -814,10 +830,10 @@ export async function stats() {
 }
 
 function cleanStoredDiag(line) {
-  const text = String(line || "");
+  let text = String(line || "");
   if (!text.startsWith("[Chatseek] diag ")) return "";
-  if (text.length > 700) return "";
   if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return "";
+  if (text.length > 1600) text = text.slice(0, 1600);
   return text;
 }
 
