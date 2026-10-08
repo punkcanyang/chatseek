@@ -521,6 +521,37 @@ const bucketLabel = formatActivityLabel(
 );
 assert(bucketLabel.approx && bucketLabel.text.startsWith("約 ") && !bucketLabel.before, bucketLabel.text);
 
+// A group instant is invented (Today = midpoint of the day so far, Yesterday =
+// noon), so the label carries the group's day only, never hours or a clock.
+{
+  const viewAt = new Date(2026, 9, 8, 15, 0).getTime();
+  const todayPoint = new Date(2026, 9, 8, 7, 30).getTime();
+  const yesterdayPoint = new Date(2026, 9, 7, 12, 0).getTime();
+  const weekPoint = new Date(2026, 9, 5, 12, 0).getTime();
+  const oldPoint = new Date(2026, 6, 15, 12, 0).getTime();
+  for (const [point, day] of [
+    [todayPoint, "2026-10-08"],
+    [yesterdayPoint, "2026-10-07"],
+    [weekPoint, "2026-10-05"],
+    [oldPoint, "2026-07-15"],
+  ]) {
+    const conv = { updatedAtSource: "page-bucket", updatedAt: point, firstSeenAt: viewAt };
+    const hant = formatActivityLabel(conv, viewAt, "zh-TW");
+    const hans = formatActivityLabel(conv, viewAt, "zh-CN");
+    const en = formatActivityLabel(conv, viewAt, "en");
+    assert(hant.text === `約 ${day}` && hant.approx && !hant.before && !hant.unknown, hant.text);
+    assert(hans.text === `约 ${day}`, hans.text);
+    assert(en.text === `~ ${day}`, en.text);
+    assert(hant.title === `推估：依側欄分組 · ${day}`, hant.title);
+    assert(hans.title === `推估：按侧栏分组 · ${day}`, hans.title);
+    assert(en.title === `Estimated from the sidebar group · ${day}`, en.title);
+    for (const label of [hant, hans, en]) {
+      assert(!/\d{2}:\d{2}|小時|小时|分鐘|分钟|剛剛|刚刚|ago|just now/.test(label.text + label.title), label.text + label.title);
+    }
+    assert(formatActivityLabel(conv, viewAt + 3 * 86400000, "zh-TW").text === hant.text, "a group label must not drift");
+  }
+}
+
 const boundNow = Date.now();
 const tNew = boundNow - 2 * 86400000;
 const tOld = boundNow - 10 * 86400000;

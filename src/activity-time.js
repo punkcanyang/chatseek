@@ -305,9 +305,14 @@ function formatClock(ts, now) {
   return d.getFullYear() === new Date(now).getFullYear() ? day : `${d.getFullYear()}/${day}`;
 }
 
+function formatDate(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function formatAbsolute(ts) {
   const d = new Date(ts);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${formatDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function formatHm(ts) {
@@ -318,7 +323,9 @@ function formatHm(ts) {
 /**
  * zh-Hant carries the owner's strings verbatim.
  * A sidebar-rank row under a page-exact or observed anchor says 「早於 <absolute>」.
- * 「約」 remains only for a page-bucket group. No clock above → 「日期未知（收錄於 …）」.
+ * A page-bucket group says 「約 YYYY-MM-DD」: its stored instant is a made-up point
+ * inside the group (Today is the midpoint of the day so far), so no clock time or
+ * hours-ago is shown. No clock above → 「日期未知（收錄於 …）」.
  * zh-Hans matches the rest of the Simplified side panel so one label never mixes scripts.
  * The anchor stamp is YYYY-MM-DD HH:mm (the same absolute form as the tooltip),
  * so the words do not drift into another relative guess as time passes.
@@ -400,10 +407,7 @@ function relativeLabel(ts, now, s) {
   const h = Math.floor(m / 60);
   if (h < 48) return s.hours(h);
   const days = Math.floor(h / 24);
-  if (days >= 7) {
-    const d = new Date(ts);
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
+  if (days >= 7) return formatDate(ts);
   return s.days(days);
 }
 
@@ -455,10 +459,10 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
 
   const when = relativeLabel(conv.updatedAt, now, s);
   if (source === "page-bucket") {
-    const absolute = isValidPageMs(conv.updatedAt) ? formatAbsolute(conv.updatedAt) : "";
+    const day = isValidPageMs(conv.updatedAt) ? formatDate(conv.updatedAt) : "";
     return {
-      text: s.approx(when),
-      title: absolute ? `${s.fromGroup} · ${absolute}` : s.fromGroup,
+      text: s.approx(day || when),
+      title: day ? `${s.fromGroup} · ${day}` : s.fromGroup,
       source,
       approx: true,
       unknown: false,
