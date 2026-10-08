@@ -170,6 +170,22 @@ function tokensForDelete(body) {
   return [...new Set([...raw, ...tokenize(plain)])];
 }
 
+// A half-painted turn is a prefix of the text we already stored. A shorter
+// edit that is not that prefix still replaces the row.
+function poorerBody(existingBody, nextBody) {
+  const prev = String(existingBody || "").trim();
+  const next = String(nextBody || "").trim();
+  if (!prev || !next || next.length >= prev.length) return false;
+  return prev.startsWith(next);
+}
+
+function poorerPreview(prev, next) {
+  const stored = String(prev || "").trim();
+  const incoming = String(next || "").trim().replace(/…$/, "");
+  if (!stored || !incoming || incoming.length >= stored.length) return false;
+  return stored.startsWith(incoming);
+}
+
 function writeTokens(tokenStore, text, conversationId, source, role) {
   const grouped = new Map();
   const cap = RELEVANCE_WEIGHT.POSITION_CAP;
@@ -383,11 +399,30 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   let tailBodyChanged = false;
   let observedNow = false;
   const freshIds = new Set();
+  const skippedIds = new Set();
+  let storedRows = null;
+  const pageCount = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds.length : 0;
   for (const [captureIndex, msg] of messages.entries()) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
+    if (existing && (existing.body === msg.body || poorerBody(existing.body, msg.body))) continue;
+    if (!existing && baselineCount > pageCount && pageCount > 0) {
+      const needle = msg.body.trim();
+      if (needle.length >= 12) {
+        if (!storedRows) {
+          storedRows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+        }
+        const fragment = (storedRows || []).some((row) => {
+          const body = String(row?.body || "");
+          return body.length > needle.length && body.startsWith(needle);
+        });
+        if (fragment) {
+          skippedIds.add(msg.id);
+          continue;
+        }
+      }
+    }
     if (!existing) freshIds.add(msg.id);
-    if (existing && existing.body === msg.body) continue;
 
     if (existing) {
       deleteTokens(
@@ -421,11 +456,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
 
   if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
     const fields = nextPreviewFields(conv, messages, meta.pageMessageIds, { freshIds });
-    if (fields.firstUserPreview) {
+    if (fields.firstUserPreview && !poorerPreview(conv.firstUserPreview, fields.firstUserPreview)) {
       conv.firstUserPreview = fields.firstUserPreview;
       conv.firstUserMessageId = fields.firstUserMessageId;
     }
-    if (fields.lastPreview) {
+    if (fields.lastPreview && !poorerPreview(conv.lastPreview, fields.lastPreview)) {
       conv.lastPreview = fields.lastPreview;
       conv.lastPreviewRole = fields.lastPreviewRole;
     }
@@ -468,9 +503,10 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
     }
-    const orderIds = Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
+    const orderIds = (Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
       ? meta.pageMessageIds
-      : messages.map((msg) => msg?.id).filter(Boolean);
+      : messages.map((msg) => msg?.id).filter(Boolean)
+    ).filter((id) => !skippedIds.has(id));
     const orderKey = ORDER_PREFIX + conv.id;
     const storedOrder = await requestDone(metaStore.get(orderKey));
     metaStore.put({

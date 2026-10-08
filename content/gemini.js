@@ -330,28 +330,28 @@
     const prefer = role === "user"
       ? [".query-text", ".query-text-line", "[id^='user-query-content']"]
       : ["message-content", ".markdown", ".model-response-text", ".markdown-main-panel"];
-    let host = null;
+    const hosts = [];
     for (const sel of prefer) {
       try {
-        const nodes = [];
-        if (el.matches?.(sel)) nodes.push(el);
+        if (el.matches?.(sel)) hosts.push(el);
         if (el.querySelectorAll) {
-          for (const node of el.querySelectorAll(sel)) nodes.push(node);
+          for (const node of el.querySelectorAll(sel)) hosts.push(node);
         }
-        host = nodes.find((node) => node && !inThoughts(node)) || null;
       } catch {
-        host = null;
+        // The host itself can still be read, including an open shadow root.
       }
-      if (host) break;
     }
-    if (!host) host = inThoughts(el) ? null : el;
-    if (!host) return "";
-    const rendered = Chatseek.safeDomText(host, role === "user");
-    offsetMaps.set(el, rendered.offsets);
-    const text = role === "user" ? cleanText(rendered.text) : rendered.text;
-    if (!Chatseek.isSubstantive(text) || SR_LINE.test(text)) return "";
-    if (/^(show thinking|hide thinking|查看思路|顯示思路|显示思路)$/i.test(text)) return "";
-    return text;
+    if (!inThoughts(el)) hosts.push(el);
+    for (const host of hosts) {
+      if (!host || inThoughts(host)) continue;
+      const rendered = Chatseek.safeDomText(host, role === "user");
+      const text = role === "user" ? cleanText(rendered.text) : rendered.text;
+      if (!Chatseek.isSubstantive(text) || SR_LINE.test(text)) continue;
+      if (/^(show thinking|hide thinking|查看思路|顯示思路|显示思路)$/i.test(text)) continue;
+      offsetMaps.set(el, rendered.offsets);
+      return text;
+    }
+    return "";
   }
 
   // A stable id keeps a streaming reply on one row and lets the database see
@@ -374,7 +374,7 @@
   let imageHosts = [];
   const offsetMaps = new WeakMap();
 
-  function extractMessages(conversationId, doc) {
+  function extractMessages(conversationId, doc, pace) {
     imageHosts = [];
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
@@ -400,9 +400,9 @@
       });
       const messages = [];
       const used = new Set();
-      for (const item of candidates) {
+      const pushItem = (item) => {
         const body = messageBody(item.el, item.role);
-        if (!body) continue;
+        if (!body) return;
         let domId = messageDomId(item.el, item.role, body);
         // Two identical "continue" turns must stay two rows, or the second overwrites the first.
         if (used.has(domId)) {
@@ -424,9 +424,25 @@
           body,
           offsets: offsetMaps.get(item.el),
         });
+      };
+      const pack = () => ({
+        messages,
+        selector: hit.name,
+        selectorsTried,
+        selectorHits: Chatseek.countSelectors(root, MESSAGE_LAYERS),
+      });
+      if (!pace) {
+        for (const item of candidates) pushItem(item);
+        return pack();
       }
-      const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
-      return { messages, selector: hit.name, selectorsTried, selectorHits };
+      return (async () => {
+        Chatseek._paceAt = Date.now();
+        for (const item of candidates) {
+          pushItem(item);
+          await Chatseek.paceDom();
+        }
+        return pack();
+      })();
     } catch {
       imageHosts = [];
       return {
@@ -489,10 +505,29 @@
     return { ...viewed, health };
   }
 
+  async function viewLive(doc, loc) {
+    const root = doc || document;
+    const here = loc || location;
+    const sidebar = extractSidebar(root, here);
+    const temporary = Chatseek.pageKind(here, false) === "temporary";
+    const platformId = temporary ? null : parseConversationPath(here.pathname || "")?.id || null;
+    const extracted = platformId
+      ? await extractMessages(platformId, root, true)
+      : { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((layer) => layer.name) };
+    return {
+      sidebar,
+      conversation: buildConversation(platformId, here, sidebar, root),
+      ...extracted,
+      platformId,
+      pathKind: Chatseek.pageKind(here, !!platformId),
+      untitled: !!titleFromDoc(root) && Chatseek.isGenericTitle(titleFromDoc(root)),
+    };
+  }
+
   async function capture(doc, loc) {
     let viewed;
     try {
-      viewed = view(doc, loc);
+      viewed = await viewLive(doc, loc);
     } catch (err) {
       Chatseek.rememberError(err);
       Chatseek.publishDiag(Chatseek.diagFields({
@@ -516,6 +551,7 @@
           selector: viewed.selector,
           selectorsTried: viewed.selectorsTried,
           selectorHits: viewed.selectorHits,
+          untitled: viewed.untitled,
           ...stats,
         },
       });

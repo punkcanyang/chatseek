@@ -136,6 +136,37 @@
     return dropNested(found);
   }
 
+  function turnOf(node) {
+    return node?.closest?.("[data-turn], article, [data-testid*='conversation-turn']") || node;
+  }
+
+  function consider(node, layer, chosen) {
+    if (chosen.some((item) => item.node === node || item.node.contains(node))) return false;
+    const built = messageFromNode(node, chosen.conversationId);
+    if (!built) return false;
+    const inners = chosen.filter((item) => node.contains(item.node) && item.node !== node);
+    if (inners.length > 1) return false;
+    if (inners.length === 1) {
+      const inner = inners[0].message.body;
+      const outer = built.message.body;
+      if (outer.length < inner.length + 24 || !outer.includes(inner.slice(0, Math.min(80, inner.length)))) {
+        return false;
+      }
+      const idx = chosen.indexOf(inners[0]);
+      if (idx >= 0) chosen.splice(idx, 1);
+    }
+    const turn = turnOf(node);
+    const dup = chosen.find((item) => {
+      if (turnOf(item.node) !== turn) return false;
+      const prev = item.message.body.trim();
+      const next = built.message.body.trim();
+      return prev === next || (prev.length > next.length && prev.includes(next));
+    });
+    if (dup) return false;
+    chosen.push({ node, ...built, layer: layer.name });
+    return true;
+  }
+
   let imageHosts = [];
 
   function messageFromNode(node, conversationId) {
@@ -162,16 +193,38 @@
     let selector = null;
     for (const layer of MESSAGE_LAYERS) {
       for (const node of keptNodes(scope, layer)) {
-        if (chosen.some((item) => item.node === node || item.node.contains(node) || node.contains(item.node))) {
-          continue;
-        }
-        const built = messageFromNode(node, chosen.conversationId);
-        if (!built) continue;
-        if (!selector) selector = layer.name;
-        chosen.push({ node, ...built, layer: layer.name });
+        if (consider(node, layer, chosen) && !selector) selector = layer.name;
       }
     }
     return selector;
+  }
+
+  async function takeLayerPaced(scope, chosen) {
+    let selector = null;
+    for (const layer of MESSAGE_LAYERS) {
+      for (const node of keptNodes(scope, layer)) {
+        if (consider(node, layer, chosen) && !selector) selector = layer.name;
+        await Chatseek.paceDom();
+      }
+    }
+    return selector;
+  }
+
+  function packMessages(chosen, selector, selectorsTried, selectorHits) {
+    chosen.sort((a, b) => {
+      if (!a.node.compareDocumentPosition) return 0;
+      const pos = a.node.compareDocumentPosition(b.node);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+    const messages = [];
+    for (const item of chosen) {
+      messages.push(item.message);
+      imageHosts.push(item.host);
+    }
+    if (!selector && chosen[0]) selector = chosen[0].layer;
+    return { messages, selector, selectorsTried, selectorHits };
   }
 
   function extractMessages(conversationId, doc) {
@@ -195,20 +248,33 @@
         }
       }
     }
-    chosen.sort((a, b) => {
-      if (!a.node.compareDocumentPosition) return 0;
-      const pos = a.node.compareDocumentPosition(b.node);
-      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-      return 0;
-    });
-    const messages = [];
-    for (const item of chosen) {
-      messages.push(item.message);
-      imageHosts.push(item.host);
+    return packMessages(chosen, selector, selectorsTried, selectorHits);
+  }
+
+  async function extractMessagesPaced(conversationId, doc) {
+    const root = doc || document;
+    const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
+    const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
+    imageHosts = [];
+    const chosen = [];
+    chosen.conversationId = conversationId;
+    Chatseek._paceAt = Date.now();
+    let selector = await takeLayerPaced(root, chosen);
+    if (!chosen.length) {
+      for (const shadowRoot of Chatseek.openShadowRoots(root)) {
+        const shadowHits = Chatseek.countSelectors(shadowRoot, MESSAGE_LAYERS);
+        for (const [name, count] of Object.entries(shadowHits)) {
+          if (count) selectorHits[`shadow ${name}`] = (selectorHits[`shadow ${name}`] || 0) + count;
+        }
+        const shadowSelector = await takeLayerPaced(shadowRoot, chosen);
+        if (chosen.length) {
+          selector = shadowSelector ? `shadow ${shadowSelector}` : selector;
+          break;
+        }
+        await Chatseek.paceDom();
+      }
     }
-    if (!selector && chosen[0]) selector = chosen[0].layer;
-    return { messages, selector, selectorsTried, selectorHits };
+    return packMessages(chosen, selector, selectorsTried, selectorHits);
   }
 
   function healthFor(loc, doc, extraction, sidebar, platformId) {
@@ -250,6 +316,7 @@
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : conversationIdFromLocation(here);
     let conversation = null;
+    let titled = "";
     let extracted = {
       messages: [],
       selector: null,
@@ -258,7 +325,8 @@
     };
     if (platformId) {
       const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-      const title = titleFromDoc(root) || fromSidebar?.title || platformId;
+      titled = titleFromDoc(root) || fromSidebar?.title || "";
+      const title = titled || platformId;
       conversation = {
         id: `${PLATFORM}:${platformId}`,
         platform: PLATFORM,
@@ -278,7 +346,7 @@
         conversation.archived = true;
         conversation.archiveSource = "chatgpt:archive-list";
       } else if (signals.composer) markSeenActive(conversation, "chatgpt:conversation");
-      extracted = extractMessages(platformId, root);
+      extracted = await extractMessagesPaced(platformId, root);
     }
     const stats = Chatseek.messageStats(extracted.messages);
     const result = await Chatseek.runCapture(state, {
@@ -292,6 +360,7 @@
         selector: extracted.selector,
         selectorsTried: extracted.selectorsTried,
         selectorHits: extracted.selectorHits,
+        untitled: !!titled && Chatseek.isGenericTitle(titled),
         ...stats,
       },
     });

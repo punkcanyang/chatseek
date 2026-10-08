@@ -129,10 +129,14 @@ export function visibleRanges(blocks) {
 export function indexPlain(body) {
   const raw = String(body ?? "");
   if (!raw) return "";
-  if (!/[*_`#|[\]>]/.test(raw)) return raw;
+  if (!/[*_`#|[\]>]|https?:\/\//i.test(raw)) return raw;
   try {
     const plain = markdownToPlain(raw);
-    return plain || raw;
+    if (!plain) return raw;
+    // Link and image destinations stay out of the index. A cached thumbnail
+    // replaces the markdown image, so a URL token would be a hit the reader
+    // does not paint.
+    return plain.replace(/https?:\/\/\S+/gi, " ").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim();
   } catch {
     return raw;
   }

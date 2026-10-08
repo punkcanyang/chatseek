@@ -71,7 +71,7 @@
 
   let imageHosts = [];
 
-  function extractMessages(conversationId) {
+  async function extractMessages(conversationId) {
     imageHosts = [];
     const candidates = [];
     document
@@ -108,15 +108,19 @@
 
     const seen = new Set();
     const messages = [];
-    candidates.forEach((item) => {
-      if (seen.has(item.el)) return;
+    Chatseek._paceAt = Date.now();
+    for (const item of candidates) {
+      if (seen.has(item.el)) continue;
+      let nested = false;
       for (const other of candidates) {
-        if (other.el !== item.el && other.el.contains(item.el)) return;
+        if (other.el !== item.el && other.el.contains(item.el)) nested = true;
       }
+      if (nested) continue;
       seen.add(item.el);
       const rendered = Chatseek.safeDomText(item.el, item.role === "user");
       const body = rendered.text;
-      if (!Chatseek.isSubstantive(body)) return;
+      await Chatseek.paceDom();
+      if (!Chatseek.isSubstantive(body)) continue;
       const domId = item.el.getAttribute("data-message-id") ||
         item.el.id ||
         Chatseek.hash(item.role + ":" + body.slice(0, 180));
@@ -127,7 +131,7 @@
         body,
       });
       imageHosts.push({ el: item.el, messageId: id, role: item.role, body, offsets: rendered.offsets });
-    });
+    }
     return messages;
   }
 
@@ -136,9 +140,11 @@
     const platformId = conversationIdFromLocation();
     let conversation = null;
     let messages = [];
+    let titled = "";
     if (platformId) {
       const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-      const title = titleFromDoc() || fromSidebar?.title || platformId;
+      titled = titleFromDoc() || fromSidebar?.title || "";
+      const title = titled || platformId;
       conversation = {
         id: `${PLATFORM}:${platformId}`,
         platform: PLATFORM,
@@ -147,7 +153,7 @@
         url: canonicalUrl(platformId),
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
-      messages = extractMessages(platformId);
+      messages = await extractMessages(platformId);
     }
     const selectorHits = {};
     let selector = null;
@@ -170,6 +176,7 @@
           selector,
           selectorsTried: MESSAGE_SELECTORS,
           selectorHits,
+          untitled: !!titled && Chatseek.isGenericTitle(titled),
           ...stats,
         },
       });

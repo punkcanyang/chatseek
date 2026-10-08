@@ -876,10 +876,17 @@ const Chatseek = {
       ? health.selectorHits
       : null;
     const anySelectorHit = !!selectorHits && Object.values(selectorHits).some((n) => Number(n) > 0);
-    // A matched shell ("ChatGPT" / Copy) is not a loading thread. Warn immediately.
-    // Zero hits on a conversation URL still waits out the grace period.
-    const forceWarn = !!(health && health.pathKind === "conversation" && !msgs.length && anySelectorHit);
-    if (settling && !forceWarn) {
+    // Shells during the grace period are still painting. A generic title with
+    // no message nodes is a new chat, not a broken selector. A conversation
+    // that stays empty after the grace period still warns, shells included.
+    const newChat = !!(
+      health &&
+      health.pathKind === "conversation" &&
+      !msgs.length &&
+      health.untitled &&
+      !anySelectorHit
+    );
+    if (settling && !newChat) {
       ok = false;
       Chatseek.publishDiag(Chatseek.diagFields({
         platform,
@@ -905,7 +912,7 @@ const Chatseek = {
         userCount: health.userCount,
         assistantCount: health.assistantCount,
         charCount: health.charCount,
-        forceWarn,
+        suppressWarn: newChat,
       });
       const diag = Chatseek.publishDiag(Chatseek.diagFields({
         platform,
@@ -1438,13 +1445,13 @@ const Chatseek = {
     userCount,
     assistantCount,
     charCount,
-    forceWarn,
+    suppressWarn,
   }) {
     const tried = selectorsTried || [];
     const hits = Chatseek.compactHits(selectorHits);
-    // 0 messages on a conversation page is the warning. Callers skip this
-    // during the loading grace unless a selector already matched a shell.
-    const warn = (pathKind === "conversation" && !messageCount) || !!forceWarn;
+    // 0 messages on a conversation page is the warning. runCapture waits out
+    // the loading grace before calling this, and a new chat passes suppressWarn.
+    const warn = !suppressWarn && pathKind === "conversation" && !messageCount;
     const where = platform === "chatgpt" ? "/c/ page" : "conversation page";
     if (warn) {
       const key = `${platform}:${where}:${tried.join(",")}`;
@@ -1492,7 +1499,7 @@ function domSkip(node) {
   if (role === "button" || role === "navigation") return true;
   if (node.getAttribute?.("aria-hidden") === "true") return true;
   const blob = `${domClassBlob(node)} ${node.getAttribute?.("data-testid") || ""}`;
-  if (/visually-hidden|sr-only|cdk-visually-hidden|thoughts-container|thoughts-content|model-thoughts|ql-editor|artifact/i.test(blob)) {
+  if (/visually-hidden|sr-only|cdk-visually-hidden|thoughts-container|thoughts-content|model-thoughts|ql-editor/i.test(blob)) {
     return true;
   }
   return false;
@@ -1569,10 +1576,110 @@ function pushInline(state, text, pre) {
 }
 
 function walkChildren(node, state, ctx) {
-  const root = node?.shadowRoot || node;
-  const kids = root?.childNodes;
+  const shadow = node?.shadowRoot;
+  if (shadow && shadow.childNodes && shadow.childNodes.length) {
+    for (const child of shadow.childNodes) walkNode(child, state, ctx);
+    return;
+  }
+  const kids = node?.childNodes;
   if (!kids) return;
   for (const child of kids) walkNode(child, state, ctx);
+}
+
+function isSaidLine(node) {
+  if (!node || node.nodeType !== 1) return false;
+  if (node.querySelector?.("p, pre, ul, ol, table, blockquote")) return false;
+  const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 48) return false;
+  if (speakerLabel(text)) return true;
+  return /^(?:(?:chat\s*gpt|chatgpt|you|claude|gemini|grok|gpt-4o|gpt-5|o1|o3)\s+said|you\s+said)\s*:?$/i.test(text);
+}
+
+function nearPre(node) {
+  let sib = node?.nextElementSibling;
+  for (let i = 0; sib && i < 3; i += 1) {
+    if (sib.tagName === "PRE" || sib.querySelector?.("pre")) return sib.tagName === "PRE" ? sib : sib.querySelector("pre");
+    sib = sib.nextElementSibling;
+  }
+  return null;
+}
+
+function isCodeHeader(node) {
+  if (!node || node.nodeType !== 1 || node.tagName === "PRE") return false;
+  if (node.querySelector?.("pre, table, ul, ol, p, blockquote")) return false;
+  const pre = nearPre(node);
+  if (!pre) return false;
+  const raw = node.textContent || "";
+  if (raw.length > 80) return false;
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll("button, svg, [role='button']").forEach((el) => el.remove());
+  const text = (clone.textContent || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 32) return false;
+  if (/^(?:copy|copy code|copied|复制代码|複製程式碼|コピー|コードをコピー)$/i.test(text)) return true;
+  const lang = codeLanguage(pre.querySelector?.("code") || pre);
+  if (lang && text.toLowerCase() === lang) return true;
+  return /code-header|language-label|hljs-meta/i.test(domClassBlob(node));
+}
+
+function isArtifactChrome(node) {
+  if (!node || node.nodeType !== 1) return false;
+  if (node.tagName === "PRE" || node.tagName === "CODE") return false;
+  const blob = `${domClassBlob(node)} ${node.getAttribute?.("data-testid") || ""}`;
+  const parent = node.parentElement;
+  const parentBlob = parent
+    ? `${domClassBlob(parent)} ${parent.getAttribute?.("data-testid") || ""}`
+    : "";
+  if (!/artifact/i.test(`${blob} ${parentBlob}`)) return false;
+  if (node.querySelector?.("pre, p, ul, ol, table, blockquote, h1, h2, h3")) return false;
+  const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+  return text.length <= 80;
+}
+
+function isCitationCaption(node) {
+  if (!node || node.nodeType !== 1) return false;
+  const link = node.closest?.("a[href]");
+  if (!link || link === node) return false;
+  const href = link.getAttribute("href") || "";
+  if (!/^https?:\/\//i.test(href)) return false;
+  if (node.querySelector?.("a, p, pre, ul, ol")) return false;
+  const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 60) return false;
+  let host = "";
+  try { host = new URL(href).hostname.replace(/^www\./, "").toLowerCase(); } catch { return false; }
+  const norm = text.toLowerCase().replace(/^www\./, "");
+  if (norm === host || (norm.includes(".") && (host.endsWith(`.${norm}`) || norm.endsWith(`.${host}`)))) return true;
+  const blob = domClassBlob(node);
+  return /text-xs|caption|subtitle|citation|source-domain/i.test(blob) && norm === host;
+}
+
+function writeKatex(node, state) {
+  if (!/\bkatex\b/.test(domClassBlob(node))) return false;
+  if (/\bkatex-(?:html|mathml)\b/.test(domClassBlob(node))) return false;
+  let tex = "";
+  try { tex = node.querySelector("annotation")?.textContent || ""; } catch { tex = ""; }
+  tex = String(tex).replace(/\s+/g, " ").trim();
+  if (!tex) return false;
+  const display = /\bkatex-display\b/.test(domClassBlob(node)) || !!node.closest?.(".katex-display");
+  ensureBreak(state, display ? 2 : 1);
+  writeRaw(state, display ? `$$\n${tex}\n$$` : `$${tex}$`);
+  if (display) ensureBreak(state, 2);
+  return true;
+}
+
+function fenceFor(text) {
+  let n = 2;
+  const re = /`+/g;
+  let match;
+  while ((match = re.exec(text))) if (match[0].length > n) n = match[0].length;
+  return "`".repeat(n + 1);
+}
+
+function codePlain(node) {
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll(
+    "[class*='line-number'], [class*='linenumber'], [class*='LineNumber'], [data-line-number], .hljs-ln-numbers",
+  ).forEach((el) => el.remove());
+  return String(clone.textContent || "").replace(/\r\n?/g, "\n").replace(/\n$/, "");
 }
 
 function renderList(node, ordered, depth, state, ctx) {
@@ -1642,7 +1749,18 @@ function walkNode(node, state, ctx) {
     return;
   }
   if (node.nodeType !== 1 || domSkip(node)) return;
+  if (isSaidLine(node) || isCodeHeader(node) || isArtifactChrome(node) || isCitationCaption(node)) return;
+  if (!ctx.plain && writeKatex(node, state)) return;
   const tag = node.tagName;
+  if (tag === "SLOT") {
+    const assigned = typeof node.assignedNodes === "function" ? node.assignedNodes({ flatten: true }) : [];
+    if (assigned.length) {
+      for (const child of assigned) walkNode(child, state, ctx);
+    } else {
+      walkChildren(node, state, ctx);
+    }
+    return;
+  }
   if (tag === "BR") {
     writeRaw(state, "\n");
     return;
@@ -1668,11 +1786,15 @@ function walkNode(node, state, ctx) {
   if (tag === "PRE") {
     const code = [...(node.children || [])].find((el) => el.tagName === "CODE") || node;
     const lang = ctx.plain ? "" : codeLanguage(code);
-    const text = String(code.textContent || "").replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    const text = codePlain(code);
     const saved = state.quote;
     state.quote = 0;
     ensureBreak(state, 2);
-    writeRaw(state, ctx.plain ? text : `\`\`\`${lang}\n${text}\n\`\`\``);
+    if (ctx.plain) writeRaw(state, text);
+    else {
+      const fence = fenceFor(text);
+      writeRaw(state, `${fence}${lang}\n${text}\n${fence}`);
+    }
     ensureBreak(state, 2);
     state.quote = saved;
     return;
@@ -1715,16 +1837,17 @@ function walkNode(node, state, ctx) {
   if (tag === "A") {
     const href = node.getAttribute("href") || "";
     const safe = /^https?:\/\//i.test(href) ? href.replace(/[\s)]/g, "") : "";
+    const linked = { ...ctx, inLink: true };
     if (ctx.plain || !safe) {
-      walkChildren(node, state, ctx);
+      walkChildren(node, state, linked);
       return;
     }
     writeRaw(state, "[");
-    walkChildren(node, state, ctx);
+    walkChildren(node, state, linked);
     writeRaw(state, `](${safe})`);
     return;
   }
-  const block = /^(P|DIV|SECTION|ARTICLE|LI|HEADER|FIGURE|FIGCAPTION)$/.test(tag) || tag === "M" + "AIN";
+  const block = !ctx.inLink && (/^(P|DIV|SECTION|ARTICLE|LI|HEADER|FIGURE|FIGCAPTION)$/.test(tag) || tag === "M" + "AIN");
   if (block) ensureBreak(state, 2);
   const next = ctx.plain && /whitespace-pre-wrap|pre-wrap/i.test(domClassBlob(node))
     ? { ...ctx, plainPre: true }
@@ -1818,7 +1941,17 @@ Chatseek.messageStats = (messages) => {
 Chatseek.isSpeakerChrome = (body) => {
   const t = String(body || "").replace(/[#>*_`~[\]()]/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return true;
-  return speakerLabel(t);
+  if (speakerLabel(t)) return true;
+  return /^(?:(?:chatgpt|you|claude|gemini|grok)\s+said|you\s+said)\s*:?$/i.test(t);
+};
+
+Chatseek._paceAt = 0;
+Chatseek.paceDom = async () => {
+  const now = Date.now();
+  if (!Chatseek._paceAt) Chatseek._paceAt = now;
+  if (now - Chatseek._paceAt < 12) return;
+  Chatseek._paceAt = Date.now();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
 Chatseek.isSubstantive = (body) => {
@@ -1826,12 +1959,26 @@ Chatseek.isSubstantive = (body) => {
   return !Chatseek.isSpeakerChrome(body);
 };
 
+function oneWord(value) {
+  const name = scrubDiag(value, 40);
+  if (!name || name === "-" || /\s/.test(name) || name.length > 32) return "-";
+  return name;
+}
+
+function scrubFrame(frame) {
+  const cleaned = scrubDiag(frame, 180);
+  const match = cleaned.match(/at\s+\S+(?:\s+\([^)]*\))?/);
+  return match ? match[0].slice(0, 140) : "";
+}
+
 Chatseek.rememberError = (err) => {
   const stack = String(err?.stack || "").split("\n").map((line) => line.trim()).filter(Boolean);
   const frame = stack.find((line) => line.startsWith("at ")) || "";
+  let name = scrubDiag(err?.name || "Error", 40) || "Error";
+  if (/\s/.test(name) || name.length > 32) name = "Error";
   Chatseek._lastError = {
-    name: scrubDiag(err?.name || "Error", 40) || "Error",
-    stack: scrubDiag(frame, 140),
+    name,
+    stack: scrubFrame(frame),
   };
 };
 
@@ -1877,10 +2024,10 @@ Chatseek.formatDiag = (fields) => {
     `imgCache=${Number(src.imagesCached) || 0}`,
     `imgHold=${Number(src.imagesPlaceholder) || 0}`,
     `health=${scrubDiag(src.healthState, 16) || "ok"}`,
-    `err=${scrubDiag(src.errorName, 40) || "-"}`,
+    `err=${oneWord(src.errorName)}`,
     `at=${iso}`,
   ];
-  const stack = scrubDiag(src.errorStack, 140);
+    const stack = scrubFrame(src.errorStack);
   if (stack) parts.push(`stack=${stack}`);
   return parts.join(" ");
 };

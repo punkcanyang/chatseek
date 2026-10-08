@@ -458,18 +458,28 @@ function showDiagBox(text) {
 async function copyDiagnostics() {
   const health = await readCaptureHealth();
   const text = diagText(health) || t.copyDiagEmpty;
+  let wrote = false;
   try {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      if (statusEl) {
-        statusEl.hidden = false;
-        statusEl.textContent = t.copyDiagDone;
-      }
-      if (diagBox) diagBox.hidden = true;
-      return;
+      await Promise.race([
+        navigator.clipboard.writeText(text).then(() => {
+          wrote = true;
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("clipboard")), 500);
+        }),
+      ]);
     }
   } catch {
-    // No clipboardWrite permission. The text stays selectable below.
+    wrote = false;
+  }
+  if (wrote) {
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = t.copyDiagDone;
+    }
+    if (diagBox) diagBox.hidden = true;
+    return;
   }
   showDiagBox(text);
   if (statusEl) {

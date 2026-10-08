@@ -724,6 +724,10 @@ const indexed = indexPlain("**bold** word\n\n# Title\n\n[lab](https://example.co
 if (/[*#]|zz-secret|example\.com/.test(indexed) || !indexed.includes("bold") || !indexed.includes("Title") || !indexed.includes("lab")) {
   fail(`search text kept markup or a link url: ${indexed}`);
 }
+const indexedImage = indexPlain("see ![maple tea](https://cdn.example/maple.png) today");
+if (/cdn\.example|maple\.png/.test(indexedImage) || !indexedImage.includes("maple tea")) {
+  fail(`search text kept an image url: ${indexedImage}`);
+}
 const leaked = pageTime.formatDiag({
   version: "1.6.1",
   platform: "chatgpt",
@@ -767,6 +771,24 @@ const afterImage = pageTime.formatDiag(pageTime.diagFields({
 }));
 if (/SECRET/.test(afterImage)) fail(`diag included the image error text: ${afterImage}`);
 if (!/err=Error/.test(afterImage)) fail(`diag should keep the error name: ${afterImage}`);
+const dirtyStack = pageTime.formatDiag({
+  version: "1.6.1",
+  platform: "chatgpt",
+  pathKind: "conversation",
+  errorName: "SECRET BODY zebrafox",
+  errorStack: "at capture (chatgpt.js:1:1) SECRET BODY zebrafox https://chatgpt.com/c/11111111-1111-4111-8111-111111111111",
+  at: Date.UTC(2026, 9, 8, 12, 0, 0),
+});
+if (/SECRET|zebrafox|11111111|chatgpt\.com/.test(dirtyStack)) fail(`diag stack leaked: ${dirtyStack}`);
+const shellHealth = {
+  pathKind: "conversation",
+  selector: "[data-message-author-role]",
+  selectorsTried: ["[data-message-author-role]", "[data-turn]"],
+  selectorHits: { "[data-message-author-role]": 2, "[data-turn]": 2 },
+  userCount: 0,
+  assistantCount: 0,
+  charCount: 0,
+};
 const shellState = { lastListFp: "", lastMsgFp: "" };
 sent.length = 0;
 healthWarns.length = 0;
@@ -775,21 +797,63 @@ await pageTime.runCapture(shellState, {
   sidebar: [],
   conversation: conv("shell"),
   messages: [],
-  health: {
-    pathKind: "conversation",
-    selector: "[data-message-author-role]",
-    selectorsTried: ["[data-message-author-role]", "[data-turn]"],
-    selectorHits: { "[data-message-author-role]": 2, "[data-turn]": 2 },
-    userCount: 0,
-    assistantCount: 0,
-    charCount: 0,
-  },
+  health: shellHealth,
+});
+if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
+  fail("selector shells during the grace period are still loading and must not warn");
+}
+shellState.zeroSince -= pageTime.HEALTH_GRACE_MS;
+await pageTime.runCapture(shellState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("shell"),
+  messages: [],
+  health: shellHealth,
 });
 if (!healthSent().some((p) => p.health.warn && p.health.messageCount === 0 && String(p.health.diag || "").startsWith("[Chatseek] diag "))) {
   fail("a title-only thread whose selectors matched shells must warn and store a diag line");
 }
 if (healthSent().some((p) => /SECRET|zebrafox/.test(JSON.stringify(p.health)))) {
   fail("stored health diag must not carry message text");
+}
+const fresh = { lastListFp: "", lastMsgFp: "" };
+sent.length = 0;
+healthWarns.length = 0;
+await pageTime.runCapture(fresh, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("new"),
+  messages: [],
+  health: {
+    pathKind: "conversation",
+    selector: "none",
+    selectorsTried: ["[data-message-author-role]"],
+    selectorHits: { "[data-message-author-role]": 0 },
+    untitled: true,
+    userCount: 0,
+    assistantCount: 0,
+    charCount: 0,
+  },
+});
+fresh.zeroSince -= pageTime.HEALTH_GRACE_MS;
+await pageTime.runCapture(fresh, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("new"),
+  messages: [],
+  health: {
+    pathKind: "conversation",
+    selector: "none",
+    selectorsTried: ["[data-message-author-role]"],
+    selectorHits: { "[data-message-author-role]": 0 },
+    untitled: true,
+    userCount: 0,
+    assistantCount: 0,
+    charCount: 0,
+  },
+});
+if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
+  fail("a new chat with a generic title and no message nodes must not warn");
 }
 
 if (errors.length) {

@@ -181,4 +181,71 @@ const grok = load(
 );
 expectMarkdown("grok", (await grok.run()).messages);
 
+const extra = walkerDom.window.document.createElement("article");
+extra.innerHTML = `
+  <div>ChatGPT said:</div>
+  <div>You said:</div>
+  <div class="code-header">python <button type="button">Copy code</button></div>
+  <pre><code class="language-python"><span class="line"><span class="line-number">1</span>print("hi")</span>
+<span class="line"><span class="line-number">2</span>\`\`\`</span></code></pre>
+  <table><tr><th>A</th></tr><tr><td>left | right<br>next</td></tr></table>
+  <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>E</mi></mrow><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">E=mc2</span></span>
+  <a href="https://en.wikipedia.org/wiki/Kyoto"><div>Kyoto</div><div class="text-xs citation-domain">en.wikipedia.org</div></a>
+  <a href="javascript:alert(1)">click</a>
+  <div class="artifact-block"><div class="artifact-header">App <button type="button">Copy</button></div><pre><code class="language-html">&lt;p&gt;Hi&lt;/p&gt;</code></pre></div>
+  <blockquote><blockquote><p>inner quote</p></blockquote></blockquote>
+`;
+const extraText = walker.domText(extra, false).text;
+assert(!/ChatGPT said|You said/.test(extraText), extraText);
+assert(!/\bline-number\b|\b1print\b/.test(extraText) && extraText.includes('print("hi")'), extraText);
+assert(!/^1print/m.test(extraText), extraText);
+assert(extraText.includes("````python") || extraText.includes("````"), extraText);
+assert((extraText.match(/```/g) || []).length >= 1, extraText);
+assert(extraText.includes("left \\| right next"), extraText);
+assert(extraText.includes("$E = mc^2$") && !extraText.includes("E=mc2"), extraText);
+assert(extraText.split("E = mc^2").length === 2, extraText);
+assert(extraText.includes("[Kyoto](https://en.wikipedia.org/wiki/Kyoto)"), extraText);
+assert(extraText.split("en.wikipedia.org").length === 2, extraText);
+assert(extraText.includes("click") && !extraText.includes("javascript:"), extraText);
+assert(extraText.includes("<p>Hi</p>") && !/\bCopy\b/.test(extraText) && !extraText.includes("App"), extraText);
+assert(extraText.includes("> > inner quote") || extraText.includes(">> inner quote"), extraText);
+
+const slotHost = walkerDom.window.document.createElement("div");
+const slotRoot = slotHost.attachShadow({ mode: "open" });
+slotRoot.append(walkerDom.window.document.createElement("slot"));
+const light = walkerDom.window.document.createElement("p");
+light.textContent = "slotted pangolin";
+slotHost.append(light);
+assert(walker.domText(slotHost, false).text.includes("slotted pangolin"), walker.domText(slotHost, false).text);
+const onlyShadow = walkerDom.window.document.createElement("div");
+const onlyRoot = onlyShadow.attachShadow({ mode: "open" });
+const shadowP = walkerDom.window.document.createElement("p");
+shadowP.textContent = "shadow only pangolin";
+onlyRoot.append(shadowP);
+assert(walker.domText(onlyShadow, false).text.includes("shadow only pangolin"), walker.domText(onlyShadow, false).text);
+
+const ordered = load(
+  "content/chatgpt.js",
+  `<main>
+    <article data-testid="conversation-turn-1" data-turn="user" data-message-id="u"><div class="whitespace-pre-wrap">alpha user</div></article>
+    <div data-message-author-role="assistant" data-message-id="a"><div class="markdown"><p>beta assistant prose</p></div></div>
+  </main>`,
+  `https://chatgpt.com/c/${id}`,
+);
+const orderedHit = ordered.api.platforms.chatgpt.inspect();
+assert(orderedHit.messages.map((msg) => msg.role).join(",") === "user,assistant", orderedHit.messages.map((msg) => msg.role).join(","));
+assert(orderedHit.messages[0].body.includes("alpha user") && orderedHit.messages[1].body.includes("beta assistant"), JSON.stringify(orderedHit.messages));
+
+const richer = load(
+  "content/chatgpt.js",
+  `<main><article data-turn="assistant" data-message-id="outer">
+    <div data-message-author-role="assistant" data-message-id="inner"><p>Short note.</p></div>
+    <div class="markdown"><p>Short note. The longer pangolin paragraph continues with tea and temples in Kyoto.</p></div>
+  </article></main>`,
+  `https://chatgpt.com/c/${id}`,
+);
+const richerHit = richer.api.platforms.chatgpt.inspect();
+assert(richerHit.messages.length === 1, `nested turn duplicated: ${richerHit.messages.length}`);
+assert(richerHit.messages[0].body.includes("temples"), richerHit.messages[0].body);
+
 console.log("markdown-capture ok", { pieces: PIECES.length });
