@@ -319,6 +319,9 @@ const jitter = Date.UTC(2026, 0, 15, 12, 0, 30);
 if (pageTime.parsePageTime("2h", jitter) !== pageTime.parsePageTime("2h", jitter + 20000)) {
   fail("relative times should stay stable within one minute");
 }
+if (pageTime.parsePageTime("Today", jitter) !== pageTime.parsePageTime("Today", jitter + 20000)) {
+  fail("Today should stay stable within one minute so the sidebar is not rewritten every scan");
+}
 const exactKind = pageTime.classifyPageTime("2025-06-10T12:00:00.000Z");
 const bucketKind = pageTime.classifyPageTime("Previous 30 Days", morning);
 if (exactKind?.source !== "page-exact") fail("ISO time should be page-exact");

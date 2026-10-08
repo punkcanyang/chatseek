@@ -251,11 +251,12 @@ const Chatseek = {
 
     // "Today" is the group [start of day, now]. Noon would sit in the future
     // during the morning and sort above chats that actually just happened.
+    // Minute-floored so the sidebar fingerprint does not change on every scan.
     if (
       /^(today|今天|今日)$/i.test(body) ||
       lower === "today"
     ) {
-      const end = Math.min(now, todayStart + dayMs - 1);
+      const end = Math.min(minuteNow, todayStart + dayMs - 1);
       if (end <= todayStart) return todayStart;
       return todayStart + Math.floor((end - todayStart) / 2);
     }
