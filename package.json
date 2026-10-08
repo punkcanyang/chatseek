@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "verify": "node scripts/verify.mjs && node scripts/chatgpt-fixture-test.mjs",
-    "test:search": "node scripts/search-test.mjs",
+    "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs",
+    "test:upgrade": "node scripts/upgrade-test.mjs",
     "test:fixture": "node scripts/chatgpt-fixture-test.mjs"
   },
   "devDependencies": {
