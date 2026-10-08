@@ -94,9 +94,8 @@ function mergeRanges(ranges) {
  */
 export function snippetAround(text, terms, { before = 28, after = 120, maxLen = 180 } = {}) {
   const flat = flattenPreview(text);
-  const ranges = findMatchRanges(flat, highlightTerms(Array.isArray(terms) ? terms.join(" ") : terms));
   const wanted = Array.isArray(terms) ? terms : highlightTerms(terms);
-  const found = wanted.length ? findMatchRanges(flat, wanted) : ranges;
+  const found = wanted.length ? findMatchRanges(flat, wanted) : [];
   if (!found.length) return null;
   const anchorStart = found[0][0];
   const anchorEnd = found[0][1];
@@ -161,7 +160,9 @@ export function buildPreview(conv, query, bodies) {
   }
   const idle = selectIdlePreview(conv);
   if (idle.kind === "title-only") {
-    return { kind: "title-only", text: "", ranges: [], titleRanges };
+    // Messages are stored but no excerpt could be read: not "title only".
+    const kind = Number(conv?.messageCount) > 0 ? "none" : "title-only";
+    return { kind, text: "", ranges: [], titleRanges };
   }
   if (terms.length) {
     const snip = snippetAround(idle.text, terms);

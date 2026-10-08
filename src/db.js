@@ -588,7 +588,8 @@ async function loadSnippetBodies(list, query) {
 export async function attachPreviews(conversations, query = "") {
   const list = Array.isArray(conversations) ? conversations : [];
   const q = String(query || "").trim();
-  if (!q) await backfillPreviews(list.filter(needsPreviewBackfill));
+  // Search can surface an old row that never reached the idle top 80.
+  await backfillPreviews(list.filter(needsPreviewBackfill));
   const bodies = q ? await loadSnippetBodies(list, q) : new Map();
   return list.map((conv) => ({
     ...conv,

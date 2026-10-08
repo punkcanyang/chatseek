@@ -149,14 +149,17 @@ function render(items, { emptyKind, error }) {
     const preview = conv.preview || { kind: "title-only", text: "", ranges: [], titleRanges: [] };
     fillHighlight(title, conv.title || conv.platformId, preview.titleRanges);
 
-    const previewEl = document.createElement("p");
-    previewEl.className = "item-preview";
-    previewEl.dataset.preview = preview.kind;
-    if (preview.kind === "title-only") {
-      previewEl.classList.add("is-title-only");
-      previewEl.textContent = t.titleOnly;
-    } else {
-      fillHighlight(previewEl, preview.text, preview.ranges);
+    let previewEl = null;
+    if (preview.kind !== "none") {
+      previewEl = document.createElement("p");
+      previewEl.className = "item-preview";
+      previewEl.dataset.preview = preview.kind;
+      if (preview.kind === "title-only") {
+        previewEl.classList.add("is-title-only");
+        previewEl.textContent = t.titleOnly;
+      } else {
+        fillHighlight(previewEl, preview.text, preview.ranges);
+      }
     }
 
     const meta = document.createElement("div");
@@ -180,7 +183,7 @@ function render(items, { emptyKind, error }) {
       btn.classList.add("is-current");
       btn.setAttribute("aria-current", "true");
     }
-    btn.append(title, previewEl, meta);
+    btn.append(...(previewEl ? [title, previewEl, meta] : [title, meta]));
     li.append(btn);
     listEl.append(li);
   }
