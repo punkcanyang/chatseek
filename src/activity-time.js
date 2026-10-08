@@ -9,7 +9,8 @@
  *   page-exact    row datetime, update_time, "3 hours ago", "Last message …"
  *   observed      a new tail message on a conversation that already had messages
  *   page-bucket   Today / Previous 7 Days and other coarse groups
- *   sidebar-rank  interpolated from sidebar order between known times
+ *   sidebar-rank  sort key only, interpolated from sidebar order. The label is
+ *                 "before" the nearest exact/observed time above, not that key.
  *   first-seen    capture time only — not a conversation date
  *   legacy        rows saved before updatedAtSource existed (same rank as first-seen)
  *
@@ -152,11 +153,36 @@ function isAnchor(item) {
   return isValidPageMs(item?.updatedAt) && sourceRank(item.updatedAtSource) >= sourceRank("page-bucket");
 }
 
+/** page-exact and observed only. A page-bucket instant is a point inside a range, so it is not a hard "before" bound. */
+function isClockAnchor(item) {
+  return isValidPageMs(item?.updatedAt) && HIGH.has(item.updatedAtSource);
+}
+
+function clockAboveAt(list, index) {
+  for (let j = index - 1; j >= 0; j--) {
+    if (isClockAnchor(list[j])) return list[j].updatedAt;
+  }
+  return null;
+}
+
+function setOlderThan(item, list, index) {
+  const bound = clockAboveAt(list, index);
+  if (bound) item.olderThanAt = bound;
+  else delete item.olderThanAt;
+}
+
+function clearOlderThan(item) {
+  delete item.olderThanAt;
+}
+
 /**
  * Sidebar order is index 0 = most recently active (pinned rows already removed).
  * Anchors are page-exact / observed / page-bucket. Everyone else is interpolated
  * between the nearest anchors. With no anchors at all, order is kept but the
  * source stays first-seen so the UI can say the date is unknown.
+ *
+ * olderThanAt is display-only: the nearest page-exact or observed time above
+ * this row. It is not a sort key. A page-bucket above does not set it.
  */
 export function applySidebarEstimates(items, now = Date.now()) {
   const list = items.map((item) => ({ ...item }));
@@ -167,19 +193,32 @@ export function applySidebarEstimates(items, now = Date.now()) {
 
   if (!anchors.length) {
     list.forEach((item, index) => {
-      if (isAnchor(item)) return;
-      if (sourceRank(item.updatedAtSource) > sourceRank("first-seen")) return;
+      if (isAnchor(item)) {
+        clearOlderThan(item);
+        return;
+      }
+      if (sourceRank(item.updatedAtSource) > sourceRank("first-seen")) {
+        clearOlderThan(item);
+        return;
+      }
       item.updatedAtSource = "first-seen";
       item.firstSeenAt = item.firstSeenAt || now;
       item.updatedAt = MIN_PAGE_MS + (list.length - index) * 1000;
+      clearOlderThan(item);
     });
     return list;
   }
 
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
-    if (isAnchor(item)) continue;
-    if (sourceRank(item.updatedAtSource) >= sourceRank("page-bucket")) continue;
+    if (isAnchor(item)) {
+      clearOlderThan(item);
+      continue;
+    }
+    if (sourceRank(item.updatedAtSource) >= sourceRank("page-bucket")) {
+      clearOlderThan(item);
+      continue;
+    }
 
     let above = -1;
     let below = -1;
@@ -223,6 +262,7 @@ export function applySidebarEstimates(items, now = Date.now()) {
       item.updatedAtSource = "first-seen";
       item.firstSeenAt = item.firstSeenAt || now;
       item.updatedAt = MIN_PAGE_MS + (list.length - i) * 1000;
+      clearOlderThan(item);
       continue;
     }
 
@@ -231,6 +271,7 @@ export function applySidebarEstimates(items, now = Date.now()) {
     item.updatedAt = ms;
     item.updatedAtSource = "sidebar-rank";
     item.firstSeenAt = item.firstSeenAt || now;
+    setOlderThan(item, list, i);
   }
   return list;
 }
@@ -256,8 +297,12 @@ function formatHm(ts) {
 }
 
 /**
- * zh-Hant carries the owner's strings verbatim: 「約」 and 「日期未知（收錄於 …）」.
+ * zh-Hant carries the owner's strings verbatim.
+ * A sidebar-rank row under a page-exact or observed anchor says 「早於 <absolute>」.
+ * 「約」 remains only for a page-bucket group. No clock above → 「日期未知（收錄於 …）」.
  * zh-Hans matches the rest of the Simplified side panel so one label never mixes scripts.
+ * The anchor stamp is YYYY-MM-DD HH:mm (the same absolute form as the tooltip),
+ * so the words do not drift into another relative guess as time passes.
  */
 const STRINGS = {
   en: {
@@ -267,11 +312,12 @@ const STRINGS = {
     hours: (n) => `${n}h ago`,
     days: (n) => `${n}d ago`,
     approx: (when) => `~ ${when}`,
+    before: (stamp) => `before ${stamp}`,
+    beforeTitle: (stamp) => `Older than the nearest exact time above · ${stamp}`,
     unknown: "Unknown date",
     unknownSaved: (stamp) => `Unknown date (saved ${stamp})`,
     saved: (stamp) => `Saved ${stamp}`,
     fromGroup: "Estimated from the sidebar group",
-    fromOrder: "Estimated from sidebar order",
     temporary: (name) => `${name}: temporary chats are not saved`,
     warn: (name, hhmm) => `${name} page may have changed — please report (last capture ${hhmm}, 0 messages)`,
     thread: (name, hhmm, n) => `${name}: last capture ${hhmm}, ${n} messages`,
@@ -284,11 +330,12 @@ const STRINGS = {
     hours: (n) => `${n} 小時前`,
     days: (n) => `${n} 天前`,
     approx: (when) => `約 ${when}`,
+    before: (stamp) => `早於 ${stamp}`,
+    beforeTitle: (stamp) => `比上方最近一則確切時間更早 · ${stamp}`,
     unknown: "日期未知",
     unknownSaved: (stamp) => `日期未知（收錄於 ${stamp}）`,
     saved: (stamp) => `收錄於 ${stamp}`,
     fromGroup: "推估：依側欄分組",
-    fromOrder: "推估：依側欄順序",
     temporary: (name) => `${name} 臨時聊天不會收錄`,
     warn: (name, hhmm) => `${name} 頁面可能改版，請回報（最後收錄 ${hhmm}，0 則訊息）`,
     thread: (name, hhmm, n) => `${name}：最後收錄 ${hhmm}，${n} 則訊息`,
@@ -301,11 +348,12 @@ const STRINGS = {
     hours: (n) => `${n} 小时前`,
     days: (n) => `${n} 天前`,
     approx: (when) => `约 ${when}`,
+    before: (stamp) => `早于 ${stamp}`,
+    beforeTitle: (stamp) => `比上方最近一则确切时间更早 · ${stamp}`,
     unknown: "日期未知",
     unknownSaved: (stamp) => `日期未知（收录于 ${stamp}）`,
     saved: (stamp) => `收录于 ${stamp}`,
     fromGroup: "推估：按侧栏分组",
-    fromOrder: "推估：按侧栏顺序",
     temporary: (name) => `${name} 临时聊天不会收录`,
     warn: (name, hhmm) => `${name} 页面可能改版，请回报（最后收录 ${hhmm}，0 则消息）`,
     thread: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，${n} 则消息`,
@@ -363,16 +411,39 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
     };
   }
 
+  if (source === "sidebar-rank") {
+    if (isValidPageMs(conv.olderThanAt)) {
+      const stamp = formatAbsolute(conv.olderThanAt);
+      return {
+        text: s.before(stamp),
+        title: s.beforeTitle(stamp),
+        source,
+        approx: false,
+        unknown: false,
+        before: true,
+      };
+    }
+    const stamp = saved ? formatClock(saved, now) : "";
+    return {
+      text: stamp ? s.unknownSaved(stamp) : s.unknown,
+      title: stamp ? s.saved(stamp) : s.unknown,
+      source,
+      approx: false,
+      unknown: true,
+      before: false,
+    };
+  }
+
   const when = relativeLabel(conv.updatedAt, now, s);
-  if (source === "page-bucket" || source === "sidebar-rank") {
-    const why = source === "page-bucket" ? s.fromGroup : s.fromOrder;
+  if (source === "page-bucket") {
     const absolute = isValidPageMs(conv.updatedAt) ? formatAbsolute(conv.updatedAt) : "";
     return {
       text: s.approx(when),
-      title: absolute ? `${why} · ${absolute}` : why,
+      title: absolute ? `${s.fromGroup} · ${absolute}` : s.fromGroup,
       source,
       approx: true,
       unknown: false,
+      before: false,
     };
   }
 
@@ -382,6 +453,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
     source,
     approx: false,
     unknown: false,
+    before: false,
   };
 }
 

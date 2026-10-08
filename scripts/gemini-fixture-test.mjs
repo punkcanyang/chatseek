@@ -13,6 +13,12 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
+function absoluteStamp(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function load(html, url) {
   const dom = new JSDOM(html, { url });
   const warns = [];
@@ -172,11 +178,19 @@ const estOld = estimated.find((row) => row.platformId === "cccccccccccccccc");
 assert(estMid.updatedAt === exact && estMid.updatedAtSource === "page-exact", "anchor time must stay page-exact");
 assert(estNew.updatedAtSource === "sidebar-rank" && estOld.updatedAtSource === "sidebar-rank", "neighbors should be sidebar-rank");
 assert(estNew.updatedAt > estMid.updatedAt && estOld.updatedAt < estMid.updatedAt, "sidebar estimate should keep newest first");
-const approx = formatActivityLabel(estNew, Date.now(), "zh-TW");
-const approxHans = formatActivityLabel(estNew, Date.now(), "zh-CN");
-assert(approx.approx && approx.text.startsWith("約"), approx.text);
-assert(approxHans.approx && approxHans.text.startsWith("约"), approxHans.text);
-assert(!formatActivityLabel(estMid, Date.now(), "zh-TW").approx, "page-exact must not render as 約");
+assert(estNew.olderThanAt == null, "the row above the clock has no before-bound");
+assert(estOld.olderThanAt === exact, "the row below stores the exact anchor time");
+const stamp = absoluteStamp(exact);
+const belowHant = formatActivityLabel(estOld, Date.now(), "zh-TW");
+const belowHans = formatActivityLabel(estOld, Date.now(), "zh-CN");
+const belowEn = formatActivityLabel(estOld, Date.now(), "en");
+assert(belowHant.before && belowHant.text === `早於 ${stamp}` && !belowHant.text.includes("約"), belowHant.text);
+assert(belowHans.before && belowHans.text === `早于 ${stamp}` && !belowHans.text.includes("约"), belowHans.text);
+assert(belowEn.before && belowEn.text === `before ${stamp}`, belowEn.text);
+const aboveHant = formatActivityLabel(estNew, Date.now(), "zh-TW");
+assert(aboveHant.unknown && aboveHant.text.includes("日期未知（收錄於") && !aboveHant.text.includes("約"), aboveHant.text);
+const midLabel = formatActivityLabel(estMid, Date.now(), "zh-TW");
+assert(!midLabel.approx && !midLabel.before, "page-exact must not render as 約 or 早於");
 
 const fallback = load(
   `<!DOCTYPE html><main>

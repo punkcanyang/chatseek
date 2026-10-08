@@ -15,6 +15,12 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
+function absoluteStamp(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 let listener = null;
 globalThis.chrome = {
   runtime: {
@@ -131,7 +137,8 @@ assert(rows[OPEN].updatedAtSource === "first-seen", `scrollback became ${rows[OP
 assert(rows[OPEN].messageCount === 4, `scrollback messageCount ${rows[OPEN].messageCount}`);
 
 // 3. The user sends a message in the open tab. That is an exact "now" for this
-//    thread, and the sidebar neighbours are then estimated from it (約).
+//    thread. Neighbours below it display "before" that clock; the row above has
+//    no clock above it, so it stays unknown. Sort keys are still estimated.
 const before = Date.now();
 doc.getElementById("thread").insertAdjacentHTML(
   "beforeend",
@@ -144,12 +151,22 @@ assert(anchor.updatedAtSource === "observed", `new tail should be observed, got 
 assert(anchor.updatedAt >= before && anchor.updatedAt <= Date.now(), "observed time should be now");
 const anchorLabel = formatActivityLabel(anchor, Date.now(), "zh-TW");
 assert(!anchorLabel.approx && !anchorLabel.unknown, `observed label ${anchorLabel.text}`);
-for (const id of ROWS.filter((id) => id !== OPEN)) {
+const aboveId = ROWS[0];
+const aboveLabel = formatActivityLabel(rows[aboveId], Date.now(), "zh-TW");
+assert(rows[aboveId].updatedAtSource === "sidebar-rank" && rows[aboveId].olderThanAt == null, aboveId);
+assert(aboveLabel.unknown && aboveLabel.text.startsWith("日期未知（收錄於"), aboveLabel.text);
+assert(!aboveLabel.text.includes("約") && !aboveLabel.text.includes("早於"), aboveLabel.text);
+const boundStamp = absoluteStamp(anchor.updatedAt);
+for (const id of ROWS.slice(2)) {
   assert(rows[id].updatedAtSource === "sidebar-rank", `${id} should be estimated, got ${rows[id].updatedAtSource}`);
+  assert(rows[id].olderThanAt === anchor.updatedAt, `${id} should use the nearest clock above`);
   const hant = formatActivityLabel(rows[id], Date.now(), "zh-TW");
   const hans = formatActivityLabel(rows[id], Date.now(), "zh-CN");
-  assert(hant.approx && hant.text.startsWith("約"), hant.text);
-  assert(hans.approx && hans.text.startsWith("约"), hans.text);
+  const en = formatActivityLabel(rows[id], Date.now(), "en");
+  assert(hant.before && hant.text === `早於 ${boundStamp}` && !hant.text.includes("約"), hant.text);
+  assert(hans.before && hans.text === `早于 ${boundStamp}` && !hans.text.includes("约"), hans.text);
+  assert(en.before && en.text === `before ${boundStamp}`, en.text);
+  assert(hant.text === formatActivityLabel(rows[ROWS[2]], Date.now(), "zh-TW").text, "rows under one clock share a label");
 }
 assert(rows[ROWS[0]].updatedAt >= anchor.updatedAt, "row above the anchor must not sort older than it");
 assert(rows[ROWS[2]].updatedAt < anchor.updatedAt, "rows below the anchor must sort older");
@@ -169,8 +186,11 @@ assert(await gemini.capture(), "reorder capture failed");
 rows = await stored();
 assert((await order()).join() === moved.join(), `order after reorder: ${(await order()).join()}`);
 assert(rows[OPEN].updatedAtSource === "observed", "reorder must not downgrade the observed anchor");
+const movedStamp = absoluteStamp(rows[OPEN].updatedAt);
 for (const id of moved.slice(1)) {
   assert(rows[id].updatedAtSource === "sidebar-rank", `${id} after reorder: ${rows[id].updatedAtSource}`);
+  assert(rows[id].olderThanAt === rows[OPEN].updatedAt, `${id} after reorder should sit before the open chat`);
+  assert(formatActivityLabel(rows[id], Date.now(), "zh-TW").text === `早於 ${movedStamp}`, id);
 }
 
 assert(Object.values(TITLES).every((title) => Object.values(rows).some((row) => row.title === title)), "titles drifted");
