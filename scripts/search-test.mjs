@@ -410,6 +410,24 @@ assert(
 );
 assert(!unknownLabel.text.includes("約"), "unknown date must not look estimated");
 
+const longSidebar = [];
+for (let i = 0; i < 60; i++) {
+  const pid = `5e5e5e5e-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const row = convOf(`chatgpt:${pid}`, { title: `Long sidebar ${i}`, sidebarIndex: i });
+  if (i === 10) Object.assign(row, { updatedAt: Date.now() - 2 * 86400000, updatedAtSource: "page-exact" });
+  if (i === 50) Object.assign(row, { updatedAt: Date.now() - 20 * 86400000, updatedAtSource: "page-exact" });
+  longSidebar.push(row);
+}
+await upsertConversations(longSidebar);
+const longRows = [];
+for (const row of longSidebar) longRows.push(await readConv(row.id));
+for (let i = 1; i < longRows.length; i++) {
+  assert(
+    longRows[i].updatedAt < longRows[i - 1].updatedAt,
+    `sidebar estimate broke order at row ${i}: ${longRows[i].updatedAtSource}`,
+  );
+}
+
 await saveCaptureHealth("chatgpt", {
   at: Date.now(),
   pathKind: "conversation",

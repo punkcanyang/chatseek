@@ -800,7 +800,9 @@ const Chatseek = {
   },
 
   async sendConversations(platform, list) {
-    const batch = 40;
+    // Sidebar-order estimates interpolate inside one write. Splitting the
+    // sidebar would make rows near a split guess from the wrong neighbours.
+    const batch = 1000;
     for (let i = 0; i < list.length; i += batch) {
       const res = await Chatseek.send({
         type: "CAPTURE_CONVERSATIONS",

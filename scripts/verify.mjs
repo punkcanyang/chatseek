@@ -274,6 +274,22 @@ if (capOk !== true || sentMessages().length !== 1) {
   fail("runCapture should resend after a failed write");
 }
 
+sent.length = 0;
+const bigSidebar = Array.from({ length: 120 }, (_, i) => ({
+  ...conv(`side${i}`),
+  sidebarIndex: i,
+}));
+await pageTime.runCapture({ lastListFp: "", lastMsgFp: "" }, {
+  platform: "chatgpt",
+  sidebar: bigSidebar,
+  conversation: null,
+  messages: [],
+});
+const sidebarWrites = sent.filter((p) => p.type === "CAPTURE_CONVERSATIONS");
+if (sidebarWrites.length !== 1 || sidebarWrites[0].conversations.length !== 120) {
+  fail("a whole sidebar must reach the database in one write so order estimates see every anchor");
+}
+
 if (!/runCapture/.test(sharedSrc) || !/sectionTimesFor/.test(sharedSrc)) {
   fail("shared.js should serialize capture and assign section dates");
 }
