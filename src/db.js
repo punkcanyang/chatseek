@@ -2,7 +2,7 @@ import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokeniz
 import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
 import {
   buildPreview,
-  clipPreviewText,
+  clipPreviewSource,
   nextPreviewFields,
   snippetTokens,
 } from "./preview.js";
@@ -658,11 +658,11 @@ async function backfillPreviews(convs) {
       }
       if (!last) last = any;
       if (firstUser) {
-        stored.firstUserPreview = clipPreviewText(firstUser);
+        stored.firstUserPreview = clipPreviewSource(firstUser);
         conv.firstUserPreview = stored.firstUserPreview;
       }
       if (last) {
-        stored.lastPreview = clipPreviewText(last);
+        stored.lastPreview = clipPreviewSource(last);
         conv.lastPreview = stored.lastPreview;
       }
       if (firstUser || last) convStore.put(stored);
