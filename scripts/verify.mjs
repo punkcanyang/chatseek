@@ -85,7 +85,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.2.0") fail(`version should be 1.2.0, got ${manifest.version}`);
+if (manifest.version !== "1.2.1") fail(`version should be 1.2.1, got ${manifest.version}`);
 
 const referenced = new Set([
   manifest.background?.service_worker,
@@ -457,6 +457,9 @@ for (const line of [
   if (!sharedSrc.includes(line) || !activitySrc.includes(line)) {
     fail(`time source rank drifted: ${line}`);
   }
+}
+for (const piece of ["早於 ${stamp}", "早于 ${stamp}", "before ${stamp}"]) {
+  if (!activitySrc.includes(piece)) fail(`missing before-anchor label: ${piece}`);
 }
 
 pageTime._healthWarned = "";

@@ -208,11 +208,16 @@ async function writeConversations(db, list) {
     estimated.forEach((row, index) => {
       ordered[index].next.updatedAt = row.updatedAt;
       ordered[index].next.updatedAtSource = row.updatedAtSource;
+      if (isValidPageMs(row.olderThanAt)) ordered[index].next.olderThanAt = row.olderThanAt;
+      else delete ordered[index].next.olderThanAt;
     });
   }
 
   for (const { old, next } of drafts) {
     delete next.sidebarIndex;
+    if (next.updatedAtSource !== "sidebar-rank" || !isValidPageMs(next.olderThanAt)) {
+      delete next.olderThanAt;
+    }
     const oldTitleTokens = tokenize(old?.title || "");
     const newTitleTokens = tokenize(next.title || "");
     if (old && old.title !== next.title) {
@@ -336,6 +341,9 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (prevTitle !== conv.title) {
       deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
       writeTokens(tokenStore, tokenize(conv.title), conv.id, "title");
+    }
+    if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
+      delete conv.olderThanAt;
     }
     convStore.put(conv);
   }

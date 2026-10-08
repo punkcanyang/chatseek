@@ -150,7 +150,7 @@ function render(items, { emptyKind, error }) {
     if (label.source) time.dataset.source = label.source;
     if (label.approx) time.classList.add("is-approx");
     if (label.unknown) time.classList.add("is-unknown");
-    if (!label.unknown && hasDate(conv.updatedAt)) {
+    if (!label.unknown && !label.before && hasDate(conv.updatedAt)) {
       time.dateTime = new Date(conv.updatedAt).toISOString();
     }
     meta.append(plat, time);

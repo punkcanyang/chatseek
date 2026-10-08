@@ -8,7 +8,7 @@ import {
   saveCaptureHealth,
   readCaptureHealth,
 } from "../src/db.js";
-import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
+import { applySidebarEstimates, formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 
 const longBody =
   "UNIQUE_NEEDLE_" + "padding".repeat(800) + "_END_MARKER_payload";
@@ -324,6 +324,12 @@ async function readConv(id) {
   return requestDone(handle.transaction("conversations").objectStore("conversations").get(id));
 }
 
+function absoluteStamp(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const exactId = "chatgpt:55555555-5555-4555-8555-555555555555";
 const exactAt = Date.UTC(2026, 8, 7, 18, 0, 0);
 await upsertConversations([
@@ -394,6 +400,11 @@ await upsertMessages(
 timed = await readConv(chunkId);
 assert(timed.updatedAtSource === "observed", "a new tail message should be observed");
 assert(timed.updatedAt >= beforeAppend, "observed activity should move last-activity time forward");
+const observedLabel = formatActivityLabel(timed, Date.now(), "zh-TW");
+assert(
+  !observedLabel.before && !observedLabel.approx && !observedLabel.text.includes("約") && !observedLabel.text.includes("早於"),
+  `observed time should stay a normal label, got ${observedLabel.text}`,
+);
 
 const scrollId = "chatgpt:67676767-6767-4676-8676-676767676767";
 const s1 = `${scrollId}:a`;
@@ -439,11 +450,21 @@ assert(bot.updatedAtSource === "sidebar-rank", "older sidebar neighbor should be
 assert(top.updatedAt > mid.updatedAt && top.updatedAt <= Date.now(), "estimate should sit between now and the anchor");
 assert(bot.updatedAt < mid.updatedAt, "lower sidebar rank should sort older");
 assert(mid.updatedAt === anchorAt && mid.updatedAtSource === "page-exact", "anchor time must stay exact");
-const approx = formatActivityLabel(top, Date.now(), "zh-TW");
+assert(top.olderThanAt == null, "a row with no clock above does not store a before-bound");
+assert(bot.olderThanAt === anchorAt, "the row below stores the anchor time, not the hour offset");
+const aboveLabel = formatActivityLabel(top, Date.now(), "zh-TW");
+const belowLabel = formatActivityLabel(bot, Date.now(), "zh-TW");
 const exactLabel = formatActivityLabel(mid, Date.now(), "zh-TW");
-assert(approx.text.startsWith("約 "), `estimated time should be marked 約, got ${approx.text}`);
-assert(!exactLabel.text.includes("約"), "exact time should not be marked 約");
-assert(approx.title.includes("側欄順序"), "approx tooltip should name the sidebar estimate");
+const anchorStamp = absoluteStamp(anchorAt);
+assert(
+  aboveLabel.unknown && aboveLabel.text.startsWith("日期未知（收錄於 "),
+  `no clock above should stay unknown, got ${aboveLabel.text}`,
+);
+assert(!aboveLabel.text.includes("約") && !aboveLabel.before, "a row above the anchor must not say 約 or 早於");
+assert(belowLabel.before && belowLabel.text === `早於 ${anchorStamp}`, `below label ${belowLabel.text}`);
+assert(!belowLabel.approx && !belowLabel.text.includes("約") && !belowLabel.text.includes("小時前"), belowLabel.text);
+assert(belowLabel.title.includes(anchorStamp) && belowLabel.title.includes("確切"), belowLabel.title);
+assert(!exactLabel.text.includes("約") && !exactLabel.before, "exact time should not be marked 約 or 早於");
 
 const unknownNew = "chatgpt:abababab-abab-4aba-8aba-abababababab";
 const unknownOld = "chatgpt:cdcdcdcd-cdcd-4cdc-8cdc-cdcdcdcdcdcd";
@@ -463,16 +484,269 @@ assert(
 );
 assert(!unknownLabel.text.includes("約"), "unknown date must not look estimated");
 
-const approxHans = formatActivityLabel(top, Date.now(), "zh-CN");
+const belowHans = formatActivityLabel(bot, Date.now(), "zh-CN");
+const belowEn = formatActivityLabel(bot, Date.now(), "en");
 const unknownHans = formatActivityLabel(unknownA, Date.now(), "zh-CN");
-assert(approxHans.text.startsWith("约 "), `Simplified estimate should read 约, got ${approxHans.text}`);
+assert(belowHans.text === `早于 ${anchorStamp}`, `Simplified before-label drifted: ${belowHans.text}`);
+assert(belowEn.text === `before ${anchorStamp}`, `English before-label drifted: ${belowEn.text}`);
+assert(!belowHans.text.includes("约") && !belowEn.text.includes("~"), belowHans.text);
 assert(unknownHans.text.startsWith("日期未知（收录于 "), `Simplified unknown label drifted: ${unknownHans.text}`);
 for (const [label, foreign] of [
-  [approx.text + approx.title, /[约钟时侧栏顺录]/],
-  [approxHans.text + approxHans.title, /[約鐘時側欄順錄]/],
+  [belowLabel.text + belowLabel.title, /[约钟时侧栏顺录]/],
+  [belowHans.text + belowHans.title, /[約鐘時側欄順錄]/],
 ]) {
   assert(!foreign.test(label), `label mixes Simplified and Traditional: ${label}`);
 }
+for (const [locale, prefix] of [
+  ["zh-TW", "早於 "],
+  ["zh-HK", "早於 "],
+  ["zh-MO", "早於 "],
+  ["zh-Hant", "早於 "],
+  ["zh-CN", "早于 "],
+  ["zh-SG", "早于 "],
+  ["zh", "早于 "],
+  ["en", "before "],
+  ["en-GB", "before "],
+  ["fr", "before "],
+]) {
+  const label = formatActivityLabel(bot, Date.now(), locale);
+  assert(label.text === `${prefix}${anchorStamp}`, `${locale} → ${label.text}`);
+}
+const later = formatActivityLabel(bot, Date.now() + 40 * 86400000, "zh-TW");
+assert(later.text === belowLabel.text, "an absolute before-bound must not drift as time passes");
+const bucketLabel = formatActivityLabel(
+  { updatedAtSource: "page-bucket", updatedAt: Date.now() - 3 * 3600000, firstSeenAt: Date.now() },
+  Date.now(),
+  "zh-TW",
+);
+assert(bucketLabel.approx && bucketLabel.text.startsWith("約 ") && !bucketLabel.before, bucketLabel.text);
+
+// A group instant is invented (Today = midpoint of the day so far, Yesterday =
+// noon), so the label carries the group's day only, never hours or a clock.
+{
+  const viewAt = new Date(2026, 9, 8, 15, 0).getTime();
+  const todayPoint = new Date(2026, 9, 8, 7, 30).getTime();
+  const yesterdayPoint = new Date(2026, 9, 7, 12, 0).getTime();
+  const weekPoint = new Date(2026, 9, 5, 12, 0).getTime();
+  const oldPoint = new Date(2026, 6, 15, 12, 0).getTime();
+  for (const [point, day] of [
+    [todayPoint, "2026-10-08"],
+    [yesterdayPoint, "2026-10-07"],
+    [weekPoint, "2026-10-05"],
+    [oldPoint, "2026-07-15"],
+  ]) {
+    const conv = { updatedAtSource: "page-bucket", updatedAt: point, firstSeenAt: viewAt };
+    const hant = formatActivityLabel(conv, viewAt, "zh-TW");
+    const hans = formatActivityLabel(conv, viewAt, "zh-CN");
+    const en = formatActivityLabel(conv, viewAt, "en");
+    assert(hant.text === `約 ${day}` && hant.approx && !hant.before && !hant.unknown, hant.text);
+    assert(hans.text === `约 ${day}`, hans.text);
+    assert(en.text === `~ ${day}`, en.text);
+    assert(hant.title === `推估：依側欄分組 · ${day}`, hant.title);
+    assert(hans.title === `推估：按侧栏分组 · ${day}`, hans.title);
+    assert(en.title === `Estimated from the sidebar group · ${day}`, en.title);
+    for (const label of [hant, hans, en]) {
+      assert(!/\d{2}:\d{2}|小時|小时|分鐘|分钟|剛剛|刚刚|ago|just now/.test(label.text + label.title), label.text + label.title);
+    }
+    assert(formatActivityLabel(conv, viewAt + 3 * 86400000, "zh-TW").text === hant.text, "a group label must not drift");
+  }
+}
+
+const boundNow = Date.now();
+const tNew = boundNow - 2 * 86400000;
+const tOld = boundNow - 10 * 86400000;
+const bucketAtBound = boundNow - 12 * 86400000;
+const bounded = applySidebarEstimates([
+  { id: "above" },
+  { id: "clockNew", updatedAt: tNew, updatedAtSource: "page-exact" },
+  { id: "between" },
+  { id: "clockOld", updatedAt: tOld, updatedAtSource: "observed" },
+  { id: "underOld" },
+  { id: "bucket", updatedAt: bucketAtBound, updatedAtSource: "page-bucket" },
+  { id: "underBucket" },
+], boundNow);
+const byBound = Object.fromEntries(bounded.map((row) => [row.id, row]));
+assert(byBound.above.updatedAtSource === "sidebar-rank" && byBound.above.olderThanAt == null, "above the first clock stays estimated for sort only");
+assert(byBound.above.updatedAt > byBound.clockNew.updatedAt, "row above still sorts newer");
+assert(formatActivityLabel(byBound.above, boundNow, "en").text.startsWith("Unknown date"), formatActivityLabel(byBound.above, boundNow, "en").text);
+assert(byBound.between.olderThanAt === tNew, "nearest clock above wins over the older clock");
+assert(byBound.between.updatedAt < tNew && byBound.between.updatedAt > tOld, "between-anchor sort key stays interpolated");
+assert(formatActivityLabel(byBound.between, boundNow, "zh-TW").text === `早於 ${absoluteStamp(tNew)}`);
+assert(
+  formatActivityLabel(byBound.between, boundNow + 40 * 86400000, "en").text === `before ${absoluteStamp(tNew)}`,
+  "before-label ignores the passage of time",
+);
+assert(byBound.underOld.olderThanAt === tOld && byBound.underOld.updatedAt < tOld, "the lower clock is the bound once it is the nearest above");
+assert(formatActivityLabel(byBound.underOld, boundNow, "zh-CN").text === `早于 ${absoluteStamp(tOld)}`);
+assert(byBound.bucket.updatedAtSource === "page-bucket" && byBound.bucket.olderThanAt == null, "a bucket is not given a before-bound");
+assert(byBound.underBucket.olderThanAt === tOld, "a page-bucket above is not the before-anchor");
+assert(
+  formatActivityLabel(byBound.underOld, boundNow, "zh-TW").text ===
+    formatActivityLabel(byBound.underBucket, boundNow, "zh-TW").text,
+  "rows under the same clock share one before-label",
+);
+assert(byBound.underOld.updatedAt !== byBound.underBucket.updatedAt, "shared label must not collapse the sort keys");
+for (let i = 1; i < bounded.length; i++) {
+  assert(bounded[i].updatedAt < bounded[i - 1].updatedAt, `multi-anchor order broke at ${bounded[i].id}`);
+}
+assert(!formatActivityLabel(byBound.clockNew, boundNow, "zh-TW").text.includes("早於"), "page-exact must not render as 早於");
+assert(!formatActivityLabel(byBound.clockOld, boundNow, "en").text.startsWith("before"), "observed must not render as before");
+
+// A stored clock is a lower bound on that chat's activity. When a row below it
+// carries a later time, the clock above is stale and is not an upper bound.
+const staleAt = boundNow - 3 * 86400000;
+const freshBelowAt = boundNow - 3600000;
+const stale = Object.fromEntries(applySidebarEstimates([
+  { id: "top", updatedAt: boundNow - 1800000, updatedAtSource: "page-exact" },
+  { id: "underTop" },
+  { id: "staleClock", updatedAt: staleAt, updatedAtSource: "observed" },
+  { id: "underStale" },
+  { id: "freshBelow", updatedAt: freshBelowAt, updatedAtSource: "observed" },
+  { id: "underFresh" },
+], boundNow).map((row) => [row.id, row]));
+assert(stale.underStale.olderThanAt === boundNow - 1800000, "a contradicted clock falls back to the next trustworthy clock above");
+assert(stale.underFresh.olderThanAt === freshBelowAt, "the newest clock is still the bound for rows under it");
+assert(stale.underTop.olderThanAt === boundNow - 1800000, stale.underTop.olderThanAt);
+const onlyStale = Object.fromEntries(applySidebarEstimates([
+  { id: "staleClock", updatedAt: staleAt, updatedAtSource: "observed" },
+  { id: "x" },
+  { id: "freshBelow", updatedAt: freshBelowAt, updatedAtSource: "observed" },
+  { id: "y" },
+  { id: "laterBucket", updatedAt: freshBelowAt - 3600000, updatedAtSource: "page-bucket" },
+], boundNow).map((row) => [row.id, row]));
+assert(onlyStale.x.olderThanAt == null, `a row above a later clock must not say before the stale clock: ${onlyStale.x.olderThanAt}`);
+const xLabel = formatActivityLabel(onlyStale.x, boundNow, "zh-TW");
+assert(xLabel.unknown && xLabel.text.startsWith("日期未知（收錄於 ") && !xLabel.text.includes("早於"), xLabel.text);
+assert(onlyStale.y.olderThanAt === freshBelowAt, "rows under the fresh clock still get it");
+const bucketVeto = Object.fromEntries(applySidebarEstimates([
+  { id: "clock", updatedAt: boundNow - 2 * 86400000, updatedAtSource: "page-exact" },
+  { id: "x" },
+  { id: "today", updatedAt: boundNow - 3600000, updatedAtSource: "page-bucket" },
+], boundNow).map((row) => [row.id, row]));
+assert(bucketVeto.x.olderThanAt == null, "a later group time below vetoes an older clock above");
+for (const rows of [bounded, Object.values(stale), Object.values(onlyStale), Object.values(bucketVeto)]) {
+  for (const row of rows) {
+    if (row.olderThanAt == null) continue;
+    assert(row.updatedAt < row.olderThanAt, `${row.id} sorts at ${row.updatedAt}, after its before-bound ${row.olderThanAt}`);
+  }
+}
+
+const staleDbId = "chatgpt:19191919-1919-4191-8191-191919191919";
+const midDbId = "chatgpt:1a1a1a1a-1a1a-41a1-81a1-1a1a1a1a1a1a";
+const freshDbId = "chatgpt:1b1b1b1b-1b1b-41b1-81b1-1b1b1b1b1b1b";
+await upsertConversations([
+  convOf(staleDbId, { title: "Stale observed clock", updatedAt: staleAt, updatedAtSource: "observed" }),
+  convOf(freshDbId, { title: "Fresh observed clock", updatedAt: freshBelowAt, updatedAtSource: "observed" }),
+]);
+await upsertConversations([
+  convOf(staleDbId, { title: "Stale observed clock", sidebarIndex: 0 }),
+  convOf(midDbId, { title: "Between stale and fresh", sidebarIndex: 1 }),
+  convOf(freshDbId, { title: "Fresh observed clock", sidebarIndex: 2 }),
+]);
+const storedMid = await readConv(midDbId);
+assert(storedMid.olderThanAt == null, `IndexedDB stored a before-bound from a stale clock: ${storedMid.olderThanAt}`);
+assert(formatActivityLabel(storedMid, Date.now(), "zh-CN").text.startsWith("日期未知（收录于 "), formatActivityLabel(storedMid, Date.now(), "zh-CN").text);
+assert((await readConv(staleDbId)).updatedAt === staleAt, "the stale clock itself is not rewritten");
+
+const farId = "chatgpt:15151515-1515-4151-8151-151515151515";
+const betweenId = "chatgpt:18181818-1818-4181-8181-181818181818";
+const nearId = "chatgpt:16161616-1616-4161-8161-161616161616";
+const lowId = "chatgpt:17171717-1717-4171-8171-171717171717";
+const farAt = boundNow - 4 * 86400000;
+const nearAt = boundNow - 9 * 86400000;
+await upsertConversations([
+  convOf(farId, { title: "Far clock anchor", sidebarIndex: 0, updatedAt: farAt, updatedAtSource: "page-exact" }),
+  convOf(betweenId, { title: "Between two clocks", sidebarIndex: 1 }),
+  convOf(nearId, { title: "Near clock anchor", sidebarIndex: 2, updatedAt: nearAt, updatedAtSource: "observed" }),
+  convOf(lowId, { title: "Below both clocks", sidebarIndex: 3 }),
+]);
+const storedBetween = await readConv(betweenId);
+const storedLow = await readConv(lowId);
+assert(storedBetween.olderThanAt === farAt, `IndexedDB kept the farther clock: ${storedBetween.olderThanAt}`);
+assert(storedLow.olderThanAt === nearAt, `IndexedDB kept the farther clock for the bottom row: ${storedLow.olderThanAt}`);
+assert(formatActivityLabel(storedBetween, Date.now(), "en").text === `before ${absoluteStamp(farAt)}`);
+assert(formatActivityLabel(storedLow, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(nearAt)}`);
+assert(storedBetween.updatedAt < farAt && storedBetween.updatedAt > nearAt, "stored sort key stays between the two clocks");
+await upsertConversations([
+  convOf(lowId, {
+    title: "Below both clocks",
+    updatedAt: nearAt - 1000,
+    updatedAtSource: "page-exact",
+  }),
+]);
+const promoted = await readConv(lowId);
+assert(promoted.updatedAtSource === "page-exact" && promoted.olderThanAt == null, "a higher-confidence time clears the before-bound");
+assert(!formatActivityLabel(promoted, Date.now(), "zh-CN").text.includes("早于"), "promoted exact time must not stay 早于");
+
+const legacyRankId = "chatgpt:12121212-1212-4121-8121-121212121212";
+const legacyExactId = "chatgpt:13131313-1313-4131-8131-131313131313";
+const legacySaved = new Date(2026, 9, 1, 8, 30).getTime();
+const legacyEstimate = boundNow - 5 * 3600000;
+const legacyExactAt = boundNow - 2 * 3600000;
+{
+  const handle = await openDb();
+  const tx = handle.transaction("conversations", "readwrite");
+  const store = tx.objectStore("conversations");
+  store.put({
+    id: legacyRankId,
+    platform: "chatgpt",
+    platformId: "12121212-1212-4121-8121-121212121212",
+    title: "StoredLikeOneTwoZero",
+    url: "https://chatgpt.com/c/12121212-1212-4121-8121-121212121212",
+    updatedAt: legacyEstimate,
+    updatedAtSource: "sidebar-rank",
+    firstSeenAt: legacySaved,
+    createdAt: legacySaved,
+    messageCount: 0,
+  });
+  store.put({
+    id: legacyExactId,
+    platform: "chatgpt",
+    platformId: "13131313-1313-4131-8131-131313131313",
+    title: "ExactLikeOneTwoZero",
+    url: "https://chatgpt.com/c/13131313-1313-4131-8131-131313131313",
+    updatedAt: legacyExactAt,
+    updatedAtSource: "page-exact",
+    firstSeenAt: legacySaved,
+    createdAt: legacyExactAt,
+    messageCount: 0,
+  });
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+const storedRank = await readConv(legacyRankId);
+assert(storedRank.olderThanAt == null && storedRank.updatedAt === legacyEstimate, "a 1.2.0 sidebar-rank row is readable and not rewritten on open");
+const hits120 = await searchConversations({ query: "StoredLikeOneTwoZero" });
+assert(hits120.length === 1 && hits120[0].id === legacyRankId, "1.2.0 row still matches search");
+const rankLabel = formatActivityLabel(hits120[0], Date.now(), "zh-TW");
+const rankHans = formatActivityLabel(hits120[0], Date.now(), "zh-CN");
+const rankEn = formatActivityLabel(hits120[0], Date.now(), "en");
+assert(rankLabel.unknown && rankLabel.text.startsWith("日期未知（收錄於 "), rankLabel.text);
+assert(rankHans.unknown && rankHans.text.startsWith("日期未知（收录于 "), rankHans.text);
+assert(rankEn.unknown && rankEn.text.startsWith("Unknown date (saved "), rankEn.text);
+assert(!rankLabel.text.includes("約") && !rankLabel.text.includes("早於"), rankLabel.text);
+const exact120 = formatActivityLabel(await readConv(legacyExactId), Date.now(), "zh-TW");
+assert(!exact120.before && !exact120.approx && !exact120.unknown, `1.2.0 exact row drifted: ${exact120.text}`);
+assert(exact120.text.includes("小時前") || exact120.text.includes("分鐘前"), exact120.text);
+const freshAnchorId = "chatgpt:14141414-1414-4141-8141-141414141414";
+const freshAt = boundNow - 26 * 3600000;
+await upsertConversations([
+  convOf(freshAnchorId, {
+    title: "Fresh clock above legacy",
+    sidebarIndex: 0,
+    updatedAt: freshAt,
+    updatedAtSource: "observed",
+  }),
+  convOf(legacyRankId, { title: "StoredLikeOneTwoZero", sidebarIndex: 1 }),
+]);
+const rescanned = await readConv(legacyRankId);
+assert(rescanned.updatedAtSource === "sidebar-rank" && rescanned.olderThanAt === freshAt, "rescan stores the new clock above");
+assert(rescanned.updatedAt < freshAt, "rescan keeps the row sorted older than the clock");
+assert(formatActivityLabel(rescanned, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(freshAt)}`);
+assert(formatActivityLabel(await readConv(legacyExactId), Date.now(), "en").text !== `before ${absoluteStamp(freshAt)}`);
+
 const lastYear = new Date(new Date().getFullYear() - 1, 5, 10, 9, 30).getTime();
 const oldUnknown = formatActivityLabel(
   { updatedAtSource: "first-seen", updatedAt: lastYear, firstSeenAt: lastYear },
