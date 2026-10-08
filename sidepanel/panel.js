@@ -370,22 +370,31 @@ function askRemove(conv) {
   removeCancel?.focus();
 }
 
+// A worker that never answers must not swallow the click: after a short wait
+// the caller opens a new tab as before.
+const REUSE_WAIT_MS = 1500;
+
 async function reuseOpenTab(message) {
+  if (typeof chrome.runtime?.sendMessage !== "function") return false;
+  let timer = 0;
   try {
-    const send = chrome.runtime?.sendMessage;
-    if (typeof send !== "function") return false;
-    const res = await send(message);
+    const res = await Promise.race([
+      chrome.runtime.sendMessage(message),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), REUSE_WAIT_MS); }),
+    ]);
     return res?.focused === true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function openReader(conv) {
   if (!conv?.id) return;
-  if (await reuseOpenTab({ type: "FOCUS_READER", id: conv.id })) return;
   // Extension page in a new tab. chrome.tabs.create does not need the tabs permission.
   const url = readerPageUrl(conv.id, qEl.value, chrome.runtime);
+  if (await reuseOpenTab({ type: "FOCUS_READER", id: conv.id, url })) return;
   try {
     if (chrome.tabs?.create) {
       await chrome.tabs.create({ url });

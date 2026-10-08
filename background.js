@@ -1,6 +1,6 @@
 import { upsertConversations, upsertMessages, saveCaptureHealth, readCaptureHealth } from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
-import { findReaderContext, findSiteTab, focusTab, siteKey } from "./src/focus-tab.js";
+import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
 
 const HOSTS = {
   chatgpt: [/^https:\/\/chatgpt\.com\//, /^https:\/\/chat\.openai\.com\//],
@@ -50,9 +50,10 @@ function notifyIndexUpdated() {
   chrome.runtime.sendMessage({ type: "INDEX_UPDATED" }).catch(() => {});
 }
 
-// Content scripts report the page they are on. The id is enough to focus that
-// tab later; the URL itself is not stored. A closed tab is dropped on the
-// next failed focus, and also here when the browser tells us it went away.
+// Content scripts report the page they are on. This map only orders ties; it
+// is lost whenever the worker sleeps, so the live tab list below is what
+// decides. Host permissions expose `url` for the chat sites (and only those),
+// which is enough without the tabs permission.
 const siteTabs = new Map();
 let siteSeq = 0;
 
@@ -78,16 +79,30 @@ if (chrome.tabs?.onRemoved) {
   });
 }
 
+async function liveTabs() {
+  if (typeof chrome.tabs?.query !== "function") return null;
+  try {
+    const tabs = await chrome.tabs.query({});
+    return Array.isArray(tabs) ? tabs : null;
+  } catch {
+    return null;
+  }
+}
+
+function fromExtensionPage(sender) {
+  if (!sender?.tab) return true;
+  const base = typeof chrome.runtime.getURL === "function" ? chrome.runtime.getURL("") : "";
+  return !!base && String(sender.url || "").startsWith(base);
+}
+
 async function focusRequest(msg) {
   try {
     if (msg.type === "FOCUS_ORIGINAL") {
       const key = siteKey(msg.url);
-      const candidates = [...siteTabs.values()]
-        .filter((entry) => entry.key === key)
-        .sort((a, b) => (b.at || 0) - (a.at || 0));
+      if (!key) return { focused: false };
+      const candidates = siteCandidates(await liveTabs(), [...siteTabs.values()], key);
       for (const target of candidates) {
-        const focused = await focusTab(chrome.tabs, chrome.windows, target);
-        if (focused) return { focused: true };
+        if (await focusTab(chrome.tabs, chrome.windows, target)) return { focused: true };
         siteTabs.delete(target.tabId);
       }
       return { focused: false };
@@ -96,7 +111,10 @@ async function focusRequest(msg) {
       ? await chrome.runtime.getContexts({ contextTypes: ["TAB"] })
       : [];
     const target = findReaderContext(contexts, msg.id);
-    return { focused: await focusTab(chrome.tabs, chrome.windows, target) };
+    if (!target) return { focused: false };
+    const base = typeof chrome.runtime.getURL === "function" ? chrome.runtime.getURL("") : "";
+    const refresh = readerRefreshUrl(target.documentUrl, msg.url, msg.id, base);
+    return { focused: await focusTab(chrome.tabs, chrome.windows, target, refresh) };
   } catch {
     return { focused: false };
   }
@@ -142,6 +160,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "INDEX_UPDATED") return;
   if (msg.type === "FOCUS_ORIGINAL" || msg.type === "FOCUS_READER") {
+    if (!fromExtensionPage(sender)) return;
     focusRequest(msg).then(sendResponse);
     return true;
   }
