@@ -317,5 +317,22 @@
   },
   "imageLabel": {
     "message": "图片"
+  },
+  "imageCache": {
+    "message": "图片缓存 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "清除图片缓存"
+  },
+  "confirmClearImages": {
+    "message": "删除这台电脑上的图片缓存？对话和消息会保留。此操作不可恢复。"
+  },
+  "imageUncached": {
+    "message": "图片未缓存（原网站限制）"
   }
 }

@@ -317,5 +317,22 @@
   },
   "imageLabel": {
     "message": "이미지"
+  },
+  "imageCache": {
+    "message": "이미지 캐시 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "이미지 캐시 지우기"
+  },
+  "confirmClearImages": {
+    "message": "이 기기의 이미지 캐시를 삭제할까요? 대화와 메시지는 남습니다. 되돌릴 수 없습니다."
+  },
+  "imageUncached": {
+    "message": "이미지를 캐시하지 못했습니다(원 사이트의 제한)"
   }
 }

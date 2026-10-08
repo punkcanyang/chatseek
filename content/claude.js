@@ -69,7 +69,10 @@
     return [...byId.values()];
   }
 
+  let imageHosts = [];
+
   function extractMessages(conversationId) {
+    imageHosts = [];
     const candidates = [];
     document
       .querySelectorAll(
@@ -116,11 +119,13 @@
       const domId = item.el.getAttribute("data-message-id") ||
         item.el.id ||
         Chatseek.hash(item.role + ":" + body.slice(0, 180));
+      const id = `${PLATFORM}:${conversationId}:${domId}`;
       messages.push({
-        id: `${PLATFORM}:${conversationId}:${domId}`,
+        id,
         role: item.role,
         body,
       });
+      imageHosts.push({ el: item.el, messageId: id, role: item.role, body });
     });
     return messages;
   }
@@ -142,6 +147,12 @@
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
       messages = extractMessages(platformId);
+      if (typeof Chatseek.scheduleMessageImages === "function") {
+        Chatseek.scheduleMessageImages({
+          conversationId: conversation.id,
+          items: imageHosts,
+        });
+      }
     }
     let selector = null;
     for (const sel of MESSAGE_SELECTORS) {

@@ -317,5 +317,22 @@
   },
   "imageLabel": {
     "message": "画像"
+  },
+  "imageCache": {
+    "message": "画像キャッシュ $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "画像キャッシュを消去"
+  },
+  "confirmClearImages": {
+    "message": "この端末の画像キャッシュを削除しますか？会話とメッセージは残ります。元に戻せません。"
+  },
+  "imageUncached": {
+    "message": "画像はキャッシュされていません（元のサイトの制限）"
   }
 }

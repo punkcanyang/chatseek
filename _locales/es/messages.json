@@ -317,5 +317,22 @@
   },
   "imageLabel": {
     "message": "Imagen"
+  },
+  "imageCache": {
+    "message": "Caché de imágenes $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "Borrar caché de imágenes"
+  },
+  "confirmClearImages": {
+    "message": "¿Borrar las imágenes en caché de este equipo? Las conversaciones y los mensajes se conservan. No se puede deshacer."
+  },
+  "imageUncached": {
+    "message": "Imagen no guardada en caché (limitación del sitio original)"
   }
 }

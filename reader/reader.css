@@ -374,6 +374,56 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 1rem; }
   overflow-wrap: anywhere;
 }
 
+.image-slot {
+  margin: 0.7em 0;
+}
+
+.thumb-btn {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 10px;
+  line-height: 0;
+}
+
+.cached-thumb {
+  display: block;
+  max-width: min(100%, 320px);
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.image-missing {
+  max-width: 320px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--card));
+}
+
+.image-missing-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.image-open {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
 .reader-title mark,
 .msg-body mark {
   background: #f3d36b;

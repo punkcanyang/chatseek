@@ -5,7 +5,10 @@ import {
   removeConversation,
   readCaptureHealth,
   attachPreviews,
+  imageCacheUsage,
+  clearImageCache,
 } from "../src/db.js";
+import { formatByteSize } from "../src/image-cache.js";
 import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
@@ -83,6 +86,9 @@ function bundle(code) {
     titleOnly: say("titleOnly"),
     clear: say("clear"),
     confirm: say("confirmClear"),
+    imageCache: (size) => say("imageCache", size),
+    clearImages: say("clearImages"),
+    confirmClearImages: say("confirmClearImages"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
     remove: say("remove"),
@@ -126,6 +132,8 @@ const countsEl = document.getElementById("counts");
 const hintEl = document.getElementById("hint");
 const tagEl = document.getElementById("tag");
 const clearBtn = document.getElementById("clearBtn");
+const imageCacheEl = document.getElementById("imageCache");
+const clearImagesBtn = document.getElementById("clearImagesBtn");
 const healthEl = document.getElementById("health");
 const searchLabel = document.getElementById("searchLabel");
 const filterActive = document.getElementById("filterActive");
@@ -178,6 +186,10 @@ function applyStatic() {
   searchLabel.textContent = t.search;
   hintEl.textContent = t.hint;
   clearBtn.textContent = t.clear;
+  if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
+  if (imageCacheEl && imageCacheEl.dataset.bytes) {
+    imageCacheEl.textContent = t.imageCache(formatByteSize(Number(imageCacheEl.dataset.bytes)));
+  }
   if (filterActive) filterActive.textContent = t.active;
   if (filterArchived) filterArchived.textContent = t.archived;
   if (filterAll) filterAll.textContent = t.all;
@@ -546,6 +558,7 @@ async function refresh() {
     const s = await stats();
     if (seq !== requestSeq) return;
     countsEl.textContent = t.counts(s.conversations, s.messages);
+    await refreshImageCache();
     await renderHealth();
   } catch {
     if (seq !== requestSeq) return;
@@ -594,7 +607,30 @@ clearBtn.addEventListener("click", async () => {
   chrome.action?.setBadgeText?.({ text: "" })?.catch?.(() => {});
   listEl.replaceChildren();
   countsEl.textContent = t.counts(0, 0);
+  await refreshImageCache();
   refresh();
+});
+
+async function refreshImageCache() {
+  if (!imageCacheEl) return;
+  try {
+    const bytes = await imageCacheUsage();
+    imageCacheEl.dataset.bytes = String(bytes);
+    imageCacheEl.textContent = t.imageCache(formatByteSize(bytes));
+  } catch {
+    imageCacheEl.textContent = t.error;
+  }
+}
+
+clearImagesBtn?.addEventListener("click", async () => {
+  if (!confirm(t.confirmClearImages)) return;
+  try {
+    await clearImageCache();
+  } catch {
+    if (imageCacheEl) imageCacheEl.textContent = t.error;
+    return;
+  }
+  await refreshImageCache();
 });
 
 removeCancel?.addEventListener("click", () => closeRemove(false));
@@ -778,6 +814,10 @@ function onActiveLocation(url) {
 
 if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg?.type === "IMAGE_CACHE_UPDATED") {
+      refreshImageCache();
+      return;
+    }
     if (msg?.type === "INDEX_UPDATED") scheduleRefresh();
     if (msg?.type !== "ACTIVE_LOCATION") return;
     if (!Number.isInteger(panelWindowId)) {

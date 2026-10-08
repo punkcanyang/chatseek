@@ -139,7 +139,10 @@
     return !!(links && links.length >= 3);
   }
 
+  let imageHosts = [];
+
   function extractMessages(conversationId) {
+    imageHosts = [];
     const candidates = [];
     const pushUnique = (el, role) => {
       if (!el || blockedMessageNode(el)) return;
@@ -212,11 +215,13 @@
         item.el.querySelector?.("[data-message-id]")?.getAttribute("data-message-id") ||
         item.el.id ||
         Chatseek.hash(role + ":" + body.slice(0, 180));
+      const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
       messages.push({
-        id: `${PLATFORM}:${conversationId}:${platformMessageId}`,
+        id,
         role,
         body,
       });
+      imageHosts.push({ el: item.el, messageId: id, role, body });
     });
     return messages;
   }
@@ -238,6 +243,12 @@
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
       messages = extractMessages(platformId);
+      if (typeof Chatseek.scheduleMessageImages === "function") {
+        Chatseek.scheduleMessageImages({
+          conversationId: conversation.id,
+          items: imageHosts,
+        });
+      }
     }
     let selector = null;
     for (const sel of MESSAGE_SELECTORS) {

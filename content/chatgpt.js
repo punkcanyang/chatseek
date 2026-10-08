@@ -135,11 +135,14 @@
     return dropNested(found);
   }
 
+  let imageHosts = [];
+
   function extractMessages(conversationId, doc) {
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     let selector = null;
     let nodes = [];
+    imageHosts = [];
     const pick = (scope) => {
       for (const layer of MESSAGE_LAYERS) {
         const kept = keptNodes(scope, layer);
@@ -168,11 +171,13 @@
         Chatseek.hash(resolved + ":" + Chatseek.textOf(node).slice(0, 180));
       const body = bodyOf(node);
       if (!body || Chatseek.isUiNoise(body)) return;
+      const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
       messages.push({
-        id: `${PLATFORM}:${conversationId}:${platformMessageId}`,
+        id,
         role: resolved,
         body,
       });
+      imageHosts.push({ el: node, messageId: id, role: resolved, body });
     });
     return { messages, selector, selectorsTried };
   }
@@ -225,6 +230,12 @@
         conversation.archiveSource = "chatgpt:archive-list";
       } else if (signals.composer) markSeenActive(conversation, "chatgpt:conversation");
       extracted = extractMessages(platformId, root);
+      if (typeof Chatseek.scheduleMessageImages === "function") {
+        Chatseek.scheduleMessageImages({
+          conversationId: conversation.id,
+          items: imageHosts,
+        });
+      }
     }
     return Chatseek.runCapture(state, {
       platform: PLATFORM,

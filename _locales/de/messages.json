@@ -317,5 +317,22 @@
   },
   "imageLabel": {
     "message": "Bild"
+  },
+  "imageCache": {
+    "message": "Bildzwischenspeicher $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "Bildzwischenspeicher leeren"
+  },
+  "confirmClearImages": {
+    "message": "Zwischengespeicherte Bilder auf diesem Computer löschen? Unterhaltungen und Nachrichten bleiben erhalten. Das kann nicht rückgängig gemacht werden."
+  },
+  "imageUncached": {
+    "message": "Bild nicht zwischengespeichert (Einschränkung der Originalwebsite)"
   }
 }

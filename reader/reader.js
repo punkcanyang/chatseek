@@ -1,4 +1,4 @@
-import { readConversation } from "../src/db.js";
+import { readConversation, readImagesForMessages } from "../src/db.js";
 import { CATALOG, resolveLocale, text } from "../src/i18n.js";
 import { parseReaderSearch, safeOriginalUrl } from "../src/reader-url.js";
 import { mountReader } from "../src/reader-view.js";
@@ -36,6 +36,10 @@ const parsed = parseReaderSearch(location.search);
 let localePref = readLocalePref();
 let row = null;
 let failed = false;
+let view = null;
+const imageMap = new Map();
+const fetchedImages = new Set();
+let shownIds = [];
 
 const REUSE_WAIT_MS = 1500;
 
@@ -76,6 +80,27 @@ async function load() {
   }
 }
 
+async function loadImages(ids) {
+  const need = (ids || []).filter((id) => id && !fetchedImages.has(id));
+  if (!need.length || !parsed.id) return;
+  need.forEach((id) => fetchedImages.add(id));
+  let found = [];
+  try {
+    found = await readImagesForMessages(need);
+  } catch {
+    need.forEach((id) => fetchedImages.delete(id));
+    return;
+  }
+  if (!found.length) return;
+  for (const shot of found) {
+    if (shot?.conversationId && shot.conversationId !== parsed.id) continue;
+    const list = imageMap.get(shot.messageId) || [];
+    if (!list.some((item) => item.index === shot.index)) list.push(shot);
+    imageMap.set(shot.messageId, list);
+  }
+  view?.setImages(imageMap);
+}
+
 function show() {
   const locale = localeFor(localePref);
   if (!app) return;
@@ -89,11 +114,16 @@ function show() {
     document.title = "Chatseek";
     return;
   }
-  mountReader(app, {
+  view = mountReader(app, {
     conversation: row.conversation,
     messages: row.messages,
     locale,
     query: parsed.query,
+    images: imageMap,
+    onWindow: (ids) => {
+      shownIds = ids || [];
+      loadImages(shownIds);
+    },
     onOpenOriginal: openOriginal,
   });
 }
@@ -106,6 +136,16 @@ function bootPlaceholder() {
 bootPlaceholder();
 await load();
 show();
+
+if (chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type !== "IMAGE_CACHE_UPDATED") return;
+    for (const id of shownIds) {
+      if (!imageMap.has(id)) fetchedImages.delete(id);
+    }
+    loadImages(shownIds);
+  });
+}
 
 window.addEventListener("storage", (event) => {
   if (event.key !== STORAGE_KEY && event.key !== null) return;

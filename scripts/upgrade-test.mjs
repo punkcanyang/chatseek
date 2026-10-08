@@ -70,7 +70,8 @@ const db = await import("../src/db.js");
 const { formatActivityLabel } = await import("../src/activity-time.js");
 
 const handle = await db.openDb();
-assert(handle.version === 3, `expected DB version 3, got ${handle.version}`);
+assert(handle.version === 4, `expected DB version 4, got ${handle.version}`);
+assert(handle.objectStoreNames.contains("images"), "upgrade should add the images store");
 assert(handle.transaction("tokenMap").objectStore("tokenMap").indexNames.contains("conversationId"), "upgrade should add the token conversation index");
 assert(handle.objectStoreNames.contains("meta"), "upgrade should add the meta store");
 

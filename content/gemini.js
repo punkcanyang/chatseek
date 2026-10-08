@@ -396,7 +396,10 @@
     return Chatseek.hash(role + ":" + body.slice(0, 180));
   }
 
+  let imageHosts = [];
+
   function extractMessages(conversationId, doc) {
+    imageHosts = [];
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     try {
@@ -432,14 +435,17 @@
           domId = `${domId}#${n}`;
         }
         used.add(domId);
+        const id = `${PLATFORM}:${conversationId}:${domId}`;
         messages.push({
-          id: `${PLATFORM}:${conversationId}:${domId}`,
+          id,
           role: item.role,
           body,
         });
+        imageHosts.push({ el: item.el, messageId: id, role: item.role, body });
       }
       return { messages, selector: hit.name, selectorsTried };
     } catch {
+      imageHosts = [];
       return { messages: [], selector: null, selectorsTried };
     }
   }
@@ -494,6 +500,12 @@
 
   async function capture(doc, loc) {
     const viewed = view(doc, loc);
+    if (viewed.conversation && typeof Chatseek.scheduleMessageImages === "function") {
+      Chatseek.scheduleMessageImages({
+        conversationId: viewed.conversation.id,
+        items: imageHosts,
+      });
+    }
     return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar: viewed.sidebar,
