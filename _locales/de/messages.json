@@ -349,5 +349,8 @@
   },
   "copyDiagEmpty": {
     "message": "Noch keine Diagnose. Öffne ein Gespräch und lade die Seite neu."
+  },
+  "injectMissing": {
+    "message": "Dieser Tab hat Chatseek nicht geladen. Lade den Tab neu und prüfe, ob die Erweiterung auf diese Website zugreifen darf."
   }
 }

@@ -12,7 +12,7 @@ import { formatByteSize } from "../src/image-cache.js";
 import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
-import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
+import { activeTabUrl, eventInWindow, injectionUnloaded, isChatTabUrl, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
 import { bookIcon, externalIcon } from "../src/icons.js";
@@ -93,6 +93,7 @@ function bundle(code) {
     copyDiagDone: say("copyDiagDone"),
     copyDiagManual: say("copyDiagManual"),
     copyDiagEmpty: say("copyDiagEmpty"),
+    injectMissing: say("injectMissing"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
     remove: say("remove"),
@@ -141,6 +142,7 @@ const clearImagesBtn = document.getElementById("clearImagesBtn");
 const copyDiagBtn = document.getElementById("copyDiagBtn");
 const diagBox = document.getElementById("diagBox");
 const healthEl = document.getElementById("health");
+const injectWarnEl = document.getElementById("injectWarn");
 const searchLabel = document.getElementById("searchLabel");
 const filterActive = document.getElementById("filterActive");
 const filterArchived = document.getElementById("filterArchived");
@@ -194,6 +196,7 @@ function applyStatic() {
   clearBtn.textContent = t.clear;
   if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
   if (copyDiagBtn) copyDiagBtn.textContent = t.copyDiag;
+  if (injectWarnEl && !injectWarnEl.hidden) injectWarnEl.textContent = t.injectMissing;
   if (imageCacheEl && imageCacheEl.dataset.bytes) {
     imageCacheEl.textContent = t.imageCache(formatByteSize(Number(imageCacheEl.dataset.bytes)));
   }
@@ -855,11 +858,53 @@ async function resolvePanelWindow() {
   }
 }
 
+let pingSeq = 0;
+
+async function pingInjection() {
+  if (!injectWarnEl || typeof chrome.tabs?.query !== "function" || typeof chrome.tabs?.sendMessage !== "function") {
+    return;
+  }
+  const seq = ++pingSeq;
+  let url = "";
+  let tabId = null;
+  try {
+    const query = Number.isInteger(panelWindowId)
+      ? { active: true, windowId: panelWindowId }
+      : { active: true, currentWindow: true };
+    const tabs = await chrome.tabs.query(query);
+    const tab = (tabs || [])[0];
+    url = typeof tab?.url === "string" ? tab.url : "";
+    tabId = Number.isInteger(tab?.id) ? tab.id : null;
+  } catch {
+    url = "";
+  }
+  if (seq !== pingSeq) return;
+  if (!Number.isInteger(tabId) || !isChatTabUrl(url)) {
+    injectWarnEl.hidden = true;
+    return;
+  }
+  let loaded = false;
+  try {
+    const res = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: "CHATSEEK_PING" }),
+      new Promise((resolve) => { setTimeout(() => resolve(null), 1500); }),
+    ]);
+    loaded = !!(res && res.loaded);
+  } catch {
+    loaded = false;
+  }
+  if (seq !== pingSeq) return;
+  const warn = injectionUnloaded({ url, loaded });
+  injectWarnEl.hidden = !warn;
+  if (warn) injectWarnEl.textContent = t.injectMissing;
+}
+
 async function syncActiveTab() {
   const seq = ++tabSeq;
   const url = await activeTabUrl(chrome.tabs, panelWindowId);
   if (seq !== tabSeq) return;
   setCurrentFromUrl(url);
+  pingInjection();
 }
 
 function scheduleSync() {

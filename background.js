@@ -30,8 +30,14 @@ chrome.runtime.onInstalled.addListener(openSidePanelOnClick);
 chrome.runtime.onStartup.addListener(openSidePanelOnClick);
 openSidePanelOnClick();
 
+function senderPageUrl(sender) {
+  const tabUrl = sender?.tab?.url || "";
+  if (tabUrl) return tabUrl;
+  return typeof sender?.url === "string" ? sender.url : "";
+}
+
 function senderAllowed(sender, platform) {
-  const url = sender.tab?.url || "";
+  const url = senderPageUrl(sender);
   return (HOSTS[platform] || []).some((re) => re.test(url));
 }
 
@@ -65,7 +71,7 @@ function notifyImagesLater() {
 }
 
 function platformFromSender(sender) {
-  const url = sender?.tab?.url || "";
+  const url = senderPageUrl(sender);
   for (const [name, list] of Object.entries(HOSTS)) {
     if (list.some((re) => re.test(url))) return name;
   }
@@ -165,13 +171,44 @@ function validHealth(health) {
   if (!health || typeof health !== "object") return false;
   if (typeof health.messageCount !== "number") return false;
   if (typeof health.sidebarCount !== "number") return false;
-  // Counts and selector names only. Reject anything large enough to be a transcript.
-  try {
-    if (JSON.stringify(health).length > 2000) return false;
-  } catch {
-    return false;
-  }
   return true;
+}
+
+// Structural diag rides on the health row. A long skeleton must not drop the
+// warning itself. Transcripts are still rejected by the diag scrubber.
+function fitHealth(health) {
+  const core = {
+    at: typeof health.at === "number" ? health.at : Date.now(),
+    pathKind: String(health.pathKind || "other").slice(0, 32),
+    sidebarCount: Number(health.sidebarCount) || 0,
+    messageCount: Number(health.messageCount) || 0,
+    selector: String(health.selector || "none").slice(0, 80),
+    selectorsTried: Array.isArray(health.selectorsTried)
+      ? health.selectorsTried.map((name) => String(name).slice(0, 48)).slice(0, 12)
+      : [],
+    selectorHits: {},
+    userCount: Number(health.userCount) || 0,
+    assistantCount: Number(health.assistantCount) || 0,
+    charCount: Number(health.charCount) || 0,
+    warn: !!health.warn,
+    diag: typeof health.diag === "string" ? health.diag : "",
+  };
+  const hits = health.selectorHits && typeof health.selectorHits === "object" ? health.selectorHits : {};
+  for (const [key, value] of Object.entries(hits)) {
+    if (Object.keys(core.selectorHits).length >= 16) break;
+    core.selectorHits[String(key).slice(0, 48)] = Math.max(0, Math.floor(Number(value) || 0));
+  }
+  try {
+    if (JSON.stringify(core).length > 4500) core.diag = core.diag.slice(0, 700);
+    if (JSON.stringify(core).length > 4500) {
+      core.diag = "";
+      core.selectorHits = {};
+    }
+  } catch {
+    core.diag = "";
+    core.selectorHits = {};
+  }
+  return core;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -205,7 +242,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "invalid health" });
       return;
     }
-    saveCaptureHealth(platform, msg.health)
+    saveCaptureHealth(platform, fitHealth(msg.health))
       .then(async () => {
         paintBadge(await readCaptureHealth());
         notifyIndexUpdated();

@@ -1,4 +1,50 @@
 /* Isolated-world helpers. Read the DOM only — no fetch/XHR hooks. */
+(function chatseekAnnounce() {
+  // Once per tab, from the top frame only. A cross-origin frame cannot read
+  // window.top; that frame stays quiet and the top frame owns the line.
+  try {
+    if (typeof window !== "undefined" && window.top && window.top !== window) return;
+  } catch {
+    return;
+  }
+  try {
+    if (globalThis.__chatseekLoaded) return;
+    globalThis.__chatseekLoaded = true;
+    let host = "";
+    try {
+      if (typeof location !== "undefined" && location && location.hostname) {
+        host = String(location.hostname).toLowerCase();
+      }
+    } catch {
+      host = "";
+    }
+    let platform = "other";
+    if (host === "chatgpt.com" || host === "chat.openai.com") platform = "chatgpt";
+    else if (host === "claude.ai") platform = "claude";
+    else if (host === "grok.com" || host === "www.grok.com" || host === "grok.x.com" || host === "x.ai") platform = "grok";
+    else if (host === "gemini.google.com") platform = "gemini";
+    let version = "";
+    try { version = chrome.runtime.getManifest().version; } catch { version = ""; }
+    if (typeof console !== "undefined" && typeof console.log === "function") {
+      console.log(`[Chatseek] loaded v=${version || "?"} platform=${platform}`);
+    }
+  } catch {
+    // A log failure must not stop capture.
+  }
+})();
+try {
+  if (!globalThis.__chatseekPing && typeof chrome !== "undefined" && chrome.runtime?.onMessage?.addListener) {
+    globalThis.__chatseekPing = true;
+    const onPing = (msg, _sender, sendResponse) => {
+      if (!msg || msg.type !== "CHATSEEK_PING") return;
+      try { sendResponse({ ok: true, loaded: true }); } catch { /* orphaned after an extension reload */ }
+    };
+    globalThis.__chatseekPingListener = onPing;
+    chrome.runtime.onMessage.addListener(onPing);
+  }
+} catch {
+  // The page can still be captured if messaging is unavailable.
+}
 const Chatseek = {
   UUID:
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
@@ -14,6 +60,23 @@ const Chatseek = {
   uuidFrom(hrefOrPath) {
     const match = String(hrefOrPath || "").match(Chatseek.UUID);
     return match ? match[0].toLowerCase() : null;
+  },
+
+  /**
+   * Conversation id is the UUID after /c/, not an earlier UUID in /g/<gpt>/c/.
+   * Query strings and hashes are ignored. Null when the path has no /c/<uuid>.
+   */
+  conversationIdFromPath(hrefOrPath) {
+    const raw = String(hrefOrPath || "");
+    let path = raw;
+    try {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) path = new URL(raw).pathname;
+      else path = raw.split(/[?#]/)[0];
+    } catch {
+      path = raw.split(/[?#]/)[0];
+    }
+    const match = path.match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    return match ? match[1].toLowerCase() : null;
   },
 
   textOf(el) {
@@ -130,17 +193,78 @@ const Chatseek = {
       subtree: true,
       characterData: true,
     });
+    const deepSeen = new WeakSet();
+    const bindDeep = () => {
+      // Claude, Gemini, and Grok do not opt in. Their observers stay on the light DOM.
+      if (Chatseek.watchEmbedded !== true) return;
+      try { Chatseek.observeDeep(document, run, deepSeen); } catch { /* deep roots are optional */ }
+    };
+    let emptyWatch = false;
+    let emptyTimer = 0;
+    let emptyAttempt = 0;
+    const armEmpty = () => {
+      clearTimeout(emptyTimer);
+      emptyTimer = 0;
+      if (!emptyWatch) {
+        emptyAttempt = 0;
+        return;
+      }
+      // Shadow and iframe documents do not notify the top light-DOM observer.
+      // Look again with a capped backoff, and do not schedule while the tab is hidden.
+      const delay = Chatseek.emptyRescanDelay(emptyAttempt, !!document.hidden);
+      if (!delay) return;
+      emptyAttempt += 1;
+      emptyTimer = setTimeout(() => {
+        if (!alive() || !emptyWatch || document.hidden) return;
+        bindDeep();
+        run();
+        armEmpty();
+      }, delay);
+    };
+    Chatseek.noteEmptyConversation = (empty) => {
+      emptyWatch = !!empty;
+      armEmpty();
+    };
+    Chatseek.requestRescan = () => {
+      if (!alive() || document.hidden) return;
+      bindDeep();
+      run();
+    };
+    const onFrame = (event) => {
+      const data = event?.data;
+      if (!data || data.source !== "chatseek-frame") return;
+      let frames = [];
+      try { frames = document.querySelectorAll("iframe"); } catch { frames = []; }
+      for (const frame of frames) {
+        try {
+          if (frame.contentWindow !== event.source) continue;
+        } catch {
+          continue;
+        }
+        if (!Chatseek._scriptedFrames) Chatseek._scriptedFrames = new WeakMap();
+        Chatseek._scriptedFrames.set(frame, true);
+        Chatseek.requestRescan();
+        return;
+      }
+    };
+    if (Chatseek.watchEmbedded === true) window.addEventListener("message", onFrame);
     let href = location.href;
     poll = setInterval(() => {
       if (!alive()) return;
       if (location.href !== href) {
         href = location.href;
+        emptyAttempt = 0;
+        bindDeep();
         announce();
         run();
       }
     }, 1200);
-    document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", () => {
+      armEmpty();
+      onVisible();
+    });
     announce();
+    bindDeep();
     run();
   },
 
@@ -859,8 +983,8 @@ const Chatseek = {
     // Report 0 messages only once it stays empty; returning false makes
     // observe() look again in a few seconds even if the DOM goes quiet.
     let settling = false;
+    const now = Date.now();
     if (health) {
-      const now = Date.now();
       const zeroKey = health.pathKind === "conversation" && !msgs.length
         ? (conversation?.id || "conversation")
         : "";
@@ -888,6 +1012,13 @@ const Chatseek = {
     );
     if (settling && !newChat) {
       ok = false;
+      const remain = Chatseek.HEALTH_GRACE_MS - (now - (state.zeroSince || now));
+      if (remain > 0 && typeof Chatseek.requestRescan === "function") {
+        clearTimeout(Chatseek._graceTimer);
+        Chatseek._graceTimer = setTimeout(() => {
+          try { Chatseek.requestRescan(); } catch { /* rescan is best-effort */ }
+        }, Math.max(0, remain - 760));
+      }
       Chatseek.publishDiag(Chatseek.diagFields({
         platform,
         pathKind: health.pathKind,
@@ -896,6 +1027,7 @@ const Chatseek = {
         userCount: health.userCount,
         assistantCount: health.assistantCount,
         charCount: health.charCount,
+        structure: health.structure || null,
         healthState: "settling",
         warn: false,
         at: Date.now(),
@@ -922,6 +1054,7 @@ const Chatseek = {
         userCount: report.userCount,
         assistantCount: report.assistantCount,
         charCount: report.charCount,
+        structure: health.structure || null,
         healthState: report.warn ? "warn" : "ok",
         warn: report.warn,
         at: report.at,
@@ -1322,20 +1455,8 @@ const Chatseek = {
 
   openShadowRoots(doc) {
     const roots = [];
-    const stack = [doc];
-    let seen = 0;
-    while (stack.length && roots.length < 20 && seen < 4000) {
-      const root = stack.pop();
-      const all = root?.querySelectorAll?.("*");
-      if (!all) continue;
-      for (const el of all) {
-        seen += 1;
-        if (seen > 4000) break;
-        if (el.shadowRoot) {
-          roots.push(el.shadowRoot);
-          stack.push(el.shadowRoot);
-        }
-      }
+    for (const entry of Chatseek.shadowHosts(doc)) {
+      if (entry?.root && entry.mode === "open") roots.push(entry.root);
     }
     return roots;
   },
@@ -1883,6 +2004,7 @@ function scrubDiag(value, max) {
 
 Chatseek.imageDiagCounts = () => ({ cached: 0, placeholder: 0 });
 Chatseek._lastError = null;
+Chatseek._scriptedFrames = new WeakMap();
 Chatseek._diagFields = null;
 Chatseek._diagPlatform = "";
 Chatseek._lastDiag = "";
@@ -1931,11 +2053,20 @@ Chatseek.messageStats = (messages) => {
   let assistantCount = 0;
   let charCount = 0;
   for (const msg of messages || []) {
-    if (msg?.role === "assistant") assistantCount += 1;
+    // Unknown heuristic turns are stored as assistant. Count them the same way.
+    if (msg?.role === "assistant" || msg?.role === "unknown") assistantCount += 1;
     else userCount += 1;
     charCount += String(msg?.body || "").length;
   }
   return { userCount, assistantCount, charCount };
+};
+
+// Hidden tabs pause. After eight looks the observers are enough; do not poll forever.
+Chatseek.emptyRescanDelay = (attempt, hidden) => {
+  if (hidden) return 0;
+  const n = Math.floor(Number(attempt) || 0);
+  if (n < 0 || n >= 8) return 0;
+  return Math.min(2000 * (2 ** n), 30000);
 };
 
 Chatseek.isSpeakerChrome = (body) => {
@@ -2000,6 +2131,7 @@ Chatseek.diagFields = (fields) => {
     healthState: src.healthState || (src.warn ? "warn" : "ok"),
     errorName: err.name || "",
     errorStack: err.stack || "",
+    structure: src.structure || null,
     at: Number(src.at) || Date.now(),
   };
 };
@@ -2027,20 +2159,32 @@ Chatseek.formatDiag = (fields) => {
     `err=${oneWord(src.errorName)}`,
     `at=${iso}`,
   ];
-    const stack = scrubFrame(src.errorStack);
+  const structure = Chatseek.formatStructure(src.structure);
+  if (structure) parts.push(structure);
+  const stack = scrubFrame(src.errorStack);
   if (stack) parts.push(`stack=${stack}`);
   return parts.join(" ");
 };
 
-Chatseek.noteDiag = (line) => {
+function diagIdentity(line) {
+  return String(line || "").replace(/\sat=[^\s]+/g, "");
+}
+
+Chatseek.noteDiag = (line, level) => {
   Chatseek._diagPending = String(line || "");
+  Chatseek._diagPendingLevel = level === "warn" ? "warn" : "log";
   const flush = () => {
     Chatseek._diagTimer = 0;
     const next = Chatseek._diagPending;
-    if (!next || next === Chatseek._diagLast) return;
+    const warn = Chatseek._diagPendingLevel === "warn";
+    // The timestamp changes on every pass. Repeat lines must not flood the console.
+    if (!next || diagIdentity(next) === diagIdentity(Chatseek._diagLast)) return;
     Chatseek._diagLast = next;
     try {
-      if (typeof console !== "undefined" && typeof console.log === "function") console.log(next);
+      const write = warn && typeof console !== "undefined" && typeof console.warn === "function"
+        ? console.warn.bind(console)
+        : (typeof console !== "undefined" && typeof console.log === "function" ? console.log.bind(console) : null);
+      if (write) write(next);
     } catch {
       // A missing console must not stop capture.
     }
@@ -2059,7 +2203,7 @@ Chatseek.publishDiag = (fields) => {
   if (stored.platform) Chatseek._diagPlatform = stored.platform;
   const line = Chatseek.formatDiag(stored);
   Chatseek._lastDiag = line;
-  Chatseek.noteDiag(line);
+  Chatseek.noteDiag(line, stored.healthState === "warn" ? "warn" : "log");
   return line;
 };
 
@@ -2121,4 +2265,649 @@ Chatseek.safeDomText = (el, plain) => {
     try { text = Chatseek.cleanClone(el); } catch { text = ""; }
     return { text, offsets: new Map() };
   }
+};
+
+function adoptedRoot(el, probeClosed) {
+  if (!el || el.nodeType !== 1) return null;
+  if (el.shadowRoot) return { root: el.shadowRoot, mode: "open" };
+  if (!probeClosed) return null;
+  try {
+    const closed = typeof chrome !== "undefined" ? chrome.dom?.openOrClosedShadowRoot?.(el) : null;
+    if (closed) return { root: closed, mode: "closed" };
+  } catch {
+    // Closed roots stay invisible when the extension API is missing.
+  }
+  return null;
+}
+
+Chatseek.shadowHosts = (doc, opts) => {
+  const hosts = [];
+  const stack = [doc];
+  const seenRoots = new Set();
+  const allowClosed = opts?.closed === true;
+  let seen = 0;
+  while (stack.length && hosts.length < 20) {
+    const root = stack.pop();
+    if (!root || seenRoots.has(root)) continue;
+    seenRoots.add(root);
+    let all = [];
+    try { all = root.querySelectorAll ? [...root.querySelectorAll("*")] : []; } catch { all = []; }
+    for (let index = 0; index < all.length; index += 1) {
+      const el = all[index];
+      seen += 1;
+      if (seen > 2500 || hosts.length >= 20) break;
+      const found = adoptedRoot(el, allowClosed && (index < 800 || String(el.tagName || "").includes("-")));
+      if (!found) continue;
+      hosts.push({
+        el,
+        root: found.root,
+        mode: found.mode,
+        tag: String(el.tagName || "div").toLowerCase(),
+      });
+      stack.push(found.root);
+    }
+  }
+  return hosts;
+};
+
+Chatseek.readScopes = (doc) => {
+  const scopes = [{ kind: "top", node: doc }];
+  const pushShadows = (root, kind) => {
+    for (const entry of Chatseek.shadowHosts(root, { closed: true })) {
+      if (!entry.root) continue;
+      scopes.push({ kind, node: entry.root, mode: entry.mode, tag: entry.tag });
+    }
+  };
+  pushShadows(doc, "shadow");
+  let frames = [];
+  try { frames = doc.querySelectorAll ? [...doc.querySelectorAll("iframe")] : []; } catch { frames = []; }
+  for (const frame of frames) {
+    let child = null;
+    try { child = frame.contentDocument; } catch { child = null; }
+    if (!child) continue;
+    scopes.push({ kind: "iframe", node: child, frame });
+    pushShadows(child, "shadow");
+  }
+  return scopes;
+};
+
+async function pacedElements(root) {
+  const nodes = [];
+  let walker = null;
+  try {
+    const doc = root?.nodeType === 9 ? root : (root?.ownerDocument || null);
+    const start = root?.nodeType === 9 ? (root.documentElement || root.body) : root;
+    if (start && doc?.createTreeWalker) walker = doc.createTreeWalker(start, NodeFilter.SHOW_ELEMENT);
+  } catch {
+    walker = null;
+  }
+  if (!walker) {
+    try { return root?.querySelectorAll ? [...root.querySelectorAll("*")].slice(0, 2500) : []; } catch { return []; }
+  }
+  let index = 0;
+  let el = walker.currentNode;
+  while (el && index < 2500) {
+    if (el.nodeType === 1) nodes.push(el);
+    index += 1;
+    if ((index & 63) === 0) await Chatseek.paceDom();
+    el = walker.nextNode();
+  }
+  return nodes;
+}
+
+Chatseek.shadowHostsPaced = async (doc) => {
+  const hosts = [];
+  const stack = [doc];
+  const seenRoots = new Set();
+  let seen = 0;
+  while (stack.length && hosts.length < 20) {
+    const root = stack.pop();
+    if (!root || seenRoots.has(root)) continue;
+    seenRoots.add(root);
+    const all = await pacedElements(root);
+    for (let index = 0; index < all.length; index += 1) {
+      const el = all[index];
+      seen += 1;
+      if (seen > 2500 || hosts.length >= 20) break;
+      const found = adoptedRoot(el, index < 800 || String(el.tagName || "").includes("-"));
+      if (!found) continue;
+      hosts.push({
+        el,
+        root: found.root,
+        mode: found.mode,
+        tag: String(el.tagName || "div").toLowerCase(),
+      });
+      stack.push(found.root);
+    }
+  }
+  return hosts;
+};
+
+Chatseek.readEmbeddedPaced = async (doc) => {
+  const scopes = [];
+  const pushShadows = async (root) => {
+    for (const entry of await Chatseek.shadowHostsPaced(root)) {
+      if (!entry.root) continue;
+      scopes.push({ kind: "shadow", node: entry.root, mode: entry.mode, tag: entry.tag });
+      await Chatseek.paceDom();
+    }
+  };
+  await pushShadows(doc);
+  let frames = [];
+  try { frames = doc.querySelectorAll ? [...doc.querySelectorAll("iframe")] : []; } catch { frames = []; }
+  for (const frame of frames) {
+    let child = null;
+    try { child = frame.contentDocument; } catch { child = null; }
+    if (!child) continue;
+    scopes.push({ kind: "iframe", node: child, frame });
+    await pushShadows(child);
+    await Chatseek.paceDom();
+  }
+  return scopes;
+};
+
+Chatseek.observeDeep = (doc, run, seen) => {
+  if (!doc || typeof run !== "function" || !seen) return;
+  for (const entry of Chatseek.shadowHosts(doc, { closed: true })) {
+    const root = entry?.root;
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    try {
+      new MutationObserver(run).observe(root, { childList: true, subtree: true, characterData: true });
+    } catch { /* a root can reject observe */ }
+  }
+  let frames = [];
+  try { frames = [...doc.querySelectorAll("iframe")]; } catch { frames = []; }
+  for (const frame of frames) {
+    if (!seen.has(frame)) {
+      seen.add(frame);
+      frame.addEventListener("load", () => {
+        try {
+          const child = frame.contentDocument;
+          if (child?.documentElement && !seen.has(child)) {
+            seen.add(child);
+            new MutationObserver(run).observe(child.documentElement, {
+              childList: true,
+              subtree: true,
+              characterData: true,
+            });
+          }
+        } catch { /* cross-origin frames have no document */ }
+        run();
+      });
+    }
+    try {
+      const child = frame.contentDocument;
+      if (child?.documentElement && !seen.has(child)) {
+        seen.add(child);
+        new MutationObserver(run).observe(child.documentElement, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      }
+    } catch { /* cross-origin */ }
+  }
+};
+
+Chatseek.watchChildFrame = () => {
+  const ping = () => {
+    try {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const origin = (typeof location !== "undefined" && location.origin && location.origin !== "null")
+        ? location.origin
+        : "*";
+      window.parent.postMessage({ source: "chatseek-frame" }, origin);
+    } catch { /* the parent may be gone */ }
+  };
+  ping();
+  try {
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) ping();
+    });
+  } catch { /* a hidden frame stays quiet */ }
+  try {
+    const root = document.documentElement || document.body;
+    if (root) {
+      new MutationObserver(ping).observe(root, { childList: true, subtree: true, characterData: true });
+    }
+  } catch { /* the frame can still be read by the parent when it is same-origin */ }
+};
+
+function plainLen(el) {
+  return String(el?.textContent || "").replace(/\s+/g, " ").trim().length;
+}
+
+function bodyTextLen(body) {
+  if (!body) return 0;
+  let wide = false;
+  try { wide = body.getElementsByTagName("*").length > 600; } catch { wide = false; }
+  if (wide) return plainLen(body);
+  let clone = body;
+  try {
+    clone = body.cloneNode(true);
+    clone.querySelectorAll("script, style, noscript").forEach((node) => node.remove());
+  } catch {
+    clone = body;
+  }
+  return plainLen(clone);
+}
+
+function linkHeavy(el) {
+  try {
+    return el.querySelectorAll("a[href*='/c/']").length >= 3;
+  } catch {
+    return false;
+  }
+}
+
+function chromeMarked(el) {
+  let node = el;
+  let guard = 0;
+  while (node && node.nodeType === 1 && guard < 6) {
+    const blob = `${node.id || ""} ${domClassBlob(node)} ${node.getAttribute?.("data-testid") || ""}`.toLowerCase();
+    if (/(?:^|[^a-z])(cookie|consent|gdpr|onetrust|upgrade|upsell|paywall)(?:[^a-z]|$)/.test(blob)) return true;
+    node = node.parentElement;
+    guard += 1;
+  }
+  return false;
+}
+
+function hasEditor(el) {
+  if (!el || el.nodeType !== 1) return false;
+  try {
+    if (el.matches?.("textarea, input, select, [contenteditable='true']")) return true;
+    return !!el.querySelector?.("textarea, input, select, [contenteditable='true']");
+  } catch {
+    return false;
+  }
+}
+
+function proseLen(el) {
+  try {
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll("button, [role='button'], svg, input, textarea, select, nav, footer, [contenteditable='true']").forEach((node) => node.remove());
+    return plainLen(clone);
+  } catch {
+    return plainLen(el);
+  }
+}
+
+Chatseek.isHeuristicChrome = (el) => {
+  if (!el || el.nodeType !== 1) return true;
+  const tag = el.tagName || "";
+  if (/^(NAV|FOOTER|HEADER|ASIDE|TEXTAREA|INPUT|SELECT|SCRIPT|STYLE|NOSCRIPT|BUTTON|SVG)$/.test(tag)) return true;
+  const role = (el.getAttribute?.("role") || "").toLowerCase();
+  if (role === "navigation" || role === "contentinfo" || role === "banner" || role === "button" || role === "dialog" || role === "alertdialog") return true;
+  try {
+    if (el.closest("nav, footer, header, aside, [role='navigation'], [role='contentinfo'], [role='banner'], [role='dialog'], [role='alertdialog']")) return true;
+  } catch { /* ignore */ }
+  if (chromeMarked(el)) return true;
+  return false;
+};
+
+function hintText(el) {
+  const text = String(el?.textContent || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 180) return false;
+  return /can make mistakes|check important info|we use cookies|upgrade to|subscribe to|accept all|privacy policy|僅供參考|可能出錯/i.test(text);
+}
+
+Chatseek.skipHeuristic = (el) => {
+  if (!el || el.nodeType !== 1) return true;
+  if (/^(P|H1|H2|H3|H4|H5|H6|SPAN|A|LABEL|BUTTON)$/.test(el.tagName || "")) return true;
+  if (Chatseek.isHeuristicChrome(el) || linkHeavy(el) || hasEditor(el) || hintText(el)) return true;
+  return proseLen(el) < 24;
+};
+
+function guessHeuristicRole(el) {
+  const known = Chatseek.messageRole(el);
+  if (known === "user" || known === "assistant") return known;
+  let label = "";
+  try {
+    const heading = el.querySelector("h1, h2, h3, h4, h5, h6");
+    label = String(heading?.textContent || "").replace(/\s+/g, " ").trim();
+  } catch { label = ""; }
+  if (/^(you|user)$/i.test(label) || /^(?:you|user)\s+said\b/i.test(label)) return "user";
+  if (/^(chatgpt|assistant|gpt(?:-\d|\b))/i.test(label) || /^(?:chatgpt|assistant)\s+said\b/i.test(label)) return "assistant";
+  return "unknown";
+}
+
+function bestHeuristicGroup(root) {
+  const start = root?.nodeType === 9
+    ? (root.querySelector?.("main") || root.body)
+    : (root?.querySelector?.("main") || root);
+  if (!start?.querySelectorAll) return null;
+  const parents = [start];
+  let nodes = [];
+  try { nodes = [...start.querySelectorAll("div, section, article, ol, ul, main")]; } catch { nodes = []; }
+  let seen = 0;
+  for (const el of nodes) {
+    if (seen++ > 500) break;
+    if (!Chatseek.isHeuristicChrome(el)) parents.push(el);
+  }
+  let best = null;
+  for (const parent of parents) {
+    if (Chatseek.isHeuristicChrome(parent)) continue;
+    let kids = [];
+    try { kids = [...parent.children]; } catch { kids = []; }
+    const textual = [];
+    for (const el of kids) {
+      if (!el || el.nodeType !== 1) continue;
+      if (Chatseek.skipHeuristic(el)) continue;
+      textual.push(el);
+    }
+    if (!textual.length) continue;
+    const chars = textual.reduce((sum, el) => sum + plainLen(el), 0);
+    const turnLike = textual.filter((el) => guessHeuristicRole(el) !== "unknown").length;
+    const score = turnLike * 1000000 + textual.length * 100000 + Math.min(chars, 50000);
+    if (!best || score > best.score) {
+      best = {
+        score,
+        blocks: textual.map((el) => ({ el, role: guessHeuristicRole(el) })),
+      };
+    }
+  }
+  return best;
+}
+
+Chatseek.heuristicBlocks = (scopes) => {
+  let best = null;
+  for (const scope of scopes || []) {
+    const group = bestHeuristicGroup(scope?.node);
+    if (!group) continue;
+    if (!best || group.score > best.score) best = group;
+  }
+  return best ? best.blocks : [];
+};
+
+Chatseek.heuristicBlocksPaced = async (scopes) => {
+  let best = null;
+  for (const scope of scopes || []) {
+    const group = bestHeuristicGroup(scope?.node);
+    await Chatseek.paceDom();
+    if (!group) continue;
+    if (!best || group.score > best.score) best = group;
+  }
+  return best ? best.blocks : [];
+};
+
+Chatseek.charBucket = (n) => {
+  const value = Math.max(0, Math.floor(Number(n) || 0));
+  if (value <= 0) return "0";
+  if (value <= 40) return "1-40";
+  if (value <= 160) return "41-160";
+  if (value <= 640) return "161-640";
+  if (value <= 2560) return "641-2560";
+  return "2560+";
+};
+
+Chatseek.cleanClassToken = (raw) => {
+  const out = [];
+  for (const rawToken of String(raw || "").toLowerCase().split(/\s+/)) {
+    if (!rawToken) continue;
+    for (const piece of rawToken.split(/[^a-z-]+/)) {
+      const bits = piece.split("-").filter((bit) => bit.length >= 2 && !/^[a-f]{6,}$/.test(bit));
+      const token = bits.join("-").replace(/^-+|-+$/g, "");
+      if (token.length < 2 || token.length > 24) continue;
+      out.push(token);
+      if (out.length >= 3) return out;
+    }
+  }
+  return out;
+};
+
+function describeEl(el) {
+  const tag = String(el?.tagName || "").toLowerCase();
+  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return "";
+  const names = [];
+  const attrs = el.attributes;
+  if (attrs) {
+    for (const attr of [...attrs]) {
+      const name = String(attr?.name || "").toLowerCase();
+      if (!name || name === "class" || name === "style") continue;
+      if (/^(href|src|srcdoc|alt|title|value|placeholder)$/.test(name)) continue;
+      if (!/^[a-z][a-z0-9:-]*$/.test(name)) continue;
+      const bare = name.replace(/[^a-z-]/g, "");
+      if (bare.length >= 2) names.push(bare);
+      if (names.length >= 4) break;
+    }
+  }
+  const tokens = [
+    ...Chatseek.cleanClassToken(el.getAttribute?.("data-testid")),
+    ...Chatseek.cleanClassToken(el.getAttribute?.("class")),
+  ].slice(0, 3);
+  let out = tag;
+  if (names.length) out += `[${names.join(",")}]`;
+  if (tokens.length) out += `{${tokens.join(".")}}`;
+  return out;
+}
+
+function frameHostname(frame) {
+  try {
+    const src = frame.getAttribute?.("src") || "";
+    if (!src || /^about:/i.test(src) || frame.hasAttribute?.("srcdoc")) return "about";
+    let base = "https://chatgpt.com/";
+    try {
+      if (typeof location !== "undefined" && location.href) base = location.href;
+    } catch { /* keep the fallback base */ }
+    return String(new URL(src, base).hostname || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function pathFor(el) {
+  const bits = [];
+  let node = el;
+  let guard = 0;
+  while (node && node.nodeType === 1 && guard < 6) {
+    const bit = describeEl(node);
+    if (bit) bits.push(bit);
+    node = node.parentElement;
+    guard += 1;
+  }
+  bits.reverse();
+  return bits.join(">");
+}
+
+function scopeWhere(el) {
+  try {
+    const doc = el?.ownerDocument;
+    if (doc?.defaultView?.frameElement) return "iframe";
+  } catch { /* cross-origin frameElement throws; treat as top */ }
+  try {
+    let node = el;
+    let guard = 0;
+    while (node && guard < 10) {
+      if (node.nodeType === 11) return "shadow";
+      node = node.parentNode;
+      guard += 1;
+    }
+  } catch { /* stay on top */ }
+  return "top";
+}
+
+Chatseek.skeletonOf = (doc, preset) => {
+  const ranked = [];
+  const scopes = preset || Chatseek.readScopes(doc);
+  for (const scope of scopes) {
+    const start = scope.node?.nodeType === 9
+      ? (scope.node.querySelector?.("main") || scope.node.body)
+      : (scope.node?.querySelector?.("main") || scope.node);
+    if (!start?.querySelectorAll) continue;
+    let nodes = [];
+    try {
+      nodes = [start, ...start.querySelectorAll("article, div, section, p, li, pre, main, blockquote")];
+    } catch { nodes = []; }
+    let seen = 0;
+    for (const el of nodes) {
+      if (seen++ > 400) break;
+      const tag = el.tagName || "";
+      if (/^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|INPUT)$/.test(tag)) continue;
+      const n = plainLen(el);
+      if (n < 12) continue;
+      const kids = [...el.children].filter((kid) => kid.nodeType === 1);
+      if (kids.length === 1 && plainLen(kids[0]) >= n * 0.8) continue;
+      ranked.push({ el, n, where: scope.kind === "top" ? scopeWhere(el) : scope.kind });
+    }
+  }
+  ranked.sort((a, b) => b.n - a.n);
+  const picked = [];
+  for (const block of ranked) {
+    if (picked.some((item) => item.el === block.el || item.el.contains(block.el) || block.el.contains(item.el))) continue;
+    picked.push(block);
+    if (picked.length >= 3) break;
+  }
+  return picked.map((block) => {
+    const prefix = block.where === "iframe" ? "iframe>" : block.where === "shadow" ? "shadow>" : "";
+    return `${prefix}${pathFor(block.el)}~${Chatseek.charBucket(block.n)}`;
+  }).join("|").slice(0, 220);
+};
+
+function rootHasMain(node) {
+  try { return !!node?.querySelector?.("main"); } catch { return false; }
+}
+
+Chatseek.structureDiag = (doc) => {
+  const top = doc?.nodeType === 9 ? doc : (doc?.ownerDocument || doc);
+  if (!top?.querySelectorAll) {
+    return { main: "none", top: 0, body: "0", frames: [], shadows: [], skeleton: "" };
+  }
+  const places = [];
+  if (rootHasMain(top)) places.push("top");
+  const shadowEntries = Chatseek.shadowHosts(top, { closed: true });
+  const shadows = shadowEntries.map((entry) => ({
+    tag: String(entry.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+    mode: entry.mode === "closed" ? "closed" : "open",
+  }));
+  if (shadowEntries.some((entry) => rootHasMain(entry.root))) places.push("shadow");
+  let frameNodes = [];
+  try { frameNodes = [...top.querySelectorAll("iframe")]; } catch { frameNodes = []; }
+  const frames = [];
+  let iframeMain = false;
+  for (const frame of frameNodes) {
+    const host = frameHostname(frame).replace(/[^a-z0-9.-]/g, "") || "unknown";
+    const script = Chatseek._scriptedFrames?.get(frame) ? "script" : "noscript";
+    frames.push(`${host}:${script}`);
+    let child = null;
+    try { child = frame.contentDocument; } catch { child = null; }
+    if (child && rootHasMain(child)) iframeMain = true;
+  }
+  if (iframeMain) places.push("iframe");
+  const bodyChars = bodyTextLen(top.body);
+  return {
+    main: places.join("+") || "none",
+    top: top.body?.children?.length || 0,
+    body: Chatseek.charBucket(bodyChars),
+    frames: frames.slice(0, 6),
+    shadows: shadows.slice(0, 6),
+    skeleton: Chatseek.skeletonOf(top),
+  };
+};
+
+Chatseek.structureDiagLight = (doc, charCount) => {
+  const top = doc?.nodeType === 9 ? doc : (doc?.ownerDocument || doc);
+  if (!top?.querySelectorAll) {
+    return { main: "none", top: 0, body: "0", frames: [], shadows: [], skeleton: "" };
+  }
+  let frameNodes = [];
+  try { frameNodes = [...top.querySelectorAll("iframe")]; } catch { frameNodes = []; }
+  const frames = [];
+  for (const frame of frameNodes) {
+    const host = frameHostname(frame).replace(/[^a-z0-9.-]/g, "") || "unknown";
+    const script = Chatseek._scriptedFrames?.get(frame) ? "script" : "noscript";
+    frames.push(`${host}:${script}`);
+    if (frames.length >= 6) break;
+  }
+  return {
+    main: rootHasMain(top) ? "top" : "none",
+    top: top.body?.children?.length || 0,
+    body: Chatseek.charBucket(charCount),
+    frames,
+    shadows: [],
+    skeleton: "",
+  };
+};
+
+Chatseek.structureDiagPaced = async (doc) => {
+  const top = doc?.nodeType === 9 ? doc : (doc?.ownerDocument || doc);
+  if (!top?.querySelectorAll) {
+    return { main: "none", top: 0, body: "0", frames: [], shadows: [], skeleton: "" };
+  }
+  await Chatseek.paceDom();
+  const embedded = await Chatseek.readEmbeddedPaced(top);
+  const places = [];
+  if (rootHasMain(top)) places.push("top");
+  const shadows = [];
+  let iframeMain = false;
+  for (const scope of embedded) {
+    if (scope.kind === "shadow") {
+      shadows.push({
+        tag: String(scope.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+        mode: scope.mode === "closed" ? "closed" : "open",
+      });
+      if (rootHasMain(scope.node) && !places.includes("shadow")) places.push("shadow");
+    } else if (scope.kind === "iframe") {
+      if (rootHasMain(scope.node)) iframeMain = true;
+    }
+  }
+  if (iframeMain) places.push("iframe");
+  let frameNodes = [];
+  try { frameNodes = [...top.querySelectorAll("iframe")]; } catch { frameNodes = []; }
+  const frames = [];
+  for (const frame of frameNodes) {
+    const host = frameHostname(frame).replace(/[^a-z0-9.-]/g, "") || "unknown";
+    const script = Chatseek._scriptedFrames?.get(frame) ? "script" : "noscript";
+    frames.push(`${host}:${script}`);
+    if (frames.length >= 6) break;
+  }
+  const skeleton = Chatseek.skeletonOf(top, [{ kind: "top", node: top }, ...embedded]);
+  await Chatseek.paceDom();
+  return {
+    main: places.join("+") || "none",
+    top: top.body?.children?.length || 0,
+    body: Chatseek.charBucket(bodyTextLen(top.body)),
+    frames,
+    shadows: shadows.slice(0, 6),
+    skeleton,
+  };
+};
+
+function safeSkeleton(value) {
+  const text = String(value || "");
+  if (!text || text.length > 220) return "";
+  if (!/^[a-z0-9>|\[\]{},~:.-]+$/i.test(text)) return "";
+  if (/[0-9a-f]{8}-[0-9a-f]{4}/i.test(text)) return "";
+  return text.toLowerCase();
+}
+
+Chatseek.formatStructure = (structure) => {
+  if (!structure || typeof structure !== "object") return "";
+  const main = /^(none|top|shadow|iframe)(\+(top|shadow|iframe))*$/.test(structure.main)
+    ? structure.main
+    : "none";
+  const top = Math.max(0, Math.min(9999, Math.floor(Number(structure.top) || 0)));
+  const body = /^(0|\d+-\d+|\d+\+)$/.test(structure.body) ? structure.body : "0";
+  const frames = (Array.isArray(structure.frames) ? structure.frames : [])
+    .map((item) => String(item || "").toLowerCase())
+    .filter((item) => /^[a-z0-9.-]+:(script|noscript)$/.test(item))
+    .slice(0, 6);
+  const shadows = (Array.isArray(structure.shadows) ? structure.shadows : [])
+    .map((item) => {
+      if (typeof item === "string") return item.toLowerCase();
+      const tag = String(item?.tag || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+      const mode = item?.mode === "closed" ? "closed" : "open";
+      return tag ? `${tag}:${mode}` : "";
+    })
+    .filter((item) => /^[a-z0-9-]+:(open|closed)$/.test(item))
+    .slice(0, 6);
+  const skeleton = safeSkeleton(structure.skeleton);
+  return [
+    `main=${main}`,
+    `top=${top}`,
+    `body=${body}`,
+    `frames=${frames.length ? `${frames.length}:${frames.join(",")}` : "0"}`,
+    `shadows=${shadows.length ? `${shadows.length}:${shadows.join(",")}` : "0"}`,
+    `skeleton=${skeleton || "-"}`,
+  ].join(" ");
 };

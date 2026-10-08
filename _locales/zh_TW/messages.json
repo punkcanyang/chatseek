@@ -349,5 +349,8 @@
   },
   "copyDiagEmpty": {
     "message": "還沒有診斷。請先打開一段對話並重新整理頁面。"
+  },
+  "injectMissing": {
+    "message": "此分頁未載入 Chatseek：請重新整理分頁，並確認擴充的網站存取權允許此網站"
   }
 }

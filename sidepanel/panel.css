@@ -563,6 +563,10 @@ body {
   resize: vertical;
 }
 
+#injectWarn[hidden] {
+  display: none;
+}
+
 .health-warn {
   margin: 0 0 6px;
   color: #8a3d32;
