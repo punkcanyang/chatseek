@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "default_locale": "en",
   "description": "__MSG_extDescription__",
   "minimum_chrome_version": "116",
@@ -28,6 +28,9 @@
     "type": "module"
   },
   "permissions": ["sidePanel"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'self'; frame-src 'none'; media-src 'none'"
+  },
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",

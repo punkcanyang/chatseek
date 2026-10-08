@@ -242,9 +242,35 @@ body {
   margin: 0;
 }
 
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.read {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.read:hover,
+.read:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .remove {
   flex: 0 0 auto;
-  align-self: center;
+  align-self: flex-end;
   border: 0;
   background: none;
   color: var(--muted);

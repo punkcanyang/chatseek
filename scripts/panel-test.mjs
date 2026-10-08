@@ -177,10 +177,15 @@ globalThis.chrome = {
   runtime: {
     onMessage: { addListener(fn) { listeners.message.push(fn); } },
     sendMessage() {},
+    getURL(path) {
+      return `chrome-extension://chatseek-test/${String(path).replace(/^\//, "")}`;
+    },
   },
   action: { setBadgeText() { return Promise.resolve(); } },
 };
 
+const openedTabs = [];
+chrome.tabs.create = async (opts) => { openedTabs.push(opts); };
 const message = (msg, sender = {}) => listeners.message.forEach((fn) => fn(msg, sender));
 const activate = (windowId) => listeners.activated.forEach((fn) => fn({ tabId: active[windowId]?.id, windowId }));
 const updated = (windowId, info) => listeners.updated.forEach((fn) => fn(active[windowId]?.id, info, active[windowId]));
@@ -205,6 +210,26 @@ const list = document.getElementById("list");
 assert(!list.querySelector("img, script"), "chat text and titles never become elements");
 assert(rowFor(X.id).querySelector(".item-title").textContent.startsWith("<img"), "markup title shows as text");
 assert(globalThis.pwned === undefined, "no chat text ran");
+assert(
+  document.querySelectorAll(".item").length === document.querySelectorAll(".read").length &&
+    document.querySelectorAll(".read").length > 0,
+  "every row has a read button",
+);
+assert([...document.querySelectorAll(".read")].every((btn) => btn.textContent === "阅读"), "zh-CN read label");
+openedTabs.length = 0;
+rowFor(A.id).parentElement.querySelector(".read").click();
+await until(() => openedTabs.length === 1, "read opens a tab");
+assert(openedTabs[0].url.includes("reader/index.html"), `read url ${openedTabs[0].url}`);
+assert(openedTabs[0].url.includes(encodeURIComponent(A.id)), "read url carries the conversation id");
+assert(!openedTabs[0].url.includes("chatgpt.com"), "read does not open the website");
+openedTabs.length = 0;
+rowFor(A.id).querySelector(".item-preview").click();
+await until(() => openedTabs.length === 1, "preview opens the reader");
+assert(openedTabs[0].url.includes("reader/index.html"), `preview url ${openedTabs[0].url}`);
+openedTabs.length = 0;
+rowFor(A.id).querySelector(".item-title").click();
+await until(() => openedTabs.length === 1, "title still opens the original chat");
+assert(openedTabs[0].url.startsWith("https://chatgpt.com/"), `title url ${openedTabs[0].url}`);
 
 // Index updates for the same chat must not pull the list back.
 message({ type: "INDEX_UPDATED" });
@@ -291,6 +316,10 @@ assert(rowFor(legacyId).querySelector(".item-title mark")?.textContent.toLowerCa
 q.value = "Alpha";
 q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(A.id) && !rowFor(B.id), "search for Alpha");
+openedTabs.length = 0;
+rowFor(A.id).parentElement.querySelector(".read").click();
+await until(() => openedTabs.length === 1, "search read passes the query");
+assert(decodeURIComponent(openedTabs[0].url).includes("q=Alpha"), `search reader url ${openedTabs[0].url}`);
 q.value = "";
 q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(B.id), "cleared search");

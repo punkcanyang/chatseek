@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "읽기"
+  },
+  "openOriginal": {
+    "message": "원래 사이트에서 열기"
+  },
+  "prevHit": {
+    "message": "이전"
+  },
+  "nextHit": {
+    "message": "다음"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "일치 없음"
+  },
+  "roleUser": {
+    "message": "나"
+  },
+  "roleAssistant": {
+    "message": "어시스턴트"
+  },
+  "missingChat": {
+    "message": "이 대화는 로컬 색인에 없습니다."
+  },
+  "readerLoading": {
+    "message": "읽는 중…"
   }
 }

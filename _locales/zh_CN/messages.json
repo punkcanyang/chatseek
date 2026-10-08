@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "阅读"
+  },
+  "openOriginal": {
+    "message": "去原网站打开"
+  },
+  "prevHit": {
+    "message": "上一处"
+  },
+  "nextHit": {
+    "message": "下一处"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "没有命中"
+  },
+  "roleUser": {
+    "message": "你"
+  },
+  "roleAssistant": {
+    "message": "助手"
+  },
+  "missingChat": {
+    "message": "这段对话已不在本地索引里。"
+  },
+  "readerLoading": {
+    "message": "正在读取…"
   }
 }

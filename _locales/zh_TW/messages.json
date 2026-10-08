@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "閱讀"
+  },
+  "openOriginal": {
+    "message": "前往原網站開啟"
+  },
+  "prevHit": {
+    "message": "上一處"
+  },
+  "nextHit": {
+    "message": "下一處"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "沒有命中"
+  },
+  "roleUser": {
+    "message": "你"
+  },
+  "roleAssistant": {
+    "message": "助手"
+  },
+  "missingChat": {
+    "message": "這段對話已不在本機索引裡。"
+  },
+  "readerLoading": {
+    "message": "正在讀取…"
   }
 }

@@ -11,6 +11,7 @@ import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
 import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
+import { readerPageUrl } from "../src/reader-url.js";
 
 // The panel is an extension page, so its own localStorage keeps the choice
 // without the "storage" permission. Only the panel reads it.
@@ -77,6 +78,7 @@ function bundle(code) {
     confirmRemoveBody: (title) => say("confirmRemoveBody", title),
     cancel: say("cancel"),
     confirmRemove: say("confirmRemove"),
+    read: say("read"),
     langLabel: say("langLabel"),
     langFollow: say("langFollow"),
     chatgpt: "ChatGPT",
@@ -192,7 +194,10 @@ function render(items, { emptyKind, error }) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "item";
-    btn.addEventListener("click", () => openChat(conv.url));
+    btn.addEventListener("click", (event) => {
+      if (event.target.closest(".item-preview")) return;
+      openChat(conv.url);
+    });
 
     const title = document.createElement("div");
     title.className = "item-title";
@@ -210,6 +215,11 @@ function render(items, { emptyKind, error }) {
       } else {
         fillHighlight(previewEl, preview.text, preview.ranges);
       }
+      previewEl.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openReader(conv);
+      });
     }
 
     const meta = document.createElement("div");
@@ -241,6 +251,13 @@ function render(items, { emptyKind, error }) {
     }
     btn.append(...(previewEl ? [title, previewEl, meta] : [title, meta]));
 
+    const readBtn = document.createElement("button");
+    readBtn.type = "button";
+    readBtn.className = "read";
+    readBtn.dataset.id = conv.id || "";
+    readBtn.textContent = t.read;
+    readBtn.addEventListener("click", () => openReader(conv));
+
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "remove";
@@ -248,7 +265,10 @@ function render(items, { emptyKind, error }) {
     removeBtn.textContent = t.remove;
     removeBtn.addEventListener("click", () => askRemove(conv));
 
-    row.append(btn, removeBtn);
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(readBtn, removeBtn);
+    row.append(btn, actions);
     li.append(row);
     listEl.append(li);
   }
@@ -276,6 +296,21 @@ function askRemove(conv) {
     refresh();
   };
   removeCancel?.focus();
+}
+
+async function openReader(conv) {
+  if (!conv?.id) return;
+  // Extension page in a new tab. chrome.tabs.create does not need the tabs permission.
+  const url = readerPageUrl(conv.id, qEl.value, chrome.runtime);
+  try {
+    if (chrome.tabs?.create) {
+      await chrome.tabs.create({ url });
+      return;
+    }
+  } catch {
+    // Fall through to window.open, which also needs no tabs permission.
+  }
+  window.open(url, "_blank", "noopener");
 }
 
 async function openChat(url) {

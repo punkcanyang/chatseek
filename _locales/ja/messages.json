@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "読む"
+  },
+  "openOriginal": {
+    "message": "元のサイトで開く"
+  },
+  "prevHit": {
+    "message": "前へ"
+  },
+  "nextHit": {
+    "message": "次へ"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "一致なし"
+  },
+  "roleUser": {
+    "message": "あなた"
+  },
+  "roleAssistant": {
+    "message": "アシスタント"
+  },
+  "missingChat": {
+    "message": "この会話はローカルのインデックスにありません。"
+  },
+  "readerLoading": {
+    "message": "読み込んでいます…"
   }
 }

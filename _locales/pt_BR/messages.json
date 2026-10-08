@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "Ler"
+  },
+  "openOriginal": {
+    "message": "Abrir no site original"
+  },
+  "prevHit": {
+    "message": "Anterior"
+  },
+  "nextHit": {
+    "message": "Próxima"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "Nenhum resultado"
+  },
+  "roleUser": {
+    "message": "Você"
+  },
+  "roleAssistant": {
+    "message": "Assistente"
+  },
+  "missingChat": {
+    "message": "Esta conversa não está mais no índice local."
+  },
+  "readerLoading": {
+    "message": "Lendo…"
   }
 }

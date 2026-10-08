@@ -40,6 +40,17 @@ assert(CATALOG["zh-CN"].beforeTitle.includes("一个确切时间"), CATALOG["zh-
 assert(!CATALOG["zh-CN"].beforeTitle.includes("一则"), "zh-CN tooltip should not say 一则");
 assert(CATALOG["zh-TW"].beforeTitle.includes("一則確切時間"), CATALOG["zh-TW"].beforeTitle);
 assert(CATALOG["zh-TW"].archivedBadge === "已封存" && CATALOG["zh-CN"].archivedBadge === "已归档", "archive badge wording");
+assert(CATALOG["zh-CN"].read === "阅读" && CATALOG["zh-TW"].read === "閱讀", "read label");
+assert(CATALOG["zh-CN"].openOriginal === "去原网站打开", "zh-CN original site");
+assert(CATALOG["zh-TW"].prevHit === "上一處" && CATALOG["zh-TW"].nextHit === "下一處", "zh-TW hit nav");
+assert(CATALOG["zh-CN"].titleOnly === "仅有标题，未收录消息", "title-only copy reused by the reader");
+for (const key of ["read", "openOriginal", "prevHit", "nextHit", "hitCount", "noHits", "roleUser", "roleAssistant", "missingChat", "readerLoading"]) {
+  assert(enKeys.includes(key), `missing reader key ${key}`);
+}
+const readerJs = readFileSync(join(root, "reader/reader.js"), "utf8");
+assert(!/["'`][^"'`\n]*[\u4e00-\u9fff]/.test(readerJs), "reader.js still has hardcoded UI copy");
+assert(readerJs.includes("localStorage") && readerJs.includes("getUILanguage"), "reader follows the panel language");
+assert(readerJs.includes("chatseek.uiLocale"), "reader uses the panel locale key");
 
 for (const [key, value] of Object.entries(CATALOG.ja)) {
   assert(!value.includes("索引"), `ja.${key} should say インデックス, not 索引`);

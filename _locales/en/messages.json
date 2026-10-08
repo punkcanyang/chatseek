@@ -215,5 +215,43 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "Read"
+  },
+  "openOriginal": {
+    "message": "Open on the original site"
+  },
+  "prevHit": {
+    "message": "Previous"
+  },
+  "nextHit": {
+    "message": "Next"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "No matches"
+  },
+  "roleUser": {
+    "message": "You"
+  },
+  "roleAssistant": {
+    "message": "Assistant"
+  },
+  "missingChat": {
+    "message": "This chat is no longer in the local index."
+  },
+  "readerLoading": {
+    "message": "Reading…"
   }
 }

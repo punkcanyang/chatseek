@@ -85,7 +85,14 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.4.0") fail(`version should be 1.4.0, got ${manifest.version}`);
+if (manifest.version !== "1.5.0") fail(`version should be 1.5.0, got ${manifest.version}`);
+const csp = manifest.content_security_policy?.extension_pages || "";
+if (!/script-src[^;]*'self'/.test(csp)) fail("extension CSP must keep script-src 'self'");
+if (!/object-src[^;]*'self'/.test(csp)) fail("extension CSP must keep object-src 'self'");
+if (!/img-src/.test(csp) || /img-src[^;]*(https:|\*)/.test(csp)) {
+  fail("extension CSP must block external images");
+}
+if (/unsafe-inline|unsafe-eval/.test(csp)) fail("extension CSP must not allow inline or eval scripts");
 if (manifest.default_locale !== "en") fail("default_locale should be en");
 if (manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") {
   fail("manifest name and description should use chrome.i18n messages");
@@ -112,6 +119,12 @@ const referenced = new Set([
   "src/conversation-url.js",
   "src/current-tab.js",
   "src/i18n.js",
+  "src/message-order.js",
+  "src/reader-url.js",
+  "src/reader-view.js",
+  "reader/index.html",
+  "reader/reader.js",
+  "reader/reader.css",
   "LICENSE",
   ...Object.values(manifest.icons || {}),
   ...Object.values(manifest.action?.default_icon || {}),
@@ -161,6 +174,10 @@ for (const rel of [
   "src/conversation-url.js",
   "src/current-tab.js",
   "src/i18n.js",
+  "src/message-order.js",
+  "src/reader-url.js",
+  "src/reader-view.js",
+  "reader/reader.js",
   "sidepanel/panel.js",
 ]) {
   const src = read(rel);
@@ -175,6 +192,13 @@ if (/messages["']?\)\.getAll|objectStore\(\s*["']messages["']\s*\)\.getAll/.test
   fail("db.js must not getAll() the messages store");
 }
 if (!/openCursor/.test(dbSrc)) fail("db.js should cursor IndexedDB for search/list");
+if (!/const DB_VERSION = 3/.test(dbSrc)) fail("schema should stay at version 3");
+const readFn = dbSrc.split("export async function readConversation")[1]?.split("export async function")[0] || "";
+if (!readFn) fail("readConversation not found");
+if (!/readonly/.test(readFn)) fail("readConversation must use a readonly transaction");
+if (/readwrite|\.put\(|\.delete\(|\.add\(|\.clear\(/.test(readFn)) {
+  fail("readConversation must not write");
+}
 const searchFn = dbSrc.split("export async function searchConversations")[1]?.split(
   "export async function listRecent",
 )[0] || "";
@@ -572,6 +596,26 @@ if (/innerHTML|insertAdjacentHTML|outerHTML/.test(panelSrc)) {
 if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("src/preview.js"))) {
   fail("preview renderer must not use innerHTML");
 }
+for (const rel of ["src/reader-view.js", "reader/reader.js", "reader/index.html"]) {
+  if (/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(read(rel))) {
+    fail(`${rel} must not assign HTML`);
+  }
+}
+const readerPage = read("reader/reader.js");
+if (/upsert|removeConversation|clearAll|readwrite/.test(readerPage)) {
+  fail("reader page must not write the index");
+}
+if (!readerPage.includes("localStorage") || !readerPage.includes("getUILanguage")) {
+  fail("reader should follow the panel language stored in localStorage");
+}
+if (!readerPage.includes("chatseek.uiLocale")) fail("reader should use the panel locale key");
+const readerHtml = read("reader/index.html");
+if (!/img-src 'self'/.test(readerHtml)) fail("reader page CSP should block external images");
+if (/<script(?![^>]*src=)/i.test(readerHtml)) fail("reader page must not use inline scripts");
+if (!read("sidepanel/panel.js").includes("reader/index.html") && !read("sidepanel/panel.js").includes("readerPageUrl")) {
+  fail("side panel should open the reader page");
+}
+if (!read("sidepanel/panel.js").includes('className = "read"')) fail("side panel needs a read control");
 if (!/\.plat\.gemini/.test(read("sidepanel/panel.css"))) fail("missing .plat.gemini color");
 const backgroundSrc = read("background.js");
 if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc)) {

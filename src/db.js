@@ -6,6 +6,7 @@ import {
   nextPreviewFields,
   snippetTokens,
 } from "./preview.js";
+import { mergeMessageOrder, orderMessages } from "./message-order.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 3;
@@ -422,6 +423,10 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
     }
+    const pageIds = Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
+      ? meta.pageMessageIds
+      : messages.map((msg) => msg?.id).filter(Boolean);
+    conv.messageOrder = mergeMessageOrder(conv.messageOrder, pageIds);
     convStore.put(conv);
   }
 
@@ -658,6 +663,28 @@ export async function attachPreviews(conversations, query = "") {
     ...conv,
     preview: buildPreview(conv, q, bodies.get(conv?.id) || []),
   }));
+}
+
+/**
+ * Read one conversation and its messages. Readonly: does not create rows,
+ * does not clear a removed:<id> tombstone, and does not bump the schema.
+ */
+export async function readConversation(id) {
+  if (typeof id !== "string" || !id) return null;
+  return withDb(async (db) => {
+    const tx = db.transaction(["conversations", "messages"], "readonly");
+    const conv = await requestDone(tx.objectStore("conversations").get(id));
+    if (!conv) return null;
+    const messages = [];
+    const index = tx.objectStore("messages").index("conversationId");
+    await cursorEach(index, { range: IDBKeyRange.only(id) }, (msg) => {
+      if (msg) messages.push(msg);
+    });
+    return {
+      conversation: conv,
+      messages: orderMessages(messages, conv.messageOrder),
+    };
+  });
 }
 
 export async function stats() {
