@@ -213,10 +213,27 @@ assert(rowFor(X.id).querySelector(".item-title").textContent.startsWith("<img"),
 assert(globalThis.pwned === undefined, "no chat text ran");
 assert(
   document.querySelectorAll(".item").length === document.querySelectorAll(".read").length &&
+    document.querySelectorAll(".read").length === document.querySelectorAll(".open-site").length &&
     document.querySelectorAll(".read").length > 0,
-  "every row has a read button",
+  "every row has a read button and an original-site button",
 );
-assert([...document.querySelectorAll(".read")].every((btn) => btn.textContent === "阅读"), "zh-CN read label");
+assert(
+  [...document.querySelectorAll(".read")].every((btn) =>
+    btn.getAttribute("aria-label") === "阅读"
+    && btn.title === "阅读"
+    && btn.textContent.trim() === ""
+    && btn.querySelector("svg")
+    && btn.type === "button"),
+  "zh-CN read label",
+);
+assert(
+  [...document.querySelectorAll(".open-site")].every((btn) =>
+    btn.getAttribute("aria-label") === "去原网站打开"
+    && btn.title === "去原网站打开"
+    && btn.querySelector("svg")
+    && btn.type === "button"),
+  "zh-CN original-site label",
+);
 {
   const css = readFileSync(join(root, "sidepanel/panel.css"), "utf8");
   assert(css.includes(".remove:focus-visible"), "remove button has a focus ring");

@@ -149,7 +149,13 @@ assert(!body.innerHTML.includes("<img") && !body.innerHTML.includes("<script"), 
 assert(body.innerHTML.includes("&lt;img") && body.innerHTML.includes("&lt;script&gt;"), "tags show as text");
 assert(body.textContent.includes("https://evil.example/a.png"), "external image URL stays text");
 assert(body.textContent.includes("https://evil.example/b.png"), "markdown image URL stays text");
-assert(body.querySelector("[src], [href]") == null, "no external src or href");
+assert(body.querySelector("[src]") == null, "no external src");
+assert(body.querySelector("img") == null, "markdown image is not an element");
+for (const anchor of body.querySelectorAll("[href]")) {
+  const href = anchor.getAttribute("href") || "";
+  assert(/^https?:\/\//i.test(href), `only http(s) hrefs, got ${href}`);
+  assert(!/javascript:|data:/i.test(href), `unsafe href ${href}`);
+}
 assert(globalThis.pwned === undefined, "payload did not run");
 assert(plain.host.querySelector(".msg-user .msg-role")?.textContent === "你", "user role label");
 assert(plain.host.querySelector(".msg-assistant .msg-role")?.textContent === "助手", "assistant role label");
@@ -469,7 +475,7 @@ const viewSrc = readFileSync(join(root, "src/reader-view.js"), "utf8");
 assert(!/upsert|removeConversation|clearAll|readwrite|\.put\(/.test(readerSrc + viewSrc), "reader modules do not write");
 assert(LOCALE_ORDER.length === 9, "nine locales");
 for (const code of LOCALE_ORDER) {
-  for (const key of ["read", "openOriginal", "prevHit", "nextHit", "hitCount", "noHits", "roleUser", "roleAssistant", "missingChat", "readerLoading", "titleOnly", "archivedBadge"]) {
+  for (const key of ["read", "openOriginal", "prevHit", "nextHit", "hitCount", "noHits", "roleUser", "roleAssistant", "missingChat", "readerLoading", "titleOnly", "archivedBadge", "copyCode", "imageLabel"]) {
     assert(CATALOG[code][key]?.trim(), `${code}.${key} missing`);
   }
 }

@@ -8,8 +8,11 @@
 
 import { fill, text } from "./i18n.js";
 import { formatActivityLabel } from "./activity-time.js";
+import { cachedMarkdown, renderMarkdown } from "./markdown-dom.js";
+import { hitMayBeMarkup, visibleRanges } from "./markdown.js";
 import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
 import { safeOriginalUrl } from "./reader-url.js";
+import { externalIcon } from "./icons.js";
 
 export const MAX_NODES = 60;
 const OVERSCAN_PX = 480;
@@ -73,11 +76,31 @@ export function collectHits(title, messages, query) {
     hits.push({ where: "title", range });
   }
   (messages || []).forEach((msg, messageIndex) => {
-    for (const range of findMatchRanges(msg?.body || "", terms)) {
-      hits.push({ where: "message", messageIndex, range });
+    const body = msg?.body || "";
+    const ranges = findMatchRanges(body, terms);
+    if (!ranges.length) return;
+    // A hit that lands only on markup is not painted, so it is not counted.
+    // The parse is skipped when no hit could be markup; otherwise the AST is
+    // cached on the message and reused when it scrolls into view.
+    const shown = ranges.some((range) => hitMayBeMarkup(body, range))
+      ? visibleRanges(cachedMarkdown(msg, body))
+      : null;
+    for (const range of ranges) {
+      if (!shown || overlapsAny(shown, range)) hits.push({ where: "message", messageIndex, range });
     }
   });
   return hits;
+}
+
+function overlapsAny(sorted, [start, end]) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid][1] <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < sorted.length && sorted[lo][0] < end;
 }
 
 function estimateHeight(msg) {
@@ -105,22 +128,6 @@ function indexAt(prefix, y) {
   return lo;
 }
 
-function rangesInBlock(block, hits, messageIndex) {
-  const local = [];
-  const ids = [];
-  hits.forEach((hit, hitIndex) => {
-    if (hit.where !== "message" || hit.messageIndex !== messageIndex) return;
-    const [start, end] = hit.range;
-    const from = Math.max(start, block.start);
-    const to = Math.min(end, block.end);
-    if (to > from) {
-      local.push([from - block.start, to - block.start]);
-      ids.push(hitIndex);
-    }
-  });
-  return { local, ids };
-}
-
 function paintMarks(node, hitIds, current) {
   const marks = node.querySelectorAll("mark");
   marks.forEach((mark, index) => {
@@ -131,15 +138,13 @@ function paintMarks(node, hitIds, current) {
   });
 }
 
-function appendBlock(parent, block, hits, messageIndex, current) {
-  const doc = parent.ownerDocument;
-  const { local, ids } = rangesInBlock(block, hits, messageIndex);
-  const node = block.type === "code" ? doc.createElement("pre") : doc.createElement("div");
-  if (block.type === "code") node.className = "code";
-  else node.className = "chunk";
-  fillHighlight(node, block.text, local);
-  paintMarks(node, ids, current);
-  parent.append(node);
+function messageHits(hits, messageIndex) {
+  const local = [];
+  hits.forEach((hit, index) => {
+    if (hit.where !== "message" || hit.messageIndex !== messageIndex) return;
+    local.push({ index, range: hit.range });
+  });
+  return local;
 }
 
 function renderMessage(doc, msg, index, hits, current, locale) {
@@ -153,9 +158,12 @@ function renderMessage(doc, msg, index, hits, current, locale) {
   role.textContent = text(locale, assistant ? "roleAssistant" : "roleUser");
   const body = doc.createElement("div");
   body.className = "msg-body";
-  for (const block of splitPlainBlocks(msg?.body || "")) {
-    appendBlock(body, block, hits, index, current);
-  }
+  renderMarkdown(body, msg?.body || "", {
+    hits: messageHits(hits, index),
+    current,
+    locale,
+    owner: msg,
+  });
   article.append(role, body);
   return article;
 }
@@ -266,7 +274,10 @@ export function mountReader(root, options = {}) {
     doc.documentElement.lang = locale;
     prevBtn.textContent = label("prevHit");
     nextBtn.textContent = label("nextHit");
-    openBtn.textContent = label("openOriginal");
+    const openLabel = label("openOriginal");
+    openBtn.setAttribute("aria-label", openLabel);
+    openBtn.title = openLabel;
+    if (!openBtn.querySelector("svg")) openBtn.append(externalIcon(doc));
     badge.textContent = label("archivedBadge");
     if (!conversation) {
       title.textContent = "Chatseek";
@@ -416,12 +427,26 @@ export function mountReader(root, options = {}) {
     paintCurrent();
   }
 
-  function focusHit() {
-    const mark = root.querySelector(`mark[data-hit="${hitIndex}"]`);
-    if (mark && typeof mark.scrollIntoView === "function") {
-      try { mark.scrollIntoView({ block: "center", inline: "nearest" }); } catch { /* jsdom */ }
-    }
-  }
+  function revealWide(mark) {
+  const wide = mark.closest?.(".code, .table-wrap");
+  if (!wide || typeof wide.getBoundingClientRect !== "function") return;
+  const markBox = mark.getBoundingClientRect();
+  const box = wide.getBoundingClientRect();
+  if (!box.width || !markBox.width) return;
+  if (markBox.left < box.left) wide.scrollLeft -= box.left - markBox.left + 8;
+  else if (markBox.right > box.right) wide.scrollLeft += markBox.right - box.right + 8;
+}
+
+function focusHit() {
+  const mark = root.querySelector("mark.is-current") || root.querySelector(`mark[data-hit="${hitIndex}"]`);
+  if (!mark) return;
+  revealWide(mark);
+  if (typeof mark.scrollIntoView !== "function") return;
+  try {
+    mark.scrollIntoView({ block: "center", inline: "nearest" });
+    revealWide(mark);
+  } catch { /* jsdom */ }
+}
 
   function go(next) {
     if (!hits.length) {
@@ -471,6 +496,7 @@ export function mountReader(root, options = {}) {
       if (width === lastWidth) return;
       lastWidth = width;
       renderWindow({ force: true });
+      if (hitIndex >= 0) focusHit();
     }).observe(scroller);
   }
 

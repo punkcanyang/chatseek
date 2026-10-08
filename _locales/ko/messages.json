@@ -311,5 +311,11 @@
   },
   "sortDirLow": {
     "message": "낮은순"
+  },
+  "copyCode": {
+    "message": "복사"
+  },
+  "imageLabel": {
+    "message": "이미지"
   }
 }

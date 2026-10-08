@@ -1,3 +1,4 @@
+import { markdownToPlain } from "./markdown.js";
 import { queryTokens } from "./tokenize.js";
 
 /** Stored on the conversation so the idle list does not read the messages store. */
@@ -13,9 +14,9 @@ const CJK =
  * The last message is the fallback when no user prompt was stored.
  */
 export function selectIdlePreview(conv) {
-  const first = flattenPreview(conv?.firstUserPreview);
+  const first = presentPreview(conv?.firstUserPreview);
   if (first) return { kind: "first-user", text: clipPreviewText(first) };
-  const last = flattenPreview(conv?.lastPreview);
+  const last = presentPreview(conv?.lastPreview);
   if (last) return { kind: "last", text: clipPreviewText(last) };
   return { kind: "title-only", text: "" };
 }
@@ -24,10 +25,48 @@ export function flattenPreview(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Side-panel text. Markdown markers are removed at display time; the stored
+ * excerpt stays source text. Excerpts saved before 1.5.1 were flattened to one
+ * line, so block markers there no longer sit at a line start and the parser
+ * cannot see them; the one-line cleanup below takes the unambiguous ones out.
+ */
+export function presentPreview(text) {
+  const source = String(text || "");
+  const plain = flattenPreview(markdownToPlain(source));
+  return source.includes("\n") ? plain : stripFlatMarkers(plain);
+}
+
+function stripFlatMarkers(text) {
+  return flattenPreview(
+    text
+      .replace(/`{3,}/g, " ")
+      .replace(/(^|\s)\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?\s*\|?)?(?=\s|$)/g, "$1")
+      .replace(/(^|\s)\|(?=\s|$)/g, "$1")
+      .replace(/(^|\s)#{1,6}(?=\s)/g, "$1")
+      .replace(/(^|\s)(?:-{3,}|\*{3,}|_{3,})(?=\s|$)/g, "$1"),
+  );
+}
+
 export function clipPreviewText(text, max = PREVIEW_STORE_CHARS) {
   const flat = flattenPreview(text);
   if (flat.length <= max) return flat;
   return `${flat.slice(0, max).trimEnd()}…`;
+}
+
+/**
+ * Stored excerpt: same length cap as the shown text, but line breaks stay so
+ * headings, lists, fences, and tables can still be recognised when shown.
+ */
+export function clipPreviewSource(text, max = PREVIEW_STORE_CHARS) {
+  const kept = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (kept.length <= max) return kept;
+  return `${kept.slice(0, max).trimEnd()}…`;
 }
 
 export function highlightTerms(query) {
@@ -135,7 +174,7 @@ export function bestSnippet(bodies, terms, options) {
   let best = null;
   let bestScore = -1;
   for (const body of bodies || []) {
-    const flat = flattenPreview(body);
+    const flat = presentPreview(body);
     const ranges = findMatchRanges(flat, wanted);
     if (!ranges.length) continue;
     const score = ranges.length * 100000 - ranges[0][0];
@@ -230,7 +269,7 @@ export function nextPreviewFields(conv, messages, pageMessageIds, { freshIds } =
 
   if (next.firstUserMessageId && byId.has(next.firstUserMessageId)) {
     const current = byId.get(next.firstUserMessageId);
-    if (isPrompt(current)) next.firstUserPreview = clipPreviewText(current.body);
+    if (isPrompt(current)) next.firstUserPreview = clipPreviewSource(current.body);
   }
 
   let earliest = null;
@@ -251,14 +290,14 @@ export function nextPreviewFields(conv, messages, pageMessageIds, { freshIds } =
       (prevIdx < 0 && earliestIdx === 0 && fresh);
     if (replace) {
       next.firstUserMessageId = earliest.id;
-      next.firstUserPreview = clipPreviewText(earliest.body);
+      next.firstUserPreview = clipPreviewSource(earliest.body);
     }
   }
 
   const tailId = order.length ? order[order.length - 1] : "";
   const tail = tailId ? byId.get(tailId) : null;
   if (tail && typeof tail.body === "string" && tail.body.trim()) {
-    next.lastPreview = clipPreviewText(tail.body);
+    next.lastPreview = clipPreviewSource(tail.body);
     next.lastPreviewRole = tail.role === "assistant" ? "assistant" : "user";
   }
   return next;

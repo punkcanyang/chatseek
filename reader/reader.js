@@ -37,9 +37,26 @@ let localePref = readLocalePref();
 let row = null;
 let failed = false;
 
-function openOriginal(url) {
+const REUSE_WAIT_MS = 1500;
+
+async function openOriginal(url) {
   const safe = safeOriginalUrl(url);
   if (!safe) return;
+  const runtime = globalThis.chrome?.runtime;
+  if (typeof runtime?.sendMessage === "function") {
+    let timer = 0;
+    try {
+      const res = await Promise.race([
+        runtime.sendMessage({ type: "FOCUS_ORIGINAL", url: safe }),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), REUSE_WAIT_MS); }),
+      ]);
+      if (res?.focused) return;
+    } catch {
+      // The worker did not answer. Open a tab instead of leaving the click dead.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   const tabs = globalThis.chrome?.tabs;
   if (typeof tabs?.create === "function") {
     tabs.create({ url: safe });

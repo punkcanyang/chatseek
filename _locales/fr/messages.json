@@ -311,5 +311,11 @@
   },
   "sortDirLow": {
     "message": "Moins pertinent d’abord"
+  },
+  "copyCode": {
+    "message": "Copier"
+  },
+  "imageLabel": {
+    "message": "Image"
   }
 }

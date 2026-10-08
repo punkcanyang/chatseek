@@ -1,5 +1,6 @@
 import { upsertConversations, upsertMessages, saveCaptureHealth, readCaptureHealth } from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
+import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
 
 const HOSTS = {
   chatgpt: [/^https:\/\/chatgpt\.com\//, /^https:\/\/chat\.openai\.com\//],
@@ -49,6 +50,76 @@ function notifyIndexUpdated() {
   chrome.runtime.sendMessage({ type: "INDEX_UPDATED" }).catch(() => {});
 }
 
+// Content scripts report the page they are on. This map only orders ties; it
+// is lost whenever the worker sleeps, so the live tab list below is what
+// decides. Host permissions expose `url` for the chat sites (and only those),
+// which is enough without the tabs permission.
+const siteTabs = new Map();
+let siteSeq = 0;
+
+function rememberSite(sender, url) {
+  const tabId = sender?.tab?.id;
+  if (!Number.isInteger(tabId)) return;
+  const key = siteKey(url);
+  if (!key) {
+    siteTabs.delete(tabId);
+    return;
+  }
+  siteTabs.set(tabId, {
+    tabId,
+    windowId: sender.tab.windowId,
+    key,
+    at: ++siteSeq,
+  });
+}
+
+if (chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    siteTabs.delete(tabId);
+  });
+}
+
+async function liveTabs() {
+  if (typeof chrome.tabs?.query !== "function") return null;
+  try {
+    const tabs = await chrome.tabs.query({});
+    return Array.isArray(tabs) ? tabs : null;
+  } catch {
+    return null;
+  }
+}
+
+function fromExtensionPage(sender) {
+  if (!sender?.tab) return true;
+  const base = typeof chrome.runtime.getURL === "function" ? chrome.runtime.getURL("") : "";
+  return !!base && String(sender.url || "").startsWith(base);
+}
+
+async function focusRequest(msg) {
+  try {
+    if (msg.type === "FOCUS_ORIGINAL") {
+      const key = siteKey(msg.url);
+      if (!key) return { focused: false };
+      const candidates = siteCandidates(await liveTabs(), [...siteTabs.values()], key);
+      for (const target of candidates) {
+        if (await focusTab(chrome.tabs, chrome.windows, target)) return { focused: true };
+        siteTabs.delete(target.tabId);
+      }
+      return { focused: false };
+    }
+    const contexts = typeof chrome.runtime.getContexts === "function"
+      ? await chrome.runtime.getContexts({ contextTypes: ["TAB"] })
+      : [];
+    const target = findReaderContext(contexts, msg.id);
+    if (!target) return { focused: false };
+    const base = typeof chrome.runtime.getURL === "function" ? chrome.runtime.getURL("") : "";
+    const refresh = readerRefreshUrl(target.documentUrl, msg.url, msg.id, base);
+    return { focused: await focusTab(chrome.tabs, chrome.windows, target, refresh) };
+  } catch {
+    return { focused: false };
+  }
+}
+
 function paintBadge(health) {
   const badge = chrome.action;
   if (!badge?.setBadgeText) return;
@@ -83,7 +154,16 @@ function validHealth(health) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
-  if (msg.type === "INDEX_UPDATED" || msg.type === "ACTIVE_LOCATION") return;
+  if (msg.type === "ACTIVE_LOCATION") {
+    rememberSite(sender, msg.url);
+    return;
+  }
+  if (msg.type === "INDEX_UPDATED") return;
+  if (msg.type === "FOCUS_ORIGINAL" || msg.type === "FOCUS_READER") {
+    if (!fromExtensionPage(sender)) return;
+    focusRequest(msg).then(sendResponse);
+    return true;
+  }
 
   const platform = msg.conversation?.platform || msg.platform ||
     msg.conversations?.[0]?.platform;

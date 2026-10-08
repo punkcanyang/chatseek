@@ -12,6 +12,7 @@ import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-ur
 import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
+import { bookIcon, externalIcon } from "../src/icons.js";
 import {
   BROWSE_FIELDS,
   SEARCH_FIELDS,
@@ -90,6 +91,7 @@ function bundle(code) {
     cancel: say("cancel"),
     confirmRemove: say("confirmRemove"),
     read: say("read"),
+    openOriginal: say("openOriginal"),
     langLabel: say("langLabel"),
     langFollow: say("langFollow"),
     sortBy: say("sortBy"),
@@ -288,8 +290,19 @@ function render(items, { emptyKind, error }) {
     readBtn.type = "button";
     readBtn.className = "read";
     readBtn.dataset.id = conv.id || "";
-    readBtn.textContent = t.read;
+    readBtn.setAttribute("aria-label", t.read);
+    readBtn.title = t.read;
+    readBtn.append(bookIcon(document));
     readBtn.addEventListener("click", () => openReader(conv));
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "open-site";
+    openBtn.dataset.id = conv.id || "";
+    openBtn.setAttribute("aria-label", t.openOriginal);
+    openBtn.title = t.openOriginal;
+    openBtn.append(externalIcon(document));
+    openBtn.addEventListener("click", () => openChat(conv.url));
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -308,7 +321,7 @@ function render(items, { emptyKind, error }) {
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    actions.append(readBtn);
+    actions.append(readBtn, openBtn);
     row.append(btn, removeBtn, actions);
     li.append(row);
     listEl.append(li);
@@ -357,10 +370,31 @@ function askRemove(conv) {
   removeCancel?.focus();
 }
 
+// A worker that never answers must not swallow the click: after a short wait
+// the caller opens a new tab as before.
+const REUSE_WAIT_MS = 1500;
+
+async function reuseOpenTab(message) {
+  if (typeof chrome.runtime?.sendMessage !== "function") return false;
+  let timer = 0;
+  try {
+    const res = await Promise.race([
+      chrome.runtime.sendMessage(message),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), REUSE_WAIT_MS); }),
+    ]);
+    return res?.focused === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function openReader(conv) {
   if (!conv?.id) return;
   // Extension page in a new tab. chrome.tabs.create does not need the tabs permission.
   const url = readerPageUrl(conv.id, qEl.value, chrome.runtime);
+  if (await reuseOpenTab({ type: "FOCUS_READER", id: conv.id, url })) return;
   try {
     if (chrome.tabs?.create) {
       await chrome.tabs.create({ url });
@@ -373,17 +407,17 @@ async function openReader(conv) {
 }
 
 async function openChat(url) {
-  if (!url || !chrome.tabs?.create) return;
+  if (!url) return;
+  if (await reuseOpenTab({ type: "FOCUS_ORIGINAL", url })) return;
   try {
-    const existing = await chrome.tabs.query({ url });
-    if (existing[0]) {
-      await chrome.tabs.update(existing[0].id, { active: true });
+    if (chrome.tabs?.create) {
+      await chrome.tabs.create({ url });
       return;
     }
   } catch {
-    // host permissions cover ChatGPT/Claude/Grok/Gemini URLs; fall through to create
+    // Fall through to window.open, which also needs no tabs permission.
   }
-  await chrome.tabs.create({ url });
+  window.open(url, "_blank", "noopener");
 }
 
 async function renderHealth() {
