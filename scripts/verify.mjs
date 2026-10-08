@@ -44,6 +44,9 @@ const allowed = [
 const forbiddenHosts = [
   "https://www.google.com/*",
   "https://google.com/*",
+  "https://*.google.com/*",
+  "*://*/*",
+  "<all_urls>",
   "https://aistudio.google.com/*",
   "https://bard.google.com/*",
   "https://mail.google.com/*",
@@ -125,6 +128,23 @@ for (const rel of [
     fail(`${rel} must not hook fetch/XHR`);
   }
   if (/MAIN/.test(src)) fail(`${rel} must not use MAIN world hooks`);
+}
+for (const rel of [
+  "background.js",
+  "content/chatgpt.js",
+  "content/claude.js",
+  "content/grok.js",
+  "content/gemini.js",
+  "content/shared.js",
+  "src/activity-time.js",
+  "src/db.js",
+  "sidepanel/panel.js",
+]) {
+  const src = read(rel);
+  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts/.test(src)) {
+    fail(`${rel} must not make network requests`);
+  }
+  if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
 }
 
 const dbSrc = read("src/db.js");
