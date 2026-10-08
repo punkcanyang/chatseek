@@ -1,6 +1,12 @@
 (() => {
   const PLATFORM = "grok";
   const state = { lastListFp: "", lastMsgFp: "" };
+  const MESSAGE_SELECTORS = [
+    "[data-message-author-role]",
+    "[data-role]",
+    "[data-testid*=message]",
+    "[role=article]",
+  ];
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
@@ -50,7 +56,8 @@
         anchors.push(a);
       });
     const sectionMap = Chatseek.sectionTimesFor(anchors);
-    for (const a of anchors) {
+    for (const slot of Chatseek.sidebarSlots(anchors)) {
+      const a = slot.el;
       const href = a.getAttribute("href") || a.href || "";
       const id = idFromHref(href);
       if (!id) continue;
@@ -63,6 +70,7 @@
         title,
         url: canonicalUrl(id),
       };
+      if (slot.sidebarIndex != null) conv.sidebarIndex = slot.sidebarIndex;
       Chatseek.attachPageTime(conv, a, times, sectionMap);
       Chatseek.rememberConv(byId, conv);
     }
@@ -227,19 +235,26 @@
         title,
         url: canonicalUrl(platformId),
       };
-      if (fromSidebar?.updatedAt) {
-        conversation.updatedAt = fromSidebar.updatedAt;
-        conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
-      } else {
-        Chatseek.attachPageTime(conversation, null, jsonTimes());
-      }
+      Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
       messages = extractMessages(platformId);
+    }
+    let selector = null;
+    for (const sel of MESSAGE_SELECTORS) {
+      if (document.querySelector(sel)) {
+        selector = sel;
+        break;
+      }
     }
     return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
       conversation,
       messages,
+      health: {
+        pathKind: Chatseek.pageKind(location, !!platformId),
+        selector,
+        selectorsTried: MESSAGE_SELECTORS,
+      },
     });
   }
 

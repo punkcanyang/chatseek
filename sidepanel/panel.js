@@ -2,11 +2,33 @@ import {
   searchConversations,
   stats,
   clearAll,
+  readCaptureHealth,
 } from "../src/db.js";
+import { formatActivityLabel, formatHealthEntries, labelLocale } from "../src/activity-time.js";
 
-const zh = (navigator.language || "").toLowerCase().startsWith("zh");
+const locale = labelLocale(navigator.language);
 
-const t = zh
+const t = locale === "zh-Hant"
+  ? {
+      tag: "只留在這台瀏覽器裡",
+      search: "搜尋標題和訊息全文",
+      placeholder: "搜尋對話…",
+      all: "全部",
+      empty:
+        "還沒有收錄任何對話。打開 ChatGPT、Claude 或 Grok 分頁並瀏覽對話列表或進入對話後，標題和可見訊息會寫入本機索引。",
+      none: "沒有符合的對話。",
+      loading: "正在搜尋…",
+      booting: "正在讀取本機索引…",
+      hint: "只收錄你目前打開的 ChatGPT / Claude / Grok 分頁裡已經出現在頁面上的對話，不會掃描磁碟或上傳內容。剛更新擴充功能後請重新整理對話頁；某一頁收不到訊息時，底部會提示。",
+      counts: (c, m) => `${c} 則對話 · ${m} 則訊息`,
+      clear: "清除本機索引",
+      confirm: "刪除本機 IndexedDB 中的全部對話和訊息？此操作無法復原。",
+      error: "無法讀取本機索引。",
+      chatgpt: "ChatGPT",
+      claude: "Claude",
+      grok: "Grok",
+    }
+  : locale === "zh-Hans"
   ? {
       tag: "只留在这台浏览器里",
       search: "搜索标题和消息全文",
@@ -17,7 +39,7 @@ const t = zh
       none: "没有匹配的对话。",
       loading: "正在搜索…",
       booting: "正在读取本地索引…",
-      hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。",
+      hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请刷新对话页；某一页收不到消息时，底部会提示。",
       counts: (c, m) => `${c} 条对话 · ${m} 条消息`,
       clear: "清除本地索引",
       confirm: "删除本机 IndexedDB 中的全部对话和消息？此操作不可恢复。",
@@ -25,10 +47,6 @@ const t = zh
       chatgpt: "ChatGPT",
       claude: "Claude",
       grok: "Grok",
-      justNow: "刚刚",
-      minutes: (n) => `${n} 分钟前`,
-      hours: (n) => `${n} 小时前`,
-      days: (n) => `${n} 天前`,
     }
   : {
       tag: "Stays in this browser",
@@ -40,7 +58,7 @@ const t = zh
       none: "No matching conversations.",
       loading: "Searching…",
       booting: "Reading the local index…",
-      hint: "Chats are captured only while a ChatGPT, Claude, or Grok tab is open. This extension does not scan your disk or upload conversations.",
+      hint: "Chats are captured only while a ChatGPT, Claude, or Grok tab is open. This extension does not scan your disk or upload conversations. After an update, reload those tabs. A footer note appears if a thread page yields no messages.",
       counts: (c, m) => `${c} chats · ${m} messages`,
       clear: "Clear local index",
       confirm:
@@ -49,10 +67,6 @@ const t = zh
       chatgpt: "ChatGPT",
       claude: "Claude",
       grok: "Grok",
-      justNow: "just now",
-      minutes: (n) => `${n}m ago`,
-      hours: (n) => `${n}h ago`,
-      days: (n) => `${n}d ago`,
     };
 
 const qEl = document.getElementById("q");
@@ -62,9 +76,11 @@ const countsEl = document.getElementById("counts");
 const hintEl = document.getElementById("hint");
 const tagEl = document.getElementById("tag");
 const clearBtn = document.getElementById("clearBtn");
+const healthEl = document.getElementById("health");
 const searchLabel = document.getElementById("searchLabel");
 const filterAll = document.getElementById("filterAll");
 
+document.documentElement.lang = locale === "zh-Hant" ? "zh-TW" : locale === "zh-Hans" ? "zh-CN" : "en";
 tagEl.textContent = t.tag;
 qEl.placeholder = t.placeholder;
 searchLabel.textContent = t.search;
@@ -83,28 +99,6 @@ const MIN_DATE_MS = 1577836800000;
 
 function hasDate(ts) {
   return typeof ts === "number" && Number.isFinite(ts) && ts >= MIN_DATE_MS;
-}
-
-function relativeTime(ts) {
-  if (!hasDate(ts)) {
-    return zh ? "无日期" : "no date";
-  }
-  const delta = Date.now() - ts;
-  const m = Math.floor(delta / 60000);
-  if (m < 1) return t.justNow;
-  if (m < 60) return t.minutes(m);
-  const h = Math.floor(m / 60);
-  if (h < 48) return t.hours(h);
-  const days = Math.floor(h / 24);
-  // Older than ~7 days: show absolute calendar date from the real timestamp.
-  if (days >= 7) {
-    const d = new Date(ts);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  return t.days(days);
 }
 
 function platformLabel(id) {
@@ -146,16 +140,14 @@ function render(items, { emptyKind, error }) {
     plat.className = `plat ${conv.platform}`;
     plat.textContent = platformLabel(conv.platform);
     const time = document.createElement("time");
-    time.textContent = relativeTime(conv.updatedAt);
-    if (hasDate(conv.updatedAt)) {
-      const d = new Date(conv.updatedAt);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      const hh = String(d.getHours()).padStart(2, "0");
-      const mi = String(d.getMinutes()).padStart(2, "0");
-      time.dateTime = d.toISOString();
-      time.title = `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    const label = formatActivityLabel(conv, Date.now(), locale);
+    time.textContent = label.text;
+    time.title = label.title;
+    if (label.source) time.dataset.source = label.source;
+    if (label.approx) time.classList.add("is-approx");
+    if (label.unknown) time.classList.add("is-unknown");
+    if (!label.unknown && hasDate(conv.updatedAt)) {
+      time.dateTime = new Date(conv.updatedAt).toISOString();
     }
     meta.append(plat, time);
     btn.append(title, meta);
@@ -178,6 +170,20 @@ async function openChat(url) {
   await chrome.tabs.create({ url });
 }
 
+async function renderHealth() {
+  if (!healthEl) return;
+  const health = await readCaptureHealth();
+  const lines = formatHealthEntries(health, Date.now(), locale);
+  healthEl.replaceChildren();
+  healthEl.hidden = !lines.length;
+  for (const line of lines) {
+    const p = document.createElement("p");
+    p.className = line.warn ? "health-warn" : "health-line";
+    p.textContent = line.text;
+    healthEl.append(p);
+  }
+}
+
 async function refresh() {
   const seq = ++requestSeq;
   const query = qEl.value;
@@ -197,6 +203,7 @@ async function refresh() {
     const s = await stats();
     if (seq !== requestSeq) return;
     countsEl.textContent = t.counts(s.conversations, s.messages);
+    await renderHealth();
   } catch {
     if (seq !== requestSeq) return;
     statusEl.hidden = true;
@@ -238,6 +245,7 @@ clearBtn.addEventListener("click", async () => {
     render([], { error: true });
     return;
   }
+  chrome.action?.setBadgeText?.({ text: "" })?.catch?.(() => {});
   listEl.replaceChildren();
   countsEl.textContent = t.counts(0, 0);
   refresh();

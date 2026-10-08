@@ -143,6 +143,35 @@ const Chatseek = {
   // 2020-01-01. No indexed chat predates this; V8 turns "Top 10" into 2001.
   MIN_MS: 1577836800000,
 
+  HEALTH_GRACE_MS: 8000,
+
+  /**
+   * Keep in sync with TIME_SOURCE_RANK in src/activity-time.js.
+   * Adapters only set page-exact or page-bucket; the database ranks the rest.
+   */
+  timeSourceRank(source) {
+    return {
+      "page-exact": 50,
+      observed: 40,
+      "page-bucket": 30,
+      "sidebar-rank": 20,
+      "first-seen": 10,
+      legacy: 10,
+    }[source] || 0;
+  },
+
+  minuteFloor(now) {
+    return Math.floor(Number(now) / 60000) * 60000;
+  },
+
+  /** "Last message 3 hours ago" / "上次訊息 3 小時前" → the relative phrase. */
+  stripRelativePrefix(raw) {
+    return String(raw || "").replace(
+      /^(?:last\s+message|last\s+active|上次(?:的)?(?:訊息|消息)|最後(?:一則)?訊息|最后(?:一条)?消息)\s*[:：\-–—]?\s*/i,
+      "",
+    ).trim();
+  },
+
   /** True for a plausible millisecond epoch (not unix seconds). */
   isValidMs(ts) {
     if (typeof ts !== "number" || !Number.isFinite(ts)) return false;
@@ -210,7 +239,9 @@ const Chatseek = {
       return Chatseek.isValidMs(ms) ? ms : null;
     }
 
-    const lower = s.toLowerCase();
+    const body = Chatseek.stripRelativePrefix(s);
+    if (!body) return null;
+    const lower = body.toLowerCase();
     const startOfLocalDay = (d) => {
       const x = new Date(d);
       x.setHours(0, 0, 0, 0);
@@ -218,35 +249,36 @@ const Chatseek = {
     };
     const dayMs = 86400000;
     const todayStart = startOfLocalDay(now);
+    const minuteNow = Chatseek.minuteFloor(now);
 
-    // Exact / near-exact relative buckets used by ChatGPT / Claude / Grok sidebars
+    // "Today" is the group [start of day, now]. Noon would sit in the future
+    // during the morning and sort above chats that actually just happened.
+    // Minute-floored so the sidebar fingerprint does not change on every scan.
     if (
-      /^(today|今天|今日)$/i.test(s) ||
+      /^(today|今天|今日)$/i.test(body) ||
       lower === "today"
     ) {
-      return todayStart + 12 * 3600000;
+      const end = Math.min(minuteNow, todayStart + dayMs - 1);
+      if (end <= todayStart) return todayStart;
+      return todayStart + Math.floor((end - todayStart) / 2);
     }
-    if (/^(yesterday|昨天|昨日)$/i.test(s)) {
+    if (/^(yesterday|昨天|昨日)$/i.test(body)) {
       return todayStart - dayMs + 12 * 3600000;
     }
 
     // "Previous 7 Days" / "Past 7 Days" / "最近 7 天" → midpoint ~4 days ago
-    let m = s.match(
+    let m = body.match(
       /^(?:previous|past|last)\s+(\d+)\s+days?$/i,
-    ) || s.match(/^最近\s*(\d+)\s*天/) || s.match(/^过去\s*(\d+)\s*天/);
+    ) || body.match(/^最近\s*(\d+)\s*天/) || body.match(/^(?:过去|過去)\s*(\d+)\s*天/);
     if (m) {
       const n = Number(m[1]);
       if (n > 0 && n <= 90) {
         return todayStart - Math.floor(n / 2) * dayMs + 12 * 3600000;
       }
     }
-    // "Previous 30 Days"
-    m = s.match(/^(?:previous|past|last)\s+(\d+)\s+days?$/i);
-    // already handled
-
     // "N days ago" / "N天前" / "N 天前"
     m = lower.match(/^(\d+)\s*(?:days?|d)\s*ago$/) ||
-      s.match(/^(\d+)\s*天前$/);
+      body.match(/^(\d+)\s*天前$/);
     if (m) {
       const n = Number(m[1]);
       if (n >= 0 && n <= 3660) {
@@ -254,24 +286,26 @@ const Chatseek = {
       }
     }
 
-    // "N hours ago" / "N小时前"
+    // "N hours ago" / "N小时前" / "N 小時前". Floored so a sidebar scan
+    // inside the same minute does not look like a brand-new timestamp.
     m = lower.match(/^(\d+)\s*(?:hours?|hrs?|h)\s*ago$/) ||
-      s.match(/^(\d+)\s*小时前$/);
+      body.match(/^(\d+)\s*(?:小时|小時|个小时|個小時)\s*前$/);
     if (m) {
       const n = Number(m[1]);
-      if (n >= 0 && n <= 24 * 60) return now - n * 3600000;
+      if (n >= 0 && n <= 24 * 60) return minuteNow - n * 3600000;
     }
 
-    // "N minutes ago" / "N分钟前"
+    // "N minutes ago" / "N分钟前" / "N 分鐘前"
     m = lower.match(/^(\d+)\s*(?:minutes?|mins?|m)\s*ago$/) ||
-      s.match(/^(\d+)\s*分钟前$/);
+      body.match(/^(\d+)\s*(?:分钟|分鐘)\s*前$/);
     if (m) {
       const n = Number(m[1]);
-      if (n >= 0 && n <= 24 * 60) return now - n * 60000;
+      if (n >= 0 && n <= 24 * 60) return minuteNow - n * 60000;
     }
 
-    // "N weeks ago" / "N周前"
-    m = lower.match(/^(\d+)\s*weeks?\s*ago$/) || s.match(/^(\d+)\s*周前$/);
+    // "N weeks ago" / "N周前" / "N 週前"
+    m = lower.match(/^(\d+)\s*weeks?\s*ago$/) ||
+      body.match(/^(\d+)\s*(?:周|週|星期|个星期|個星期)\s*前$/);
     if (m) {
       const n = Number(m[1]);
       if (n >= 0 && n <= 520) return todayStart - n * 7 * dayMs + 12 * 3600000;
@@ -281,7 +315,7 @@ const Chatseek = {
     m = lower.match(/^(\d+)\s*h(?:rs?)?$/);
     if (m) {
       const n = Number(m[1]);
-      if (n >= 0 && n <= 24 * 14) return now - n * 3600000;
+      if (n >= 0 && n <= 24 * 14) return minuteNow - n * 3600000;
     }
     m = lower.match(/^(\d+)\s*d$/);
     if (m) {
@@ -289,25 +323,25 @@ const Chatseek = {
       if (n >= 0 && n <= 3660) return todayStart - n * dayMs + 12 * 3600000;
     }
 
-    if (/^(this week|本周|这周)$/i.test(s)) {
+    if (/^(this week|本周|这周|本週|這周|這週)$/i.test(body)) {
       return todayStart - 3 * dayMs + 12 * 3600000;
     }
-    if (/^(last week|上周)$/i.test(s)) {
+    if (/^(last week|上周|上週)$/i.test(body)) {
       return todayStart - 10 * dayMs + 12 * 3600000;
     }
-    if (/^(this month|本月|这个月)$/i.test(s)) {
+    if (/^(this month|本月|这个月|這個月)$/i.test(body)) {
       const d = new Date(now);
       const ms = new Date(d.getFullYear(), d.getMonth(), 15, 12, 0, 0, 0).getTime();
       return ms > now ? todayStart : ms;
     }
-    if (/^(last month|上月|上个月)$/i.test(s)) {
+    if (/^(last month|上月|上个月|上個月)$/i.test(body)) {
       const d = new Date(now);
       const ms = new Date(d.getFullYear(), d.getMonth() - 1, 15, 12, 0, 0, 0).getTime();
       return Chatseek.isValidMs(ms) ? ms : null;
     }
 
-    // "just now" / "刚刚"
-    if (/^(just\s*now|刚刚|剛才|刚才)$/i.test(s)) return now;
+    // "just now" / "刚刚" — same minute so the sidebar fingerprint can sit still.
+    if (/^(just\s*now|刚刚|剛才|刚才)$/i.test(body)) return minuteNow;
 
     // Month name heading: "March", "Mar 2025", "2025年3月", "三月"
     const months = {
@@ -357,6 +391,33 @@ const Chatseek = {
     const parsed = Date.parse(s);
     if (Chatseek.isValidMs(parsed)) return parsed;
     return null;
+  },
+
+  /**
+   * page-exact is a point in time (datetime, "3 hours ago", "2h").
+   * page-bucket is a day or coarser group ("Today", "3d", "Previous 7 Days").
+   */
+  classifyPageTime(raw) {
+    const text = Chatseek.stripRelativePrefix(String(raw ?? "")).trim();
+    if (!text) return null;
+    const ms = Chatseek.parsePageTime(raw);
+    if (!ms) return null;
+    const dayish = /^(?:today|yesterday|今天|今日|昨天|昨日)$/i.test(text) ||
+      /(?:^|\s)(?:days?|weeks?)\s*ago$/i.test(text) ||
+      /(?:天|周|週|星期)前$/.test(text) ||
+      /^\d+\s*d$/i.test(text) ||
+      /^(?:previous|past|last)\s+\d+\s+days?$/i.test(text) ||
+      /^(?:this|last)\s+(?:week|month)$/i.test(text) ||
+      /^(?:本周|这周|本週|這周|這週|上周|上週|本月|这个月|這個月|上月|上个月|上個月|最近|过去|過去)/.test(text);
+    if (
+      /^\d{10,13}$/.test(text) ||
+      /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(text) ||
+      /T\d{2}:\d{2}/.test(text)
+    ) {
+      return { ms, source: "page-exact" };
+    }
+    if (dayish) return { ms, source: "page-bucket" };
+    return { ms, source: "page-exact" };
   },
 
   _HEADING:
@@ -445,18 +506,23 @@ const Chatseek = {
         const raw = node.getAttribute?.(name);
         if (!raw) continue;
         // title often holds non-date text; only accept if parseable as time-ish
-        if (name === "title" && !/(\d{4}|ago|yesterday|today|昨天|今天|分钟|小时|天)/i.test(raw)) {
+        if (name === "title" && !/(\d{4}|ago|yesterday|today|昨天|今天|分钟|分鐘|小时|小時|天|last message|上次)/i.test(raw)) {
           continue;
         }
-        const ms = Chatseek.parsePageTime(raw);
-        if (ms) return ms;
+        const hit = name === "datetime"
+          ? (() => {
+            const ms = Chatseek.parsePageTime(raw);
+            return ms ? { ms, source: "page-exact" } : null;
+          })()
+          : Chatseek.classifyPageTime(raw);
+        if (hit) return hit;
       }
       // data-* wildcards
       if (node.dataset) {
         for (const [key, val] of Object.entries(node.dataset)) {
           if (!/time|date|updated|created|modify/i.test(key)) continue;
-          const ms = Chatseek.parsePageTime(val);
-          if (ms) return ms;
+          const hit = Chatseek.classifyPageTime(val);
+          if (hit) return hit;
         }
       }
       return null;
@@ -482,12 +548,12 @@ const Chatseek = {
       const times = scope.querySelectorAll?.("time[datetime], time");
       if (times) {
         for (const t of times) {
-          const ms = fromAttrs(t) || Chatseek.parsePageTime(t.textContent);
-          if (ms) return ms;
+          const fromTime = fromAttrs(t) || Chatseek.classifyPageTime(t.textContent);
+          if (fromTime) return fromTime;
         }
       }
-      const ms = fromAttrs(scope);
-      if (ms) return ms;
+      const fromScope = fromAttrs(scope);
+      if (fromScope) return fromScope;
       // Short relative label as its own child (not the whole title)
       const kids = scope.querySelectorAll?.("span, div, p, time");
       if (kids) {
@@ -496,9 +562,9 @@ const Chatseek = {
             // skip the title text itself when it equals the link text
           }
           const text = (kid.textContent || "").replace(/\s+/g, " ").trim();
-          if (!text || text.length > 28) continue;
+          if (!text || text.length > 48) continue;
           if (text === Chatseek.textOf(el)) continue;
-          const parsed = Chatseek.parsePageTime(text);
+          const parsed = Chatseek.classifyPageTime(text);
           if (parsed) return parsed;
         }
       }
@@ -571,21 +637,26 @@ const Chatseek = {
     }
     const blob = chunks.join("\n");
     if (blob) {
-      const re =
-        /"(?:id|conversation_id|uuid)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"[\s\S]{0,400}?"(?:update_time|updated_at|modifyTime|modify_time|create_time|created_at)"\s*:\s*("?(?:[\d.]+|[^"]+)"?)/gi;
-      let match;
-      while ((match = re.exec(blob))) {
-        let raw = match[2];
-        if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
-        put(match[1], /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
-      }
-      // Also reverse order: time fields before id (within a small window)
-      const re2 =
-        /"(?:update_time|updated_at|modifyTime|modify_time)"\s*:\s*("?(?:[\d.]+|[^"]+)"?)[\s\S]{0,400}?"(?:id|conversation_id|uuid)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/gi;
-      while ((match = re2.exec(blob))) {
-        let raw = match[1];
-        if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
-        put(match[2], /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+      // React Router streams often escape quotes. Scan the raw text and a
+      // de-escaped copy; still no network, still capped to scripts already on the page.
+      const copies = [blob];
+      if (blob.includes('\\"')) copies.push(blob.replace(/\\"/g, '"'));
+      for (const text of copies) {
+        const re =
+          /"(?:id|conversation_id|uuid)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"[\s\S]{0,400}?"(?:update_time|updated_at|modifyTime|modify_time|create_time|created_at)"\s*:\s*("?(?:[\d.]+|[^"]+)"?)/gi;
+        let match;
+        while ((match = re.exec(text))) {
+          let raw = match[2];
+          if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
+          put(match[1], /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+        }
+        const re2 =
+          /"(?:update_time|updated_at|modifyTime|modify_time)"\s*:\s*("?(?:[\d.]+|[^"]+)"?)[\s\S]{0,400}?"(?:id|conversation_id|uuid)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/gi;
+        while ((match = re2.exec(text))) {
+          let raw = match[1];
+          if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
+          put(match[2], /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+        }
       }
     }
 
@@ -683,15 +754,22 @@ const Chatseek = {
     }
     const prevGeneric = Chatseek.isGenericTitle(prev.title);
     const nextGeneric = Chatseek.isGenericTitle(conv.title);
-    const nextNewer = conv.updatedAt && (!prev.updatedAt || conv.updatedAt > prev.updatedAt);
+    const prevRank = Chatseek.timeSourceRank(prev.updatedAtSource);
+    const nextRank = Chatseek.timeSourceRank(conv.updatedAtSource);
+    const takeNextTime = nextRank > prevRank ||
+      (nextRank === prevRank && (conv.updatedAt || 0) > (prev.updatedAt || 0)) ||
+      (!prev.updatedAt && conv.updatedAt);
     let chosen = prev;
-    if (nextNewer) {
+    if (takeNextTime) {
       chosen = { ...prev, ...conv };
       if (nextGeneric && !prevGeneric) chosen.title = prev.title;
     } else if (prevGeneric && !nextGeneric) {
       chosen = { ...prev, title: conv.title, url: conv.url || prev.url };
     }
-    if (!chosen.updatedAt && conv.updatedAt) chosen.updatedAt = conv.updatedAt;
+    if (!chosen.updatedAt && conv.updatedAt) {
+      chosen.updatedAt = conv.updatedAt;
+      chosen.updatedAtSource = conv.updatedAtSource;
+    }
     if (!chosen.createdAt && (conv.createdAt || conv.updatedAt)) {
       chosen.createdAt = conv.createdAt || conv.updatedAt;
     }
@@ -725,7 +803,9 @@ const Chatseek = {
   },
 
   async sendConversations(platform, list) {
-    const batch = 40;
+    // Sidebar-order estimates interpolate inside one write. Splitting the
+    // sidebar would make rows near a split guess from the wrong neighbours.
+    const batch = 1000;
     for (let i = 0; i < list.length; i += batch) {
       const res = await Chatseek.send({
         type: "CAPTURE_CONVERSATIONS",
@@ -742,12 +822,69 @@ const Chatseek = {
    * the service worker acks, so a failed write is retried on the next pass.
    * Empty threads do not lock the message fingerprint.
    * Resolves false when a write failed so the caller can retry.
+   *
+   * health is optional so a new adapter can opt in:
+   *   { pathKind, selector, selectorsTried }
+   * pathKind "conversation" + 0 messages raises the side-panel warning.
    */
-  async runCapture(state, { platform, sidebar, conversation, messages }) {
+  async runCapture(state, { platform, sidebar, conversation, messages, health }) {
     let ok = true;
     const list = sidebar || [];
+    const msgs = (messages || []).filter((m) => m && m.id && m.body);
+    // A thread is empty for a moment after SPA navigation while it loads.
+    // Report 0 messages only once it stays empty; returning false makes
+    // observe() look again in a few seconds even if the DOM goes quiet.
+    let settling = false;
+    if (health) {
+      const now = Date.now();
+      const zeroKey = health.pathKind === "conversation" && !msgs.length
+        ? (conversation?.id || "conversation")
+        : "";
+      if (!zeroKey) {
+        state.zeroKey = "";
+      } else if (state.zeroKey !== zeroKey) {
+        state.zeroKey = zeroKey;
+        state.zeroSince = now;
+      }
+      settling = !!zeroKey && now - (state.zeroSince || 0) < Chatseek.HEALTH_GRACE_MS;
+    }
+    if (settling) {
+      ok = false;
+    } else if (health) {
+      const report = Chatseek.buildHealthReport({
+        platform,
+        pathKind: health.pathKind,
+        sidebarCount: list.length,
+        messageCount: msgs.length,
+        selector: health.selector,
+        selectorsTried: health.selectorsTried,
+      });
+      const healthFp = [
+        report.pathKind,
+        report.sidebarCount,
+        report.messageCount,
+        report.selector,
+        report.warn ? "1" : "0",
+      ].join("|");
+      const now = Date.now();
+      if (healthFp !== state.lastHealthFp || now - (state.lastHealthAt || 0) >= 60000) {
+        const res = await Chatseek.send({
+          type: "CAPTURE_HEALTH",
+          platform,
+          health: report,
+        });
+        if (!res || !res.ok) ok = false;
+        else {
+          state.lastHealthFp = healthFp;
+          state.lastHealthAt = now;
+        }
+      }
+    }
+
     const listFp = Chatseek.fingerprint(
-      list.map((c) => c.id + ":" + c.title + ":" + (c.updatedAt || "")),
+      list.map((c) =>
+        c.id + ":" + c.title + ":" + (c.updatedAt || "") + ":" + (c.updatedAtSource || "")
+      ),
     );
     if (listFp && listFp !== state.lastListFp) {
       if (await Chatseek.sendConversations(platform, list)) {
@@ -759,7 +896,6 @@ const Chatseek = {
 
     if (!conversation) return ok;
 
-    const msgs = (messages || []).filter((m) => m && m.id && m.body);
     const inSidebar = list.some((c) => c.platformId === conversation.platformId);
     if (!msgs.length) {
       if (!inSidebar) {
@@ -806,12 +942,16 @@ const Chatseek = {
       if (!res || !res.ok) return false;
     }
 
+    const captureId = `${conversation.id}:${msgs.length}:${msgs[msgs.length - 1]?.id || ""}:${Date.now()}`;
+    const pageMessageIds = msgs.map((m) => m.id);
     for (const chunk of Chatseek.chunkMessages(msgs)) {
       const res = await Chatseek.send({
         type: "CAPTURE_MESSAGES",
         platform,
         conversation,
         messages: chunk,
+        pageMessageIds,
+        captureId,
       });
       if (!res || !res.ok) return false;
     }
@@ -827,17 +967,219 @@ const Chatseek = {
    */
   attachPageTime(conv, linkEl, jsonTimes, sectionMap) {
     if (!conv) return conv;
-    let ms = null;
-    if (linkEl) ms = Chatseek.findTimeNear(linkEl);
-    if (!ms && jsonTimes && conv.platformId) {
-      ms = jsonTimes.get(String(conv.platformId).toLowerCase()) || null;
+    const apply = (ms, source) => {
+      if (!ms || !Chatseek.isValidMs(ms)) return false;
+      const stamped = ms > Date.now() ? Date.now() : ms;
+      conv.updatedAt = stamped;
+      conv.updatedAtSource = source;
+      if (!conv.createdAt) conv.createdAt = stamped;
+      return true;
+    };
+    const near = linkEl ? Chatseek.findTimeNear(linkEl) : null;
+    if (near?.source === "page-exact" && apply(near.ms, "page-exact")) return conv;
+    if (jsonTimes && conv.platformId) {
+      const ms = jsonTimes.get(String(conv.platformId).toLowerCase()) || null;
+      if (ms && apply(ms, "page-exact")) return conv;
     }
-    if (!ms && sectionMap && linkEl) ms = sectionMap.get(linkEl) || null;
-    if (!ms && linkEl) ms = Chatseek.findSectionTime(linkEl);
-    if (ms && Chatseek.isValidMs(ms)) {
-      conv.updatedAt = ms;
-      if (!conv.createdAt) conv.createdAt = ms;
-    }
+    if (near?.source === "page-bucket" && apply(near.ms, "page-bucket")) return conv;
+    const section = (sectionMap && linkEl && sectionMap.get(linkEl)) ||
+      (linkEl ? Chatseek.findSectionTime(linkEl) : null);
+    if (section && apply(section, "page-bucket")) return conv;
     return conv;
+  },
+
+  /** Copy a sidebar row's ranked time, else JSON on the open thread. */
+  applyStoredTime(conv, fromSidebar, jsonTimes) {
+    if (!conv) return conv;
+    if (fromSidebar?.updatedAt && fromSidebar.updatedAtSource) {
+      conv.updatedAt = fromSidebar.updatedAt;
+      conv.updatedAtSource = fromSidebar.updatedAtSource;
+      conv.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
+      return conv;
+    }
+    return Chatseek.attachPageTime(conv, null, jsonTimes);
+  },
+
+  /**
+   * conversation = open thread. temporary-chat is not a thread we index.
+   * home = pathname / . other = anything else. Adapters pass hasThread.
+   */
+  pageKind(loc, hasThread) {
+    const search = String(loc?.search || "");
+    if (/[?&]temporary-chat=true(?:&|$)/.test(search)) return "temporary";
+    if (hasThread) return "conversation";
+    const path = String(loc?.pathname || "/");
+    if (path === "/" || path === "") return "home";
+    return "other";
+  },
+
+  /**
+   * First matching layer wins. Open shadow roots are checked only when the
+   * light DOM misses every layer, so the common path stays a few querySelectors.
+   * A new adapter passes its own layer list; it does not need a private walker.
+   */
+  queryLayers(doc, layers) {
+    const tried = [];
+    const light = Chatseek._matchLayers(doc, layers, tried);
+    if (light) return { name: light.name, nodes: light.nodes, tried, shadow: false };
+    for (const root of Chatseek.openShadowRoots(doc)) {
+      const hit = Chatseek._matchLayers(root, layers, null);
+      if (hit) return { name: hit.name, nodes: hit.nodes, tried, shadow: true };
+    }
+    return { name: null, nodes: [], tried, shadow: false };
+  },
+
+  _matchLayers(root, layers, tried) {
+    if (!root?.querySelectorAll) return null;
+    for (const layer of layers || []) {
+      if (tried) tried.push(layer.name);
+      let nodes = [];
+      try {
+        nodes = [...root.querySelectorAll(layer.selector)];
+      } catch {
+        nodes = [];
+      }
+      if (nodes.length) return { name: layer.name, nodes };
+    }
+    return null;
+  },
+
+  openShadowRoots(doc) {
+    const roots = [];
+    const stack = [doc];
+    let seen = 0;
+    while (stack.length && roots.length < 20 && seen < 4000) {
+      const root = stack.pop();
+      const all = root?.querySelectorAll?.("*");
+      if (!all) continue;
+      for (const el of all) {
+        seen += 1;
+        if (seen > 4000) break;
+        if (el.shadowRoot) {
+          roots.push(el.shadowRoot);
+          stack.push(el.shadowRoot);
+        }
+      }
+    }
+    return roots;
+  },
+
+  /**
+   * Skip the history nav and the composer. A form that also wraps the
+   * transcript is the thread, not chrome — dropping it used to store titles only.
+   */
+  isMessageChrome(node) {
+    if (!node || node.nodeType !== 1) return true;
+    if (node.closest("nav, [role='navigation']")) return true;
+    if (node.closest("textarea, input, select")) return true;
+    const form = node.closest("form");
+    if (!form) return false;
+    const hasField = form.querySelector("textarea, input, [contenteditable='true']");
+    if (!hasField) return false;
+    const hasTurn = form.querySelector(
+      "[data-message-author-role], [data-turn], [data-message-id], [data-testid*='conversation-turn']",
+    );
+    return !hasTurn;
+  },
+
+  /** data-message-author-role, then data-turn. Empty string if neither is set. */
+  messageRole(node) {
+    if (!node || node.nodeType !== 1) return "";
+    const author = (
+      node.getAttribute("data-message-author-role") ||
+      node.querySelector("[data-message-author-role]")?.getAttribute("data-message-author-role") ||
+      ""
+    ).toLowerCase();
+    if (author === "assistant" || author === "user" || author === "system" || author === "tool") {
+      return author;
+    }
+    const turn = (
+      node.getAttribute("data-turn") ||
+      node.closest("[data-turn]")?.getAttribute("data-turn") ||
+      ""
+    ).toLowerCase();
+    if (turn === "assistant" || turn === "ai" || turn === "model") return "assistant";
+    if (turn === "user" || turn === "human") return "user";
+    if (turn === "system" || turn === "tool") return turn;
+    return "";
+  },
+
+  /**
+   * Pinned rows stay out of sidebar-rank interpolation. Without a Pinned /
+   * 置頂 heading, every link stays in DOM order (top = most recent).
+   */
+  partitionSidebar(links) {
+    const pinned = new Set();
+    const ordered = [];
+    if (!links?.length) return { ordered, pinned };
+    const root = Chatseek.historyRoot(links);
+    if (!root || typeof document === "undefined" || typeof document.createTreeWalker !== "function") {
+      return { ordered: [...links], pinned };
+    }
+    const wanted = new Set(links);
+    let inPinned = false;
+    const pinnedRe = /^(pinned|starred|置顶|置頂|已置顶|已置頂|已固定)$/i;
+    const recentRe = /^(recents?|chats?|history|最近|对话|對話|聊天)$/i;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let node = walker.currentNode;
+    while (node) {
+      const tag = node.tagName || "";
+      if (!/^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|INPUT)$/.test(tag) &&
+          !Chatseek._insideConvAnchor(node, root)) {
+        const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+        const leaf = node.childElementCount === 0 || /^(H1|H2|H3|H4)$/.test(tag);
+        if (leaf && text && text.length <= 24) {
+          if (pinnedRe.test(text)) inPinned = true;
+          else if (recentRe.test(text) || Chatseek.headingTime(text)) inPinned = false;
+        }
+      }
+      if (wanted.has(node)) {
+        if (inPinned) pinned.add(node);
+        else ordered.push(node);
+      }
+      node = walker.nextNode();
+    }
+    for (const link of links) {
+      if (!pinned.has(link) && !ordered.includes(link)) ordered.push(link);
+    }
+    return { ordered, pinned };
+  },
+
+  /** DOM order with sidebarIndex. Pinned rows have a null index so they are not interpolated. */
+  sidebarSlots(anchors) {
+    const { ordered, pinned } = Chatseek.partitionSidebar(anchors);
+    return [
+      ...ordered.map((el, sidebarIndex) => ({ el, sidebarIndex })),
+      ...[...pinned].map((el) => ({ el, sidebarIndex: null })),
+    ];
+  },
+
+  /**
+   * Counts only — never message text. Warns once per selector set when a
+   * conversation page produced zero messages.
+   */
+  buildHealthReport({ platform, pathKind, sidebarCount, messageCount, selector, selectorsTried }) {
+    const tried = selectorsTried || [];
+    const warn = pathKind === "conversation" && !messageCount;
+    const where = platform === "chatgpt" ? "/c/ page" : "conversation page";
+    if (warn) {
+      const key = `${platform}:${where}:${tried.join(",")}`;
+      if (Chatseek._healthWarned !== key) {
+        Chatseek._healthWarned = key;
+        const line = `[Chatseek] ${platform}: 0 messages on ${where}, selectors tried: ${tried.join(", ")}`;
+        try { console.warn(line); } catch { /* console may be missing in tests */ }
+      }
+    } else if (messageCount > 0) {
+      Chatseek._healthWarned = "";
+    }
+    return {
+      at: Date.now(),
+      pathKind: pathKind || "other",
+      sidebarCount: sidebarCount || 0,
+      messageCount: messageCount || 0,
+      selector: selector || "none",
+      selectorsTried: tried,
+      warn,
+    };
   },
 };

@@ -202,11 +202,31 @@ body {
 }
 
 .hint,
-.meta {
+.meta,
+.health-line {
   margin: 0;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.health {
+  margin: 0 0 8px;
+}
+
+.health-warn {
+  margin: 0 0 6px;
+  color: #8a3d32;
+  background: color-mix(in srgb, #8a3d32 12%, var(--card));
+  border: 1px solid color-mix(in srgb, #8a3d32 35%, var(--line));
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.item-meta time.is-unknown {
+  font-style: italic;
 }
 
 .meta {
