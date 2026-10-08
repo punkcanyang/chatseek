@@ -8,6 +8,7 @@ import {
 import { formatActivityLabel, formatHealthEntries, labelLocale } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
+import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 
 const locale = labelLocale(navigator.language);
 
@@ -106,6 +107,7 @@ let currentKey = "";
 let settledKey = "";
 let tabSeq = 0;
 let tabTimer = 0;
+let panelWindowId = null;
 
 // 2020-01-01; older values are parse artifacts from pre-1.0.2 builds.
 const MIN_DATE_MS = 1577836800000;
@@ -288,7 +290,9 @@ clearBtn.addEventListener("click", async () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refresh();
+  if (document.hidden) return;
+  refresh();
+  scheduleSync();
 });
 
 function rowInView(el) {
@@ -333,28 +337,18 @@ function setCurrentFromUrl(url) {
   markCurrentRow();
 }
 
-async function activeTabUrl() {
-  if (!chrome.tabs?.query) return "";
-  const groups = [
-    { active: true, currentWindow: true },
-    { active: true, lastFocusedWindow: true },
-  ];
-  for (const query of groups) {
-    try {
-      const tabs = await chrome.tabs.query(query);
-      for (const tab of tabs || []) {
-        if (typeof tab?.url === "string" && /^https:\/\//i.test(tab.url)) return tab.url;
-      }
-    } catch {
-      // The window may already be gone.
-    }
+async function resolvePanelWindow() {
+  try {
+    const win = await chrome.windows?.getCurrent?.();
+    if (Number.isInteger(win?.id)) panelWindowId = win.id;
+  } catch {
+    // Without a window id the panel asks for currentWindow instead.
   }
-  return "";
 }
 
 async function syncActiveTab() {
   const seq = ++tabSeq;
-  const url = await activeTabUrl();
+  const url = await activeTabUrl(chrome.tabs, panelWindowId);
   if (seq !== tabSeq) return;
   setCurrentFromUrl(url);
 }
@@ -373,23 +367,26 @@ if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
     if (msg?.type === "INDEX_UPDATED") scheduleRefresh();
     if (msg?.type !== "ACTIVE_LOCATION") return;
-    const tab = sender?.tab;
-    if (!tab?.active) return;
-    const url = typeof tab.url === "string" && tab.url
-      ? tab.url
-      : (typeof msg.url === "string" ? msg.url : "");
-    onActiveLocation(url);
+    if (!Number.isInteger(panelWindowId)) {
+      if (sender?.tab?.active) scheduleSync();
+      return;
+    }
+    const url = locationFromMessage(msg, sender, panelWindowId);
+    if (url !== null) onActiveLocation(url);
   });
 }
 
 if (chrome.tabs?.onActivated) {
-  chrome.tabs.onActivated.addListener(() => scheduleSync());
+  chrome.tabs.onActivated.addListener((info) => {
+    if (eventInWindow(info?.windowId, panelWindowId)) scheduleSync();
+  });
 }
 if (chrome.tabs?.onUpdated) {
-  chrome.tabs.onUpdated.addListener((_id, info) => {
+  chrome.tabs.onUpdated.addListener((_id, info, tab) => {
+    if (!eventInWindow(tab?.windowId, panelWindowId)) return;
     if (info?.url || info?.status === "complete") scheduleSync();
   });
 }
 
-syncActiveTab();
+resolvePanelWindow().then(syncActiveTab);
 refresh();
