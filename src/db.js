@@ -74,16 +74,11 @@ export function openDb() {
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta", { keyPath: "key" });
         }
-        // 1.4.0: archived is a field on the conversation. The index exists so
-        // the upgrade is a real schema step; listing still filters in the
-        // updatedAt cursor because rows saved before this version have no
-        // archived property and would be missing from an archived=false index.
+        // 1.4.0: archived is a plain field filtered in the cursor (booleans are
+        // not IndexedDB keys, and 1.3.0 rows have no field). The token index
+        // lets removing one conversation skip a full tokenMap scan.
         if (event.oldVersion < 3) {
           const tx = req.transaction;
-          const conv = tx.objectStore("conversations");
-          if (!conv.indexNames.contains("archived")) {
-            conv.createIndex("archived", "archived");
-          }
           const tokens = tx.objectStore("tokenMap");
           if (!tokens.indexNames.contains("conversationId")) {
             tokens.createIndex("conversationId", "conversationId");
@@ -204,14 +199,28 @@ export async function upsertConversations(list) {
   return withDb((db) => writeConversations(db, list));
 }
 
-async function writeConversations(db, list) {
-  const tx = db.transaction(["conversations", "tokenMap"], "readwrite");
+const REMOVED_PREFIX = "removed:";
+
+/**
+ * reopened: the chat is open with messages on the page. Only that clears a
+ * remove-from-index tombstone; sidebar and archive-list rescans skip it.
+ */
+async function writeConversations(db, list, { reopened = false } = {}) {
+  const tx = db.transaction(["conversations", "tokenMap", "meta"], "readwrite");
   const convStore = tx.objectStore("conversations");
   const tokenStore = tx.objectStore("tokenMap");
+  const metaStore = tx.objectStore("meta");
   const drafts = [];
 
   for (const incoming of list) {
     const old = await requestDone(convStore.get(incoming.id));
+    if (!old) {
+      const removedKey = REMOVED_PREFIX + incoming.id;
+      if (await requestDone(metaStore.get(removedKey))) {
+        if (!reopened) continue;
+        metaStore.delete(removedKey);
+      }
+    }
     const incomingUpdated = pageMs(incoming.updatedAt);
     const incomingCreated = pageMs(incoming.createdAt);
     const now = Date.now();
@@ -295,7 +304,7 @@ export async function upsertMessages(conversation, messages, meta = {}) {
   // A one-row batch has no neighbours. Interpolating it alone would rewrite an
   // undated row's sidebar sort key as if it were the last row in the sidebar.
   const { sidebarIndex: _ignored, ...row } = conversation;
-  await upsertConversations([row]);
+  await withDb((db) => writeConversations(db, [row], { reopened: true }));
   return withDb((db) => writeMessages(db, row, messages, meta));
 }
 
@@ -692,13 +701,15 @@ export async function readCaptureHealth() {
 
 /**
  * Deletes one conversation, its messages, and its inverted-index rows.
- * Does not message the page. A later visit can capture the chat again.
+ * Does not message the page. A tombstone in meta keeps sidebar rescans from
+ * adding it back; opening the chat with messages on screen captures it again.
  */
 export async function removeConversation(id) {
   if (typeof id !== "string" || !id) return;
   return withDb(async (db) => {
-    const tx = db.transaction(["conversations", "messages", "tokenMap"], "readwrite");
+    const tx = db.transaction(["conversations", "messages", "tokenMap", "meta"], "readwrite");
     tx.objectStore("conversations").delete(id);
+    tx.objectStore("meta").put({ key: REMOVED_PREFIX + id, removedAt: Date.now() });
     const messages = tx.objectStore("messages").index("conversationId");
     await cursorEach(messages, { range: IDBKeyRange.only(id) }, (_row, cursor) => {
       cursor.delete();

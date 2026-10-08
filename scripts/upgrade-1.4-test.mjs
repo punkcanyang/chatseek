@@ -12,7 +12,7 @@ function requestDone(req) {
 }
 
 // Schema and a row as 1.3.0 (DB version 2) wrote them: preview fields, meta,
-// no archived property and no archived / token conversation index.
+// no archived property and no token conversation index.
 const legacyId = "chatgpt:12121212-1212-4121-8121-121212121212";
 const v2 = await new Promise((resolve, reject) => {
   const req = indexedDB.open("chatseek", 2);
@@ -83,7 +83,6 @@ const db = await import("../src/db.js");
 const handle = await db.openDb();
 assert(handle.version === 3, `1.3.0 database should upgrade to 3, got ${handle.version}`);
 const convStore = handle.transaction("conversations").objectStore("conversations");
-assert(convStore.indexNames.contains("archived"), "archived index added");
 assert(convStore.indexNames.contains("updatedAt") && convStore.indexNames.contains("platform"), "old indexes stay");
 assert(
   handle.transaction("tokenMap").objectStore("tokenMap").indexNames.contains("conversationId"),
@@ -103,5 +102,13 @@ assert((await db.readCaptureHealth()).chatgpt?.messageCount === 1, "health meta 
 const shown = await db.listRecent({ scope: "active" });
 assert(shown.some((item) => item.id === legacyId), "upgraded rows show on the active tab");
 assert((await db.listRecent({ scope: "archived" })).length === 0, "nothing is archived just because of the upgrade");
+
+await db.removeConversation(legacyId);
+assert((await db.searchConversations({ query: "cedarneedle" })).length === 0, "a 1.3.0 row can be removed");
+const legacyTokens = await requestDone(
+  handle.transaction("tokenMap").objectStore("tokenMap").index("conversationId").count(legacyId),
+);
+assert(legacyTokens === 0, "1.3.0 token rows are reachable through the new index and removed");
+assert((await db.readCaptureHealth()).chatgpt?.messageCount === 1, "removing a chat keeps health meta");
 
 console.log("upgrade-1.4-test ok", { from: 2, to: handle.version });

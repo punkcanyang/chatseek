@@ -59,12 +59,14 @@ async function capture(html, url) {
   return { rows, signals: loaded.api.readArchiveSignals(loaded.dom.window.document, loaded.dom.window.location, "chatgpt") };
 }
 
+const COMPOSER = `<form><div id="prompt-textarea" contenteditable="true"></div></form>`;
 const story = await capture(`
   <nav>
     <a href="/c/${ACTIVE}">Active trip</a>
   </nav>
   <main>
     <div data-turn="user" data-message-id="m1"><div class="markdown">This conversation is archived in the story only</div></div>
+    ${COMPOSER}
   </main>
 `, `https://chatgpt.com/c/${OPEN}`);
 const storyOpen = story.rows.find((row) => row.platformId === OPEN);
@@ -94,6 +96,48 @@ assert(
   menu.api.readArchiveSignals(menu.dom.window.document, menu.dom.window.location, "chatgpt").banner === false,
   "a menu item named Unarchive is not a conversation banner",
 );
+
+const bare = await capture(`
+  <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
+  <main><div data-turn="user" data-message-id="m1"><div class="markdown">loading thread</div></div></main>
+`, `https://chatgpt.com/c/${OPEN}`);
+const bareOpen = bare.rows.find((row) => row.platformId === OPEN);
+assert(bare.signals.banner === false && bare.signals.composer === false, "no banner and no composer");
+assert(bareOpen && !("archived" in bareOpen), `an open chat with neither banner nor composer leaves the state alone: ${JSON.stringify(bareOpen)}`);
+
+const linked = await capture(`
+  <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
+  <main>
+    <div data-turn="assistant" data-message-id="m2"><div class="markdown">See <a href="/c/${OLD}">the camera chat</a></div></div>
+    ${COMPOSER}
+  </main>
+`, `https://chatgpt.com/c/${OPEN}`);
+const linkedOld = linked.rows.find((row) => row.platformId === OLD);
+assert(!linkedOld || !("archived" in linkedOld), `a /c/ link inside a message does not restore that chat: ${JSON.stringify(linkedOld)}`);
+
+const foreign = await capture(`
+  <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
+  <div role="dialog" aria-modal="true"><h2>Chat archiviate</h2><a href="/c/${OLD}">Old camera</a></div>
+`, "https://chatgpt.com/");
+const foreignOld = foreign.rows.find((row) => row.platformId === OLD);
+assert(!foreign.signals.archiveRoot, "an unknown-language archive dialog is not recognised");
+assert(foreignOld && !("archived" in foreignOld), `an unrecognised archive dialog does not restore its rows: ${JSON.stringify(foreignOld)}`);
+assert(foreign.rows.find((row) => row.platformId === ACTIVE)?.archived === false, "the real sidebar still counts");
+
+const quoted = load(`
+  <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
+  <main role="region" aria-label="Thread">
+    <div data-turn="assistant" data-message-id="m3"><div class="markdown"><h2>Archived chats</h2><a href="/c/${OLD}">x</a></div></div>
+  </main>
+  <div role="dialog"><h2>Delete chat?</h2><button type="button">Unarchive</button></div>
+`, `https://chatgpt.com/c/${OPEN}`);
+const quotedSignals = quoted.api.readArchiveSignals(quoted.dom.window.document, quoted.dom.window.location, "chatgpt");
+assert(!quotedSignals.archiveRoot, "a heading inside a message is not the archived-chats list");
+assert(quotedSignals.banner === false, "an Unarchive button inside some other dialog is not a banner");
+
+assert(quoted.api._matchesArchiveHeading("Archived Chats (12)"), "a counted heading matches");
+assert(quoted.api._matchesArchiveHeading("已封存的聊天"), "zh-TW heading matches");
+assert(!quoted.api._matchesArchiveHeading("Archived chats are removed after 30 days"), "a sentence is not the list title");
 
 const listed = await capture(`
   <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
@@ -214,8 +258,17 @@ const tokenLeft = await requestDone(
 assert(tokenLeft == null, "remove drops inverted index rows");
 assert((await db.searchConversations({ query: "beach", scope: "all" })).length === 1, "other chats stay searchable");
 
-await db.upsertConversations([conv("chatgpt", "4", "Scopeword camera again")]);
+await db.upsertConversations([conv("chatgpt", "4", "Scopeword camera again", { archived: false, archiveSource: "chatgpt:sidebar" })]);
+assert((await read(archivedGpt.id)) == null, "a sidebar rescan does not bring a removed chat back");
+await db.upsertConversations([conv("chatgpt", "4", "Scopeword camera again", { archived: true, archiveSource: "chatgpt:archive-list" })]);
+assert((await read(archivedGpt.id)) == null, "an archive-list rescan does not bring it back either");
+const reopened = conv("chatgpt", "4", "Scopeword camera again", { archived: false, archiveSource: "chatgpt:conversation" });
+const reopenedMsg = { id: `${reopened.id}:u2`, role: "user", body: "camera reopened body" };
+await db.upsertMessages(reopened, [reopenedMsg], { pageMessageIds: [reopenedMsg.id], captureId: "reopen" });
 const again = await read(archivedGpt.id);
-assert(again && again.archived !== true, "a later visit can capture the chat again as active");
+assert(again && again.archived !== true && again.messageCount === 1, "opening the chat captures it again");
+assert((await db.searchConversations({ query: "reopened", scope: "active" })).length === 1, "the reopened chat is searchable");
+await db.upsertConversations([conv("chatgpt", "4", "Scopeword camera again")]);
+assert(await read(archivedGpt.id), "after reopening, sidebar rescans update it as usual");
 
 console.log("archive-test ok");

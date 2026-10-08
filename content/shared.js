@@ -839,7 +839,9 @@ const Chatseek = {
   async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health }) {
     let ok = true;
     const list = sidebar || [];
-    const activeIds = new Set(list.map((row) => row && row.id).filter(Boolean));
+    const activeIds = new Set(
+      list.filter((row) => row && row.id && row.archived === false).map((row) => row.id),
+    );
     // Archive-list rows never override a chat that is also in the live sidebar.
     const archivedOnly = (archivedRows || []).filter((row) => row && row.id && !activeIds.has(row.id));
     const combined = list.concat(archivedOnly);
@@ -993,15 +995,38 @@ const Chatseek = {
    * they return supported:false and the caller must not change archived.
    */
   readArchiveSignals(doc, _loc, platform) {
-    const empty = { supported: false, archiveRoot: null, banner: false };
+    const empty = { supported: false, archiveRoot: null, banner: false, composer: false };
     if (platform !== "chatgpt" || !doc?.querySelectorAll) return empty;
     const archiveRoot = Chatseek._archiveListRoot(doc);
     const banner = Chatseek._archiveBanner(doc, archiveRoot);
-    return { supported: true, archiveRoot, banner };
+    const composer = !banner && Chatseek._hasComposer(doc, archiveRoot);
+    return { supported: true, archiveRoot, banner, composer };
   },
 
   _normText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
+  },
+
+  _TRANSCRIPT_SELECTOR:
+    "[data-message-author-role], [data-turn], [data-message-id], article, " +
+    "[data-testid*='conversation-turn'], [data-testid='user-message'], " +
+    "[data-testid='human-message'], [data-testid='assistant-message'], [data-testid='ai-message']",
+
+  _inTranscript(el) {
+    return !!el?.closest?.(Chatseek._TRANSCRIPT_SELECTOR);
+  },
+
+  /**
+   * A /c/ link the user can see in the live chat list: inside the sidebar
+   * navigation, not in a dialog, a menu, or a message. Only these rows count
+   * as "seen while not archived"; links anywhere else leave the stored state alone.
+   */
+  inLiveSidebar(el, archiveRoot) {
+    if (!el || el.nodeType !== 1) return false;
+    if (archiveRoot && archiveRoot.contains(el)) return false;
+    if (!el.closest("nav, [role='navigation'], aside, #history")) return false;
+    if (el.closest("[role='dialog'], [role='alertdialog'], [aria-modal='true'], [role='menu']")) return false;
+    return !Chatseek._inTranscript(el);
   },
 
   _matchesArchiveHeading(value) {
@@ -1014,10 +1039,12 @@ const Chatseek = {
       "已封存聊天",
       "已封存的對話",
       "已封存對話",
+      "封存的聊天",
       "已归档的聊天",
       "已归档聊天",
       "已歸檔的聊天",
       "已歸檔聊天",
+      "归档的聊天",
       "アーカイブしたチャット",
       "アーカイブ済みチャット",
       "アーカイブ済みのチャット",
@@ -1027,12 +1054,16 @@ const Chatseek = {
       "conversaciones archivadas",
       "chats archivées",
       "conversations archivées",
+      "discussions archivées",
       "archivierte chats",
+      "archivierte unterhaltungen",
       "conversas arquivadas",
+      "chats arquivados",
     ];
+    // The heading may carry a count, e.g. "Archived chats (12)", and nothing else.
     return phrases.some((phrase) => {
-      if (text === phrase) return true;
-      return text.startsWith(phrase + " ") || text.startsWith(phrase + "(") || text.startsWith(phrase + "（");
+      if (!text.startsWith(phrase)) return false;
+      return /^\s*(?:[(（]\s*\d+\s*[)）]|\d+)?$/.test(text.slice(phrase.length));
     });
   },
 
@@ -1040,9 +1071,10 @@ const Chatseek = {
     const marked = doc.querySelector(
       "[data-testid='archived-chats'], [data-testid='archived-conversations']",
     );
-    if (marked) return marked;
+    if (marked && !Chatseek._inTranscript(marked)) return marked;
     const regions = doc.querySelectorAll("[role='dialog'], [role='region']");
     for (const el of regions) {
+      if (Chatseek._inTranscript(el) || el.querySelector(Chatseek._TRANSCRIPT_SELECTOR)) continue;
       const label = el.getAttribute("aria-label") || "";
       if (Chatseek._matchesArchiveHeading(label)) return el;
       const heading = el.querySelector("h1, h2, h3, h4, [role='heading']");
@@ -1054,12 +1086,31 @@ const Chatseek = {
   _inArchiveChrome(el, archiveRoot) {
     if (!el || el.nodeType !== 1) return true;
     if (archiveRoot && archiveRoot.contains(el)) return true;
-    if (el.closest("nav, [role='navigation'], [role='menu'], [role='menuitem']")) return true;
     if (el.closest(
-      "[data-message-author-role], [data-turn], [data-message-id], article, " +
-      "[data-testid*='conversation-turn'], [data-testid='user-message'], " +
-      "[data-testid='human-message'], [data-testid='assistant-message'], [data-testid='ai-message']",
+      "nav, [role='navigation'], [role='menu'], [role='menuitem'], " +
+      "[role='dialog'], [role='alertdialog'], [aria-modal='true']",
     )) return true;
+    return Chatseek._inTranscript(el);
+  },
+
+  /**
+   * An archived ChatGPT thread shows the banner where the composer would be.
+   * A composer outside dialogs and the transcript is the positive sign that
+   * the open chat is not archived; without one the open view says nothing.
+   */
+  _hasComposer(doc, archiveRoot) {
+    let fields = [];
+    try {
+      fields = doc.querySelectorAll(
+        "#prompt-textarea, form textarea, form [contenteditable='true'], " +
+        "[data-testid*='composer' i] textarea, [data-testid*='composer' i] [contenteditable='true']",
+      );
+    } catch {
+      fields = [];
+    }
+    for (const el of fields) {
+      if (!Chatseek._inArchiveChrome(el, archiveRoot)) return true;
+    }
     return false;
   },
 

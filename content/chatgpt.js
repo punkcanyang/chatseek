@@ -87,11 +87,13 @@
     const byId = new Map();
     const times = jsonTimes(root);
     const anchors = [];
+    const liveIds = new Set();
     root.querySelectorAll('a[href*="/c/"]').forEach((a) => {
       if (archiveRoot && archiveRoot.contains(a)) return;
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
+      if (Chatseek.inLiveSidebar(a, archiveRoot)) liveIds.add(id);
     });
     const sectionMap = Chatseek.sectionTimesFor(anchors);
     for (const slot of Chatseek.sidebarSlots(anchors)) {
@@ -99,7 +101,13 @@
       if (!conv) continue;
       Chatseek.rememberConv(byId, conv);
     }
-    return [...byId.values()];
+    const rows = [...byId.values()];
+    // Only the live chat list says "not archived". A /c/ link in a message or
+    // an unrecognised dialog is indexed but leaves the stored archive state alone.
+    for (const conv of rows) {
+      if (liveIds.has(conv.platformId)) markSeenActive(conv, "chatgpt:sidebar");
+    }
+    return rows;
   }
 
   function dropNested(nodes) {
@@ -188,9 +196,7 @@
     const root = doc || document;
     const here = loc || location;
     const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
-    const sidebar = extractSidebar(root, signals.archiveRoot).map((conv) =>
-      markSeenActive(conv, "chatgpt:sidebar"),
-    );
+    const sidebar = extractSidebar(root, signals.archiveRoot);
     const archivedRows = extractArchivedList(root, signals.archiveRoot);
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : conversationIdFromLocation(here);
@@ -209,14 +215,15 @@
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes(root));
       // The live sidebar is a non-archived context and wins over a stale banner.
       // A banner or archive-list-only view is the explicit archived signal.
-      if (fromSidebar) markSeenActive(conversation, "chatgpt:sidebar");
+      // With neither a banner nor a composer the view proves nothing either way.
+      if (fromSidebar?.archived === false) markSeenActive(conversation, "chatgpt:sidebar");
       else if (signals.banner) {
         conversation.archived = true;
         conversation.archiveSource = "chatgpt:banner";
       } else if (archivedRows.some((row) => row.platformId === platformId)) {
         conversation.archived = true;
         conversation.archiveSource = "chatgpt:archive-list";
-      } else markSeenActive(conversation, "chatgpt:conversation");
+      } else if (signals.composer) markSeenActive(conversation, "chatgpt:conversation");
       extracted = extractMessages(platformId, root);
     }
     return Chatseek.runCapture(state, {
