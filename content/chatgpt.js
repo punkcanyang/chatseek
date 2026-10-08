@@ -4,41 +4,57 @@
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
+  // First hit wins. Later layers cover the late-2026 turn markup
+  // (data-turn / conversation-turn / data-message-id) when the classic
+  // data-message-author-role nodes are gone. A new adapter can pass its
+  // own list to Chatseek.queryLayers instead of copying this walker.
+  const MESSAGE_LAYERS = [
+    { name: "[data-message-author-role]", selector: "[data-message-author-role]" },
+    { name: "[data-turn]", selector: "[data-turn]" },
+    {
+      name: "[data-testid*=conversation-turn]",
+      selector: "article[data-testid*='conversation-turn'], section[data-testid*='conversation-turn'], [data-testid*='conversation-turn']",
+    },
+    { name: "[data-message-id]", selector: "[data-message-id]" },
+    { name: "main article", selector: "main article" },
+  ];
+
   function canonicalUrl(id) {
     return `https://chatgpt.com/c/${id}`;
   }
 
-  function conversationIdFromLocation() {
-    const path = location.pathname || "";
+  function conversationIdFromLocation(loc) {
+    const path = (loc || location).pathname || "";
     if (!/\/c\//.test(path)) return null;
     return Chatseek.uuidFrom(path);
   }
 
-  function titleFromDoc() {
-    return Chatseek.stripTitleSuffix(document.title, ["ChatGPT", "OpenAI"]);
+  function titleFromDoc(doc) {
+    return Chatseek.stripTitleSuffix((doc || document).title, ["ChatGPT", "OpenAI"]);
   }
 
-  function jsonTimes() {
+  function jsonTimes(doc) {
     const now = Date.now();
-    // Re-scan occasionally; page may hydrate more history into scripts.
     if (!cachedJsonTimes || now - cachedJsonAt > 15000) {
-      cachedJsonTimes = Chatseek.pageTimesFromDocument();
+      cachedJsonTimes = Chatseek.pageTimesFromDocument(doc);
       cachedJsonAt = now;
     }
     return cachedJsonTimes;
   }
 
-  function extractSidebar() {
+  function extractSidebar(doc) {
+    const root = doc || document;
     const byId = new Map();
-    const times = jsonTimes();
+    const times = jsonTimes(root);
     const anchors = [];
-    document.querySelectorAll('a[href*="/c/"]').forEach((a) => {
+    root.querySelectorAll('a[href*="/c/"]').forEach((a) => {
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
     });
     const sectionMap = Chatseek.sectionTimesFor(anchors);
-    for (const a of anchors) {
+    for (const slot of Chatseek.sidebarSlots(anchors)) {
+      const a = slot.el;
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) continue;
       const title = Chatseek.textOf(a);
@@ -50,59 +66,100 @@
         title,
         url: canonicalUrl(id),
       };
+      if (slot.sidebarIndex != null) conv.sidebarIndex = slot.sidebarIndex;
       Chatseek.attachPageTime(conv, a, times, sectionMap);
       Chatseek.rememberConv(byId, conv);
     }
     return [...byId.values()];
   }
 
-  function extractMessages(conversationId) {
-    let nodes = [...document.querySelectorAll("[data-message-author-role]")];
-    if (!nodes.length) {
-      nodes = [...document.querySelectorAll('[data-testid^="conversation-turn"]')];
-    }
-    if (!nodes.length) {
-      nodes = [...document.querySelectorAll("main article")];
-    }
-    nodes = nodes.filter((node) => {
-      if (node.closest("nav, form, textarea")) return false;
+  function dropNested(nodes) {
+    return nodes.filter((node) => {
+      if (Chatseek.isMessageChrome(node)) return false;
       const links = node.querySelectorAll('a[href*="/c/"]');
       if (links.length >= 3) return false;
       return !nodes.some((other) => other !== node && node.contains(other));
     });
+  }
+
+  function bodyOf(node) {
+    const markdown = node.querySelector(".markdown, .prose");
+    const pre = node.querySelector(".whitespace-pre-wrap");
+    return Chatseek.textOf(markdown) || Chatseek.textOf(pre) || Chatseek.cleanClone(node);
+  }
+
+  function keptNodes(root, layer) {
+    let found = [];
+    try {
+      found = [...root.querySelectorAll(layer.selector)];
+    } catch {
+      found = [];
+    }
+    return dropNested(found);
+  }
+
+  function extractMessages(conversationId, doc) {
+    const root = doc || document;
+    const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
+    let selector = null;
+    let nodes = [];
+    const pick = (scope) => {
+      for (const layer of MESSAGE_LAYERS) {
+        const kept = keptNodes(scope, layer);
+        if (!kept.length) continue;
+        selector = layer.name;
+        nodes = kept;
+        return true;
+      }
+      return false;
+    };
+    if (!pick(root)) {
+      for (const shadowRoot of Chatseek.openShadowRoots(root)) {
+        if (pick(shadowRoot)) break;
+      }
+    }
     const messages = [];
     nodes.forEach((node) => {
-      const roleAttr = node.getAttribute("data-message-author-role") || "";
-      if (roleAttr === "system" || roleAttr === "tool") return;
+      const role = Chatseek.messageRole(node);
+      if (role === "system" || role === "tool") return;
       const heading = Chatseek.textOf(node.querySelector("h5, h6"));
-      const role = roleAttr === "assistant" || /^chatgpt/i.test(heading)
-        ? "assistant"
-        : "user";
+      const resolved = role === "assistant" || role === "user"
+        ? role
+        : (/^chatgpt/i.test(heading) ? "assistant" : "user");
       const platformMessageId = node.getAttribute("data-message-id") ||
         node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
-        Chatseek.hash(role + ":" + Chatseek.textOf(node).slice(0, 180));
-      const markdown = node.querySelector(".markdown");
-      const pre = node.querySelector(".whitespace-pre-wrap");
-      const body = Chatseek.textOf(markdown) || Chatseek.textOf(pre) ||
-        Chatseek.cleanClone(node);
+        Chatseek.hash(resolved + ":" + Chatseek.textOf(node).slice(0, 180));
+      const body = bodyOf(node);
       if (!body || Chatseek.isUiNoise(body)) return;
       messages.push({
         id: `${PLATFORM}:${conversationId}:${platformMessageId}`,
-        role,
+        role: resolved,
         body,
       });
     });
-    return messages;
+    return { messages, selector, selectorsTried };
   }
 
-  async function capture() {
-    const sidebar = extractSidebar();
-    const platformId = conversationIdFromLocation();
+  function healthFor(loc, doc, extraction, sidebar, platformId) {
+    return {
+      pathKind: Chatseek.pageKind(loc || location, !!platformId),
+      selector: extraction?.selector || null,
+      selectorsTried: extraction?.selectorsTried || MESSAGE_LAYERS.map((layer) => layer.name),
+      sidebar,
+    };
+  }
+
+  async function capture(doc, loc) {
+    const root = doc || document;
+    const here = loc || location;
+    const sidebar = extractSidebar(root);
+    const temporary = Chatseek.pageKind(here, false) === "temporary";
+    const platformId = temporary ? null : conversationIdFromLocation(here);
     let conversation = null;
-    let messages = [];
+    let extracted = { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((l) => l.name) };
     if (platformId) {
       const fromSidebar = sidebar.find((c) => c.platformId === platformId);
-      const title = titleFromDoc() || fromSidebar?.title || platformId;
+      const title = titleFromDoc(root) || fromSidebar?.title || platformId;
       conversation = {
         id: `${PLATFORM}:${platformId}`,
         platform: PLATFORM,
@@ -110,21 +167,54 @@
         title,
         url: canonicalUrl(platformId),
       };
-      if (fromSidebar?.updatedAt) {
-        conversation.updatedAt = fromSidebar.updatedAt;
-        conversation.createdAt = fromSidebar.createdAt || fromSidebar.updatedAt;
-      } else {
-        Chatseek.attachPageTime(conversation, null, jsonTimes());
-      }
-      messages = extractMessages(platformId);
+      Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes(root));
+      extracted = extractMessages(platformId, root);
     }
     return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
       conversation,
-      messages,
+      messages: extracted.messages,
+      health: {
+        pathKind: Chatseek.pageKind(here, !!platformId),
+        selector: extracted.selector,
+        selectorsTried: extracted.selectorsTried,
+      },
     });
   }
 
-  Chatseek.observe(capture);
+  function inspect(doc, loc) {
+    const root = doc || document;
+    const here = loc || location;
+    const platformId = conversationIdFromLocation(here);
+    const sidebar = extractSidebar(root);
+    const extracted = platformId
+      ? extractMessages(platformId, root)
+      : { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((l) => l.name) };
+    const health = Chatseek.buildHealthReport({
+      platform: PLATFORM,
+      pathKind: Chatseek.pageKind(here, !!platformId && !/[?&]temporary-chat=true(?:&|$)/.test(here.search || "")),
+      sidebarCount: sidebar.length,
+      messageCount: extracted.messages.length,
+      selector: extracted.selector,
+      selectorsTried: extracted.selectorsTried,
+    });
+    if (/[?&]temporary-chat=true(?:&|$)/.test(here.search || "")) {
+      health.pathKind = "temporary";
+      health.warn = false;
+    }
+    return { sidebar, ...extracted, health, platformId };
+  }
+
+  Chatseek.platforms = Chatseek.platforms || {};
+  Chatseek.platforms.chatgpt = {
+    messageLayers: MESSAGE_LAYERS,
+    extractMessages,
+    extractSidebar,
+    inspect,
+    capture,
+    healthFor,
+  };
+
+  if (Chatseek.autoStart !== false) Chatseek.observe(() => capture());
 })();

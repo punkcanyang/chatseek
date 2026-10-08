@@ -1,7 +1,8 @@
 import { queryTokens, tokenize } from "./tokenize.js";
+import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
 
 const DB_NAME = "chatseek";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise;
 
@@ -62,6 +63,10 @@ export function openDb() {
           db.createObjectStore("tokenMap", {
             keyPath: ["token", "conversationId", "source"],
           });
+        }
+        // Capture health and other small flags. Not part of search.
+        if (!db.objectStoreNames.contains("meta")) {
+          db.createObjectStore("meta", { keyPath: "key" });
         }
       };
       req.onsuccess = () => {
@@ -147,20 +152,27 @@ async function writeConversations(db, list) {
   const tx = db.transaction(["conversations", "tokenMap"], "readwrite");
   const convStore = tx.objectStore("conversations");
   const tokenStore = tx.objectStore("tokenMap");
+  const drafts = [];
 
   for (const incoming of list) {
     const old = await requestDone(convStore.get(incoming.id));
     const incomingUpdated = pageMs(incoming.updatedAt);
     const incomingCreated = pageMs(incoming.createdAt);
     const now = Date.now();
+    const merged = mergeActivityTime(old, {
+      updatedAt: incomingUpdated,
+      updatedAtSource: incoming.updatedAtSource,
+    }, now);
+    const firstSeenAt = isValidPageMs(old?.firstSeenAt)
+      ? old.firstSeenAt
+      : isValidPageMs(old?.createdAt)
+        ? old.createdAt
+        : now;
 
     const next = old ? { ...old } : {
       id: incoming.id,
       platform: incoming.platform,
       platformId: incoming.platformId,
-      // Prefer page dates when creating; else capture time.
-      createdAt: incomingCreated || incomingUpdated || now,
-      updatedAt: incomingUpdated || now,
       messageCount: 0,
     };
     next.platform = incoming.platform;
@@ -170,19 +182,37 @@ async function writeConversations(db, list) {
       next.title = (incoming.title || next.title || "").trim() || next.title;
     }
     if (!next.title) next.title = next.platformId;
-
-    // Title-only refresh must NOT stomp a good page updatedAt with Date.now().
-    if (incomingUpdated) {
-      next.updatedAt = incomingUpdated;
-    } else if (!isValidPageMs(next.updatedAt)) {
-      // Pre-1.0.2 builds could store a bogus 2001 date parsed from a title.
-      next.updatedAt = now;
-    }
-    // createdAt from page only when creating (handled above) or still missing.
+    next.updatedAt = merged.updatedAt;
+    next.updatedAtSource = merged.updatedAtSource;
+    next.firstSeenAt = firstSeenAt;
+    // createdAt from the page only when creating or still missing.
     if (!isValidPageMs(next.createdAt)) {
-      next.createdAt = incomingCreated || next.updatedAt;
+      next.createdAt = incomingCreated || firstSeenAt;
     }
+    // Pre-1.0.2 builds could store a bogus 2001 date parsed from a title.
+    if (!isValidPageMs(next.updatedAt)) next.updatedAt = now;
+    next.sidebarIndex = Number.isInteger(incoming.sidebarIndex)
+      ? incoming.sidebarIndex
+      : null;
+    drafts.push({ old, next });
+  }
 
+  const ordered = drafts
+    .filter((row) => row.next.sidebarIndex != null)
+    .sort((a, b) => a.next.sidebarIndex - b.next.sidebarIndex);
+  if (ordered.length) {
+    const estimated = applySidebarEstimates(
+      ordered.map((row) => row.next),
+      Date.now(),
+    );
+    estimated.forEach((row, index) => {
+      ordered[index].next.updatedAt = row.updatedAt;
+      ordered[index].next.updatedAtSource = row.updatedAtSource;
+    });
+  }
+
+  for (const { old, next } of drafts) {
+    delete next.sidebarIndex;
     const oldTitleTokens = tokenize(old?.title || "");
     const newTitleTokens = tokenize(next.title || "");
     if (old && old.title !== next.title) {
@@ -197,13 +227,26 @@ async function writeConversations(db, list) {
   await txDone(tx);
 }
 
-export async function upsertMessages(conversation, messages) {
+export async function upsertMessages(conversation, messages, meta = {}) {
   if (!conversation?.id || !messages?.length) return;
   await upsertConversations([conversation]);
-  return withDb((db) => writeMessages(db, conversation, messages));
+  return withDb((db) => writeMessages(db, conversation, messages, meta));
 }
 
-async function writeMessages(db, conversation, messages) {
+/**
+ * A new tail id (or a longer tail body) on a conversation that already had
+ * messages is observed activity. The first ingest — including later chunks of
+ * that same capture — is not: those messages were already on the page.
+ */
+function sawNewTail(baselineCount, baselineTail, pageMessageIds, tailBodyChanged) {
+  if (!baselineCount || !baselineTail || !pageMessageIds?.length) return false;
+  if (!pageMessageIds.includes(baselineTail)) return false;
+  const pageTail = pageMessageIds[pageMessageIds.length - 1];
+  if (pageTail !== baselineTail) return true;
+  return !!tailBodyChanged;
+}
+
+async function writeMessages(db, conversation, messages, meta = {}) {
   const tx = db.transaction(
     ["conversations", "messages", "tokenMap"],
     "readwrite",
@@ -212,7 +255,20 @@ async function writeMessages(db, conversation, messages) {
   const msgStore = tx.objectStore("messages");
   const tokenStore = tx.objectStore("tokenMap");
 
+  const conv = await requestDone(convStore.get(conversation.id));
+  let baselineCount = conv?.messageCount || 0;
+  let baselineTail = conv?.tailMessageId || "";
+  if (conv && meta.captureId && conv.captureToken !== meta.captureId) {
+    conv.captureToken = meta.captureId;
+    conv.captureBaselineCount = baselineCount;
+    conv.captureBaselineTail = baselineTail;
+  } else if (conv && meta.captureId && conv.captureToken === meta.captureId) {
+    baselineCount = conv.captureBaselineCount ?? baselineCount;
+    baselineTail = conv.captureBaselineTail || baselineTail;
+  }
+
   let changed = 0;
+  let tailBodyChanged = false;
   for (const msg of messages) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
@@ -226,6 +282,7 @@ async function writeMessages(db, conversation, messages) {
         msg.id,
       );
     }
+    if (msg.id === baselineTail) tailBodyChanged = true;
     const record = {
       id: msg.id,
       conversationId: conversation.id,
@@ -238,33 +295,43 @@ async function writeMessages(db, conversation, messages) {
     changed += 1;
   }
 
-  if (changed) {
-    const conv = await requestDone(convStore.get(conversation.id));
-    if (conv) {
-      const prevTitle = conv.title;
-      if (!isGenericTitle(conversation.title)) conv.title = conversation.title;
-      if (conversation.url) conv.url = conversation.url;
-      const incomingUpdated = pageMs(conversation.updatedAt);
-      if (incomingUpdated) {
-        // Trust the page date when the content script found one.
-        conv.updatedAt = incomingUpdated;
-      } else if (!isValidPageMs(conv.updatedAt)) {
-        // Keep an existing page date; only fall back when none exists yet.
-        conv.updatedAt = Date.now();
-      }
+  if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
+    const prevTitle = conv.title;
+    if (!isGenericTitle(conversation.title)) conv.title = conversation.title;
+    if (conversation.url) conv.url = conversation.url;
+    const now = Date.now();
+    const incomingUpdated = pageMs(conversation.updatedAt);
+    if (changed) {
+      const merged = mergeActivityTime(conv, {
+        updatedAt: incomingUpdated,
+        updatedAtSource: conversation.updatedAtSource,
+      }, now);
+      conv.updatedAt = merged.updatedAt;
+      conv.updatedAtSource = merged.updatedAtSource;
+      if (!isValidPageMs(conv.firstSeenAt)) conv.firstSeenAt = merged.firstSeenAt || now;
       const incomingCreated = pageMs(conversation.createdAt);
       if (incomingCreated && !isValidPageMs(conv.createdAt)) {
         conv.createdAt = incomingCreated;
       }
+      const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
+      if (sawNewTail(baselineCount, baselineTail, pageIds, tailBodyChanged)) {
+        const observed = mergeActivityTime(conv, {
+          updatedAt: now,
+          updatedAtSource: "observed",
+        }, now);
+        conv.updatedAt = observed.updatedAt;
+        conv.updatedAtSource = observed.updatedAtSource;
+      }
+      if (pageIds.length) conv.tailMessageId = pageIds[pageIds.length - 1];
       conv.messageCount = await requestDone(
         msgStore.index("conversationId").count(conversation.id),
       );
-      if (prevTitle !== conv.title) {
-        deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
-        writeTokens(tokenStore, tokenize(conv.title), conv.id, "title");
-      }
-      convStore.put(conv);
     }
+    if (prevTitle !== conv.title) {
+      deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
+      writeTokens(tokenStore, tokenize(conv.title), conv.id, "title");
+    }
+    convStore.put(conv);
   }
 
   await txDone(tx);
@@ -399,15 +466,46 @@ export async function stats() {
   });
 }
 
+export async function saveCaptureHealth(platform, health) {
+  if (!platform || !health || typeof health !== "object") return;
+  return withDb(async (db) => {
+    const tx = db.transaction("meta", "readwrite");
+    tx.objectStore("meta").put({
+      key: `health:${platform}`,
+      platform,
+      at: typeof health.at === "number" ? health.at : Date.now(),
+      pathKind: String(health.pathKind || "other").slice(0, 32),
+      sidebarCount: Number(health.sidebarCount) || 0,
+      messageCount: Number(health.messageCount) || 0,
+      selector: String(health.selector || "none").slice(0, 120),
+      warn: !!health.warn,
+    });
+    await txDone(tx);
+  });
+}
+
+export async function readCaptureHealth() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("meta")) return {};
+    const tx = db.transaction("meta", "readonly");
+    const out = {};
+    await cursorEach(tx.objectStore("meta"), {}, (row) => {
+      if (row?.key?.startsWith?.("health:") && row.platform) out[row.platform] = row;
+    });
+    return out;
+  });
+}
+
 export async function clearAll() {
   return withDb(async (db) => {
     const tx = db.transaction(
-      ["conversations", "messages", "tokenMap"],
+      ["conversations", "messages", "tokenMap", "meta"],
       "readwrite",
     );
     tx.objectStore("conversations").clear();
     tx.objectStore("messages").clear();
     tx.objectStore("tokenMap").clear();
+    tx.objectStore("meta").clear();
     await txDone(tx);
   });
 }

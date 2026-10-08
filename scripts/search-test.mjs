@@ -5,7 +5,10 @@ import {
   searchConversations,
   stats,
   openDb,
+  saveCaptureHealth,
+  readCaptureHealth,
 } from "../src/db.js";
+import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 
 const longBody =
   "UNIQUE_NEEDLE_" + "padding".repeat(800) + "_END_MARKER_payload";
@@ -249,6 +252,191 @@ assert(
 assert(
   !openedDuringSearch.includes("messages"),
   `search opened messages store: ${openedDuringSearch.join(",")}`,
+);
+
+function convOf(id, extra = {}) {
+  const platformId = id.slice(id.indexOf(":") + 1);
+  return {
+    id,
+    platform: "chatgpt",
+    platformId,
+    title: extra.title || `Time ${platformId.slice(0, 4)}`,
+    url: `https://chatgpt.com/c/${platformId}`,
+    ...extra,
+  };
+}
+
+async function readConv(id) {
+  const handle = await openDb();
+  return requestDone(handle.transaction("conversations").objectStore("conversations").get(id));
+}
+
+const exactId = "chatgpt:55555555-5555-4555-8555-555555555555";
+const exactAt = Date.UTC(2026, 8, 7, 18, 0, 0);
+await upsertConversations([
+  convOf(exactId, {
+    title: "Exact September chat",
+    updatedAt: exactAt,
+    updatedAtSource: "page-exact",
+  }),
+]);
+const bucketAt = Date.UTC(2026, 7, 23, 12, 0, 0);
+await upsertConversations([
+  convOf(exactId, {
+    title: "Exact September chat",
+    updatedAt: bucketAt,
+    updatedAtSource: "page-bucket",
+  }),
+]);
+let timed = await readConv(exactId);
+assert(timed.updatedAt === exactAt, `bucket overwrote exact time: ${timed.updatedAt}`);
+assert(timed.updatedAtSource === "page-exact", "exact source was downgraded");
+
+const olderExact = Date.UTC(2026, 0, 2, 8, 0, 0);
+await upsertConversations([
+  convOf(exactId, {
+    title: "Exact September chat",
+    updatedAt: olderExact,
+    updatedAtSource: "page-exact",
+  }),
+]);
+timed = await readConv(exactId);
+assert(timed.updatedAt === exactAt, "older page-exact must not replace a newer one");
+
+const futureId = "chatgpt:56565656-5656-4565-8565-565656565656";
+await upsertConversations([
+  convOf(futureId, {
+    title: "Today bucket",
+    updatedAt: Date.now() + 3 * 3600000,
+    updatedAtSource: "page-bucket",
+  }),
+]);
+timed = await readConv(futureId);
+assert(timed.updatedAt <= Date.now(), "Today-style bucket must not land in the future");
+assert(timed.updatedAtSource === "page-bucket", "future clamp should keep the bucket source");
+
+const chunkId = "chatgpt:66666666-6666-4666-8666-666666666666";
+const c1 = `${chunkId}:a`;
+const c2 = `${chunkId}:b`;
+const c3 = `${chunkId}:c`;
+await upsertMessages(
+  convOf(chunkId, { title: "Chunked old thread" }),
+  [{ id: c1, role: "user", body: "chunk one already on the page" }],
+  { pageMessageIds: [c1, c2], captureId: "capture-initial" },
+);
+await upsertMessages(
+  convOf(chunkId, { title: "Chunked old thread" }),
+  [{ id: c2, role: "assistant", body: "chunk two already on the page" }],
+  { pageMessageIds: [c1, c2], captureId: "capture-initial" },
+);
+timed = await readConv(chunkId);
+assert(timed.updatedAtSource !== "observed", "first ingest of an old thread must not be observed");
+const beforeAppend = timed.updatedAt;
+await new Promise((resolve) => setTimeout(resolve, 20));
+await upsertMessages(
+  convOf(chunkId, { title: "Chunked old thread" }),
+  [{ id: c3, role: "user", body: "brand new tail after the stored messages" }],
+  { pageMessageIds: [c1, c2, c3], captureId: "capture-append" },
+);
+timed = await readConv(chunkId);
+assert(timed.updatedAtSource === "observed", "a new tail message should be observed");
+assert(timed.updatedAt >= beforeAppend, "observed activity should move last-activity time forward");
+
+const scrollId = "chatgpt:67676767-6767-4676-8676-676767676767";
+const s1 = `${scrollId}:a`;
+const s2 = `${scrollId}:b`;
+const s0 = `${scrollId}:old`;
+await upsertMessages(
+  convOf(scrollId, { title: "Scrollback thread" }),
+  [
+    { id: s1, role: "user", body: "visible start" },
+    { id: s2, role: "assistant", body: "visible end" },
+  ],
+  { pageMessageIds: [s1, s2], captureId: "scroll-init" },
+);
+const scrollFrozen = await readConv(scrollId);
+await upsertMessages(
+  convOf(scrollId, { title: "Scrollback thread" }),
+  [{ id: s0, role: "user", body: "older message loaded by scrolling up" }],
+  { pageMessageIds: [s0, s1, s2], captureId: "scroll-up" },
+);
+timed = await readConv(scrollId);
+assert(timed.updatedAtSource === scrollFrozen.updatedAtSource, "scrollback must not change the time source");
+assert(timed.updatedAt === scrollFrozen.updatedAt, "scrollback must not move last-activity time");
+
+const anchorAt = Date.now() - 10 * 86400000;
+const topId = "chatgpt:77777777-7777-4777-8777-777777777777";
+const midId = "chatgpt:88888888-8888-4888-8888-888888888888";
+const botId = "chatgpt:99999999-9999-4999-8999-999999999999";
+await upsertConversations([
+  convOf(topId, { title: "Sidebar newer guess", sidebarIndex: 0 }),
+  convOf(midId, {
+    title: "Sidebar exact anchor",
+    sidebarIndex: 1,
+    updatedAt: anchorAt,
+    updatedAtSource: "page-exact",
+  }),
+  convOf(botId, { title: "Sidebar older guess", sidebarIndex: 2 }),
+]);
+const top = await readConv(topId);
+const mid = await readConv(midId);
+const bot = await readConv(botId);
+assert(top.updatedAtSource === "sidebar-rank", "undated sidebar neighbor should be estimated");
+assert(bot.updatedAtSource === "sidebar-rank", "older sidebar neighbor should be estimated");
+assert(top.updatedAt > mid.updatedAt && top.updatedAt <= Date.now(), "estimate should sit between now and the anchor");
+assert(bot.updatedAt < mid.updatedAt, "lower sidebar rank should sort older");
+assert(mid.updatedAt === anchorAt && mid.updatedAtSource === "page-exact", "anchor time must stay exact");
+const approx = formatActivityLabel(top, Date.now(), "zh");
+const exactLabel = formatActivityLabel(mid, Date.now(), "zh");
+assert(approx.text.startsWith("約 "), `estimated time should be marked 約, got ${approx.text}`);
+assert(!exactLabel.text.includes("約"), "exact time should not be marked 約");
+assert(approx.title.includes("側欄順序"), "approx tooltip should name the sidebar estimate");
+
+const unknownNew = "chatgpt:abababab-abab-4aba-8aba-abababababab";
+const unknownOld = "chatgpt:cdcdcdcd-cdcd-4cdc-8cdc-cdcdcdcdcdcd";
+await upsertConversations([
+  convOf(unknownNew, { title: "No clock newer", sidebarIndex: 0 }),
+  convOf(unknownOld, { title: "No clock older", sidebarIndex: 1 }),
+]);
+const unknownA = await readConv(unknownNew);
+const unknownB = await readConv(unknownOld);
+assert(unknownA.updatedAtSource === "first-seen" && unknownB.updatedAtSource === "first-seen", "no anchors means first-seen");
+assert(unknownA.updatedAt > unknownB.updatedAt, "unknown rows should keep sidebar order");
+assert(unknownA.updatedAt < Date.UTC(2021, 0, 1), "unknown sort keys must not look like recent activity");
+const unknownLabel = formatActivityLabel(unknownA, Date.now(), "zh");
+assert(
+  unknownLabel.text.startsWith("日期未知（收錄於 "),
+  `unknown date label drifted: ${unknownLabel.text}`,
+);
+assert(!unknownLabel.text.includes("約"), "unknown date must not look estimated");
+
+await saveCaptureHealth("chatgpt", {
+  at: Date.now(),
+  pathKind: "conversation",
+  sidebarCount: 4,
+  messageCount: 0,
+  selector: "none",
+  warn: true,
+});
+await saveCaptureHealth("claude", {
+  at: Date.now(),
+  pathKind: "conversation",
+  sidebarCount: 2,
+  messageCount: 3,
+  selector: "[data-testid=assistant-message]",
+  warn: false,
+});
+const health = await readCaptureHealth();
+assert(health.chatgpt?.warn === true, "health warning should persist");
+assert(health.claude?.messageCount === 3, "health counts should persist");
+const healthLines = formatHealthEntries(health, Date.now(), "zh");
+assert(
+  healthLines.some((line) => line.platform === "chatgpt" && line.warn && line.text.includes("頁面可能改版")),
+  "side panel should show the redesign hint",
+);
+assert(
+  healthLines.some((line) => line.platform === "claude" && line.text.includes("最後收錄") && line.text.includes("3 則訊息")),
+  "side panel should show the last capture line",
 );
 
 console.log("search-test ok", {

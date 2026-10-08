@@ -141,6 +141,7 @@ if (!/真实会话时间/.test(readmeDates) || !/采集时间/.test(readmeDates)
   fail("README should mention page dates vs capture time");
 }
 
+const healthWarns = [];
 const sandbox = {
   Date,
   Math,
@@ -149,6 +150,10 @@ const sandbox = {
   RegExp,
   Map,
   Set,
+  console: {
+    warn: (line) => healthWarns.push(String(line)),
+    log() {},
+  },
   document: { scripts: [], querySelectorAll() { return []; } },
   location: { href: "https://chatgpt.com/" },
   chrome: { runtime: {} },
@@ -275,6 +280,88 @@ if (!/runCapture/.test(sharedSrc) || !/sectionTimesFor/.test(sharedSrc)) {
 if (!/withDb/.test(dbForDates)) fail("db.js should reopen a closed IndexedDB connection");
 if (!/row\.token === token/.test(dbSrc)) {
   fail("token lookup must ignore longer tokens that share a prefix");
+}
+
+const morning = new Date(2026, 9, 8, 9, 0, 0, 0).getTime();
+const todayMs = pageTime.parsePageTime("Today", morning);
+const morningStart = new Date(2026, 9, 8, 0, 0, 0, 0).getTime();
+if (!(todayMs <= morning && todayMs >= morningStart)) {
+  fail(`Today must stay inside the morning, got ${todayMs}`);
+}
+const hourPhrase = pageTime.parsePageTime("Last message 3 hours ago", morning);
+if (hourPhrase !== pageTime.minuteFloor(morning) - 3 * 3600000) {
+  fail("Last message 3 hours ago should parse as an exact offset");
+}
+const zhHour = pageTime.parsePageTime("3 小時前", morning);
+if (zhHour !== pageTime.minuteFloor(morning) - 3 * 3600000) {
+  fail("Traditional 3 小時前 should parse");
+}
+if (pageTime.parsePageTime("上次訊息 5 分鐘前", morning) == null) {
+  fail("Traditional prefixed minute phrase should parse");
+}
+const jitter = Date.UTC(2026, 0, 15, 12, 0, 30);
+if (pageTime.parsePageTime("2h", jitter) !== pageTime.parsePageTime("2h", jitter + 20000)) {
+  fail("relative times should stay stable within one minute");
+}
+const exactKind = pageTime.classifyPageTime("2025-06-10T12:00:00.000Z");
+const bucketKind = pageTime.classifyPageTime("Previous 30 Days", morning);
+if (exactKind?.source !== "page-exact") fail("ISO time should be page-exact");
+if (bucketKind?.source !== "page-bucket") fail("Previous 30 Days should be page-bucket");
+if (pageTime.timeSourceRank("page-exact") <= pageTime.timeSourceRank("page-bucket")) {
+  fail("page-exact must outrank page-bucket");
+}
+const activitySrc = read("src/activity-time.js");
+for (const line of [
+  '"page-exact": 50',
+  "observed: 40",
+  '"page-bucket": 30',
+  '"sidebar-rank": 20',
+  '"first-seen": 10',
+]) {
+  if (!sharedSrc.includes(line) || !activitySrc.includes(line)) {
+    fail(`time source rank drifted: ${line}`);
+  }
+}
+
+pageTime._healthWarned = "";
+const zero = pageTime.buildHealthReport({
+  platform: "chatgpt",
+  pathKind: "conversation",
+  sidebarCount: 4,
+  messageCount: 0,
+  selector: null,
+  selectorsTried: ["[data-message-author-role]", "[data-turn]"],
+});
+if (!zero.warn) fail("conversation page with 0 messages should warn");
+if (!healthWarns.some((line) => line.includes("[Chatseek] chatgpt: 0 messages on /c/ page, selectors tried:"))) {
+  fail(`missing capture health console hint: ${healthWarns.join(" | ")}`);
+}
+pageTime.buildHealthReport({
+  platform: "chatgpt",
+  pathKind: "conversation",
+  sidebarCount: 4,
+  messageCount: 0,
+  selector: null,
+  selectorsTried: ["[data-message-author-role]", "[data-turn]"],
+});
+if (healthWarns.length !== 1) fail("health warning should be logged once per selector set");
+const home = pageTime.buildHealthReport({
+  platform: "chatgpt",
+  pathKind: "home",
+  sidebarCount: 2,
+  messageCount: 0,
+  selectorsTried: [],
+});
+if (home.warn) fail("home page with 0 messages should not warn");
+const claudeZero = pageTime.buildHealthReport({
+  platform: "claude",
+  pathKind: "conversation",
+  sidebarCount: 1,
+  messageCount: 0,
+  selectorsTried: [".font-claude-message"],
+});
+if (!claudeZero.warn || !healthWarns.some((line) => line.includes("claude: 0 messages on conversation page"))) {
+  fail("health check should cover Claude too");
 }
 
 if (errors.length) {
