@@ -78,10 +78,21 @@ const kept = nextPreviewFields(early, [
 assert(kept.firstUserPreview === "EARLY prompt", "a later window must not replace the stored first prompt");
 assert(kept.lastPreview === "LATE prompt", "the tail preview still moves");
 
+const reopenedWindow = nextPreviewFields(kept, [
+  { id: "u2", role: "user", body: "LATE prompt" },
+  { id: "a3", role: "assistant", body: "reply" },
+], ["u2", "a3"], { freshIds: new Set(["a3"]) });
+assert(reopenedWindow.firstUserPreview === "EARLY prompt", "reopening at a stored later prompt keeps the first prompt");
+
 const replaced = nextPreviewFields(kept, [
   { id: "u0", role: "user", body: "TOP prompt" },
-], ["u0"]);
-assert(replaced.firstUserPreview === "TOP prompt", "a page that starts with a user prompt replaces the stored one");
+], ["u0"], { freshIds: new Set(["u0"]) });
+assert(replaced.firstUserPreview === "TOP prompt", "a never-stored prompt at the top of the page replaces the stored one");
+
+const guessed = nextPreviewFields({ firstUserPreview: "index-order guess" }, [
+  { id: "u9", role: "user", body: "page-order prompt" },
+], ["u9"], { freshIds: new Set() });
+assert(guessed.firstUserPreview === "page-order prompt" && guessed.firstUserMessageId === "u9", "a backfilled guess yields to the page");
 
 const edited = nextPreviewFields(replaced, [
   { id: "u0", role: "user", body: "TOP prompt edited" },
@@ -306,6 +317,19 @@ stored = await requestDone(db.transaction("conversations").objectStore("conversa
 assert(stored.firstUserPreview.includes("想看红叶"), "a later page must not wipe the first prompt");
 assert(stored.lastPreview.includes("后来又问了一句"), "tail preview follows the new tail");
 
+// Gemini reopens a long thread at its latest turns, which an earlier visit stored.
+await upsertMessages(
+  { id: convId, platform: "chatgpt", platformId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "京都行程" },
+  [
+    { id: `${convId}:u2`, role: "user", body: "后来又问了一句" },
+    { id: `${convId}:a3`, role: "assistant", body: "最新回复" },
+  ],
+  { pageMessageIds: [`${convId}:u2`, `${convId}:a3`], captureId: "cap-3" },
+);
+stored = await requestDone(db.transaction("conversations").objectStore("conversations").get(convId));
+assert(stored.firstUserPreview.includes("想看红叶"), `a reopened later window replaced the first prompt: ${stored.firstUserPreview}`);
+assert(stored.lastPreview === "最新回复", "tail still follows the reopened window");
+
 const origTx = IDBDatabase.prototype.transaction;
 const opened = [];
 let watchTx = false;
@@ -383,6 +407,21 @@ assert(filled[0].preview.text.includes("兰花"), "legacy backfill reads the sto
 const saved = await requestDone(db.transaction("conversations").objectStore("conversations").get(legacyId));
 assert(saved.firstUserPreview.includes("兰花"), "legacy backfill is written back");
 assert(messageGetAll === 0, "backfill must not getAll() messages");
+assert(!saved.firstUserMessageId, "a backfilled excerpt has no page position");
+
+await upsertMessages(
+  { id: legacyId, platform: "chatgpt", platformId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", title: "旧索引" },
+  [
+    { id: `${legacyId}:u`, role: "user", body: "legacy first question about 兰花" },
+    { id: `${legacyId}:a`, role: "assistant", body: "reply" },
+  ],
+  { pageMessageIds: [`${legacyId}:u`, `${legacyId}:a`], captureId: "legacy-reopen" },
+);
+const reopened = await requestDone(db.transaction("conversations").objectStore("conversations").get(legacyId));
+assert(reopened.firstUserMessageId === `${legacyId}:u`, "reopening a legacy chat pins the page's first prompt");
+
+const legacySearch = await attachPreviews([{ ...legacy, firstUserPreview: "", lastPreview: "" }], "nomatchterm");
+assert(legacySearch[0].preview.kind !== "title-only", "a row with stored messages is never title-only in search");
 
 const htmlId = "chatgpt:dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 await upsertMessages(

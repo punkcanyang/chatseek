@@ -285,9 +285,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   let changed = 0;
   let tailBodyChanged = false;
   let observedNow = false;
+  const freshIds = new Set();
   for (const msg of messages) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
+    if (!existing) freshIds.add(msg.id);
     if (existing && existing.body === msg.body) continue;
 
     if (existing) {
@@ -312,7 +314,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
-    const fields = nextPreviewFields(conv, messages, meta.pageMessageIds);
+    const fields = nextPreviewFields(conv, messages, meta.pageMessageIds, { freshIds });
     if (fields.firstUserPreview) {
       conv.firstUserPreview = fields.firstUserPreview;
       conv.firstUserMessageId = fields.firstUserMessageId;

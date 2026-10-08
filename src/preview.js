@@ -205,11 +205,15 @@ function isPrompt(msg) {
 
 /**
  * Page order, top to bottom. An earlier user prompt replaces the stored one
- * when it is still on the page, or when this page starts at that prompt
- * (the previous prompt has scrolled off and this view includes the top).
- * A later window that does not include the stored prompt keeps it.
+ * when both are on the page. When the stored prompt is not on the page, the
+ * page's top prompt replaces it only if that prompt was never stored before
+ * (an edited first prompt, or older history that just loaded). Gemini reopens
+ * a long thread at its latest turns; those were stored on an earlier visit,
+ * so that window keeps the real first prompt. A legacy excerpt with no
+ * message id was guessed from index order and yields to any page.
+ * freshIds: ids this write inserts for the first time; omitted means all.
  */
-export function nextPreviewFields(conv, messages, pageMessageIds) {
+export function nextPreviewFields(conv, messages, pageMessageIds, { freshIds } = {}) {
   const next = {
     firstUserMessageId: conv?.firstUserMessageId || "",
     firstUserPreview: conv?.firstUserPreview || "",
@@ -240,9 +244,11 @@ export function nextPreviewFields(conv, messages, pageMessageIds) {
   }
   if (earliest) {
     const prevIdx = next.firstUserMessageId ? order.indexOf(next.firstUserMessageId) : -1;
+    const fresh = freshIds == null || freshIds.has(earliest.id);
     const replace = !next.firstUserPreview ||
+      !next.firstUserMessageId ||
       (prevIdx >= 0 && earliestIdx < prevIdx) ||
-      (prevIdx < 0 && earliestIdx === 0);
+      (prevIdx < 0 && earliestIdx === 0 && fresh);
     if (replace) {
       next.firstUserMessageId = earliest.id;
       next.firstUserPreview = clipPreviewText(earliest.body);
