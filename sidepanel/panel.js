@@ -245,6 +245,7 @@ clearBtn.addEventListener("click", async () => {
     render([], { error: true });
     return;
   }
+  chrome.action?.setBadgeText?.({ text: "" })?.catch?.(() => {});
   listEl.replaceChildren();
   countsEl.textContent = t.counts(0, 0);
   refresh();
