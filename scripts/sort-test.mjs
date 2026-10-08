@@ -6,6 +6,7 @@ import {
   activeSort,
   activityTier,
   defaultSortPref,
+  directionLabelKey,
   messageCountOf,
   parseSortPref,
   readSortPref,
@@ -207,8 +208,11 @@ assert(CATALOG["zh-TW"].sortActivity === "最後對話時間", "zh-TW activity l
 assert(CATALOG["zh-TW"].sortTitle === "標題" && CATALOG["zh-TW"].sortCaptured === "收錄時間", "zh-TW title and capture");
 assert(CATALOG["zh-TW"].sortCount === "訊息數" && CATALOG["zh-CN"].sortCount === "消息数", "message-count wording");
 assert(CATALOG["zh-TW"].sortRelevance === "相關度" && CATALOG["zh-CN"].sortRelevance === "相关度", "relevance wording");
+assert(directionLabelKey("relevance", "desc") === "sortDirHigh" && directionLabelKey("relevance", "asc") === "sortDirLow", "relevance reads high/low, not more/fewer");
+assert(directionLabelKey("count", "desc") === "sortDirMore" && directionLabelKey("count", "asc") === "sortDirFewer", "count reads more/fewer");
+assert(CATALOG["zh-TW"].sortDirHigh === "高→低" && CATALOG["zh-TW"].roleAssistant === "助理", "zh-TW wording");
 for (const code of LOCALE_ORDER) {
-  for (const key of ["sortBy", "sortCurrent", "sortDirHint", "sortActivity", "sortTitle", "sortCaptured", "sortCount", "sortRelevance", "sortDirNewest", "sortDirOldest", "sortDirAz", "sortDirZa", "sortDirMore", "sortDirFewer"]) {
+  for (const key of ["sortBy", "sortCurrent", "sortDirHint", "sortActivity", "sortTitle", "sortCaptured", "sortCount", "sortRelevance", "sortDirNewest", "sortDirOldest", "sortDirAz", "sortDirZa", "sortDirMore", "sortDirFewer", "sortDirHigh", "sortDirLow"]) {
     assert(CATALOG[code][key]?.trim(), `${code}.${key} missing`);
   }
 }

@@ -274,13 +274,13 @@
     }
   },
   "sortActivity": {
-    "message": "最後の会話"
+    "message": "最後の会話日時"
   },
   "sortTitle": {
     "message": "タイトル"
   },
   "sortCaptured": {
-    "message": "収録時刻"
+    "message": "取得日時"
   },
   "sortCount": {
     "message": "メッセージ数"
@@ -305,5 +305,11 @@
   },
   "sortDirFewer": {
     "message": "少ない順"
+  },
+  "sortDirHigh": {
+    "message": "高い順"
+  },
+  "sortDirLow": {
+    "message": "低い順"
   }
 }

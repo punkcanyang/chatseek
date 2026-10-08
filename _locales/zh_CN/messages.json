@@ -240,7 +240,7 @@
     }
   },
   "noHits": {
-    "message": "没有命中"
+    "message": "没有匹配的内容"
   },
   "roleUser": {
     "message": "你"
@@ -305,5 +305,11 @@
   },
   "sortDirFewer": {
     "message": "少→多"
+  },
+  "sortDirHigh": {
+    "message": "高→低"
+  },
+  "sortDirLow": {
+    "message": "低→高"
   }
 }

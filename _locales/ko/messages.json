@@ -305,5 +305,11 @@
   },
   "sortDirFewer": {
     "message": "적은순"
+  },
+  "sortDirHigh": {
+    "message": "높은순"
+  },
+  "sortDirLow": {
+    "message": "낮은순"
   }
 }

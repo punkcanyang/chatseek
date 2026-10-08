@@ -106,6 +106,8 @@ function bundle(code) {
     sortDirZa: say("sortDirZa"),
     sortDirMore: say("sortDirMore"),
     sortDirFewer: say("sortDirFewer"),
+    sortDirHigh: say("sortDirHigh"),
+    sortDirLow: say("sortDirLow"),
     chatgpt: "ChatGPT",
     claude: "Claude",
     grok: "Grok",

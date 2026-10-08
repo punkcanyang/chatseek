@@ -305,5 +305,11 @@
   },
   "sortDirFewer": {
     "message": "Fewest first"
+  },
+  "sortDirHigh": {
+    "message": "Highest first"
+  },
+  "sortDirLow": {
+    "message": "Lowest first"
   }
 }

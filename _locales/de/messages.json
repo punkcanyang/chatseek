@@ -301,9 +301,15 @@
     "message": "Z bis A"
   },
   "sortDirMore": {
-    "message": "Mehr zuerst"
+    "message": "Meiste zuerst"
   },
   "sortDirFewer": {
-    "message": "Weniger zuerst"
+    "message": "Wenigste zuerst"
+  },
+  "sortDirHigh": {
+    "message": "Höchste zuerst"
+  },
+  "sortDirLow": {
+    "message": "Niedrigste zuerst"
   }
 }

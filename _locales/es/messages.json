@@ -289,10 +289,10 @@
     "message": "Relevancia"
   },
   "sortDirNewest": {
-    "message": "Más reciente"
+    "message": "Más recientes primero"
   },
   "sortDirOldest": {
-    "message": "Más antiguo"
+    "message": "Más antiguas primero"
   },
   "sortDirAz": {
     "message": "A a Z"
@@ -301,9 +301,15 @@
     "message": "Z a A"
   },
   "sortDirMore": {
-    "message": "Más primero"
+    "message": "De más a menos"
   },
   "sortDirFewer": {
-    "message": "Menos primero"
+    "message": "De menos a más"
+  },
+  "sortDirHigh": {
+    "message": "Más relevante primero"
+  },
+  "sortDirLow": {
+    "message": "Menos relevante primero"
   }
 }
