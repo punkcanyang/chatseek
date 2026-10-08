@@ -8,6 +8,8 @@
   // user-query / .query-text, model-response / message-content,
   // model-thoughts / .thoughts-container, .cdk-visually-hidden, .ql-editor.
   const ROW_SELECTOR = '[data-test-id="conversation"], a[href*="/app/"], a[href*="/gem/"]';
+  const THREAD_SELECTOR =
+    "user-query, model-response, message-content, .query-text, .markdown, .model-response-text";
   const MESSAGE_LAYERS = [
     {
       name: "user-query, model-response",
@@ -27,12 +29,12 @@
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
 
+  // Conversation ids are random (16 hex today). A word such as /app/download
+  // or /app/settings is a page, not a thread, and must not raise the health warning.
   function cleanId(raw) {
     const id = String(raw || "").trim();
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(id)) return null;
-    if (/^(app|share|gem|gems|new|edit|create|view|chat|conversation)$/i.test(id)) {
-      return null;
-    }
+    if (!/\d/.test(id) && !/^[0-9a-f]{12,}$/i.test(id)) return null;
     return id;
   }
 
@@ -138,12 +140,22 @@
     } catch {
       titleEl = null;
     }
-    const fromTitle = Chatseek.textOf(titleEl);
+    const fromTitle = rowText(titleEl);
     if (fromTitle) return fromTitle;
     const link = el.matches?.("a[href]") ? el : el.querySelector?.("a[href]");
     const aria = (link?.getAttribute?.("aria-label") || "").trim();
     if (aria && !Chatseek.isGenericTitle(aria)) return aria;
-    return Chatseek.textOf(link || el);
+    return rowText(link || el);
+  }
+
+  // mat-icon renders its ligature name as text ("push_pin", "more_vert").
+  function rowText(node) {
+    if (!node) return "";
+    const clone = node.cloneNode(true);
+    clone
+      .querySelectorAll("mat-icon, button, svg, [role='button'], .cdk-visually-hidden")
+      .forEach((child) => child.remove());
+    return Chatseek.textOf(clone).replace(/\s+/g, " ").trim();
   }
 
   // findTimeNear's parent walk is built for /c/ and /chat/ anchors. Hand it the
@@ -196,6 +208,8 @@
     for (const el of nodes) {
       if (rows.some((row) => row.contains(el))) continue;
       if (el.closest?.('[data-test-id="new-chat-button"]')) continue;
+      // A Gemini link pasted into a prompt or reply is not a sidebar row.
+      if (el.closest?.(THREAD_SELECTOR)) continue;
       rows.push(el);
     }
     return rows;
@@ -364,6 +378,23 @@
     return text;
   }
 
+  // A stable id keeps a streaming reply on one row and lets the database see
+  // a new tail message. Gemini wraps each exchange in .conversation-container[id].
+  function messageDomId(el, role, body) {
+    const own = el.getAttribute("data-message-id") ||
+      el.id ||
+      el.querySelector?.("[data-message-id]")?.getAttribute("data-message-id");
+    if (own) return own;
+    let container = null;
+    try {
+      container = el.closest(".conversation-container[id]");
+    } catch {
+      container = null;
+    }
+    if (container?.id) return `${container.id}:${role}`;
+    return Chatseek.hash(role + ":" + body.slice(0, 180));
+  }
+
   function extractMessages(conversationId, doc) {
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
@@ -388,13 +419,18 @@
         return 0;
       });
       const messages = [];
+      const used = new Set();
       for (const item of candidates) {
         const body = messageBody(item.el, item.role);
         if (!body) continue;
-        const domId = item.el.getAttribute("data-message-id") ||
-          item.el.id ||
-          item.el.querySelector?.("[data-message-id]")?.getAttribute("data-message-id") ||
-          Chatseek.hash(item.role + ":" + body.slice(0, 180));
+        let domId = messageDomId(item.el, item.role, body);
+        // Two identical "continue" turns must stay two rows, or the second overwrites the first.
+        if (used.has(domId)) {
+          let n = 2;
+          while (used.has(`${domId}#${n}`)) n += 1;
+          domId = `${domId}#${n}`;
+        }
+        used.add(domId);
         messages.push({
           id: `${PLATFORM}:${conversationId}:${domId}`,
           role: item.role,

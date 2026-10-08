@@ -222,6 +222,47 @@ assert(
 assert(!emptyLoad.warns.some((line) => line.includes("INPUT_EDITOR_LEAK")), "health log included page text");
 assert(!JSON.stringify(ghost.conversation).includes("INPUT_EDITOR_LEAK"), "editor text leaked into the conversation");
 
+for (const page of ["download", "settings", "extensions"]) {
+  const viewed = load(threadHtml, `https://gemini.google.com/app/${page}`).api.platforms.gemini.inspect();
+  assert(viewed.platformId == null && viewed.conversation === null, `/app/${page} is not a conversation`);
+  assert(viewed.health.warn === false, `/app/${page} must not raise the redesign warning`);
+}
+
+const linked = load(
+  `<!DOCTYPE html><body>
+    <div class="conversation-items-container">
+      <div data-test-id="conversation" jslog="c_1111111111111111">
+        <div class="conversation-title">Real row<mat-icon>push_pin</mat-icon></div>
+      </div>
+      <div data-test-id="conversation" jslog="c_2222222222222222">
+        <div class="conversation-title">Second row</div>
+      </div>
+    </div>
+    <main>
+      <div class="conversation-container" id="x1">
+        <user-query><div class="query-text">continue</div></user-query>
+        <model-response><message-content><div class="markdown">
+          See <a href="https://gemini.google.com/app/3333333333333333">PASTED_LINK_TITLE</a>.
+        </div></message-content></model-response>
+      </div>
+      <user-query><div class="query-text">continue</div></user-query>
+      <user-query><div class="query-text">continue</div></user-query>
+    </main>
+  </body>`,
+  "https://gemini.google.com/app/1111111111111111",
+).api.platforms.gemini.inspect();
+const linkedRows = [...linked.sidebar].sort((a, b) => a.sidebarIndex - b.sidebarIndex);
+assert(
+  linkedRows.map((row) => row.platformId).join() === "1111111111111111,2222222222222222",
+  `a link inside a reply became a sidebar row: ${linkedRows.map((row) => row.title).join(" | ")}`,
+);
+assert(linkedRows[0].title === "Real row", `icon text leaked into title: ${linkedRows[0].title}`);
+const linkedIds = linked.messages.map((m) => m.id);
+assert(linked.messages.length === 4, `expected 4 messages, got ${linked.messages.length}`);
+assert(new Set(linkedIds).size === linkedIds.length, `duplicate message ids: ${linkedIds.join(", ")}`);
+assert(linkedIds[0] === "gemini:1111111111111111:x1:user", linkedIds[0]);
+assert(linkedIds[1] === "gemini:1111111111111111:x1:assistant", linkedIds[1]);
+
 console.log("gemini-fixture ok", {
   messages: messages.length,
   sidebar: sidebar.length,
