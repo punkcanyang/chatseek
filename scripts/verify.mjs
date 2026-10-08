@@ -85,7 +85,10 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.5.1") fail(`version should be 1.5.1, got ${manifest.version}`);
+if (manifest.version !== "1.6.0") fail(`version should be 1.6.0, got ${manifest.version}`);
+if ((manifest.permissions || []).includes("unlimitedStorage")) {
+  fail("unlimitedStorage is not allowed");
+}
 const csp = manifest.content_security_policy?.extension_pages || "";
 if (!/script-src[^;]*'self'/.test(csp)) fail("extension CSP must keep script-src 'self'");
 if (!/object-src[^;]*'self'/.test(csp)) fail("extension CSP must keep object-src 'self'");
@@ -164,12 +167,28 @@ for (const rel of [
   "content/grok.js",
   "content/gemini.js",
   "content/shared.js",
+  "content/images.js",
 ]) {
   const src = read(rel);
   if (/XMLHttpRequest|prototype\.fetch|window\.fetch\s*=/.test(src)) {
     fail(`${rel} must not hook fetch/XHR`);
   }
   if (/MAIN/.test(src)) fail(`${rel} must not use MAIN world hooks`);
+  // 1.6.0: thumbnails are taken from images the page already painted.
+  if (/\bfetch\s*\(/.test(src)) fail(`${rel} must not fetch`);
+  if (/\bnew\s+Image\b|createElement\(\s*["']img["']\s*\)/.test(src)) {
+    fail(`${rel} must not construct an Image to load`);
+  }
+  if (/crossOrigin/.test(src)) fail(`${rel} must not set crossOrigin`);
+}
+if (/status:\s*["']omit["']|status === ["']omit["']/.test(read("content/images.js"))) {
+  fail("an oversized image must be kept as a placeholder, not dropped");
+}
+if (!/oversized/.test(read("content/images.js")) || !/oversized/.test(read("src/image-cache.js"))) {
+  fail("oversized images need their own stored status");
+}
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("content/images.js") + read("src/image-cache.js"))) {
+  fail("image cache must not assign HTML");
 }
 for (const rel of [
   "background.js",
@@ -178,6 +197,7 @@ for (const rel of [
   "content/grok.js",
   "content/gemini.js",
   "content/shared.js",
+  "content/images.js",
   "src/activity-time.js",
   "src/db.js",
   "src/tokenize.js",
@@ -191,6 +211,7 @@ for (const rel of [
   "src/markdown.js",
   "src/markdown-dom.js",
   "src/sort-list.js",
+  "src/image-cache.js",
   "reader/reader.js",
   "sidepanel/panel.js",
 ]) {
@@ -206,7 +227,10 @@ if (/messages["']?\)\.getAll|objectStore\(\s*["']messages["']\s*\)\.getAll/.test
   fail("db.js must not getAll() the messages store");
 }
 if (!/openCursor/.test(dbSrc)) fail("db.js should cursor IndexedDB for search/list");
-if (!/const DB_VERSION = 3/.test(dbSrc)) fail("schema should stay at version 3");
+if (!/const DB_VERSION = 4/.test(dbSrc)) fail("schema should be version 4");
+if (!/objectStoreNames\.contains\("images"\)|createObjectStore\("images"/.test(dbSrc)) {
+  fail("schema should add an images store");
+}
 const readFn = dbSrc.split("export async function readConversation")[1]?.split("export async function")[0] || "";
 if (!readFn) fail("readConversation not found");
 if (!/readonly/.test(readFn)) fail("readConversation must use a readonly transaction");

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "default_locale": "en",
   "description": "__MSG_extDescription__",
   "minimum_chrome_version": "116",
@@ -44,13 +44,13 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content/shared.js", "content/chatgpt.js"],
+      "js": ["content/shared.js", "content/images.js", "content/chatgpt.js"],
       "run_at": "document_idle",
       "world": "ISOLATED"
     },
     {
       "matches": ["https://claude.ai/*"],
-      "js": ["content/shared.js", "content/claude.js"],
+      "js": ["content/shared.js", "content/images.js", "content/claude.js"],
       "run_at": "document_idle",
       "world": "ISOLATED"
     },
@@ -61,13 +61,13 @@
         "https://grok.x.com/*",
         "https://x.ai/*"
       ],
-      "js": ["content/shared.js", "content/grok.js"],
+      "js": ["content/shared.js", "content/images.js", "content/grok.js"],
       "run_at": "document_idle",
       "world": "ISOLATED"
     },
     {
       "matches": ["https://gemini.google.com/*"],
-      "js": ["content/shared.js", "content/gemini.js"],
+      "js": ["content/shared.js", "content/images.js", "content/gemini.js"],
       "run_at": "document_idle",
       "world": "ISOLATED"
     }

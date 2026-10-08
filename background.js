@@ -1,4 +1,10 @@
-import { upsertConversations, upsertMessages, saveCaptureHealth, readCaptureHealth } from "./src/db.js";
+import {
+  upsertConversations,
+  upsertMessages,
+  saveCaptureHealth,
+  readCaptureHealth,
+  saveImageRecords,
+} from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
 import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
 
@@ -48,6 +54,22 @@ function validConversation(conv) {
 
 function notifyIndexUpdated() {
   chrome.runtime.sendMessage({ type: "INDEX_UPDATED" }).catch(() => {});
+}
+
+let imageNotice = 0;
+function notifyImagesLater() {
+  clearTimeout(imageNotice);
+  imageNotice = setTimeout(() => {
+    chrome.runtime.sendMessage({ type: "IMAGE_CACHE_UPDATED" }).catch(() => {});
+  }, 400);
+}
+
+function platformFromSender(sender) {
+  const url = sender?.tab?.url || "";
+  for (const [name, list] of Object.entries(HOSTS)) {
+    if (list.some((re) => re.test(url))) return name;
+  }
+  return "";
 }
 
 // Content scripts report the page they are on. This map only orders ties; it
@@ -199,6 +221,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(() => {
         notifyIndexUpdated();
         sendResponse({ ok: true });
+      })
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+
+  if (msg.type === "CAPTURE_IMAGES") {
+    const platform = platformFromSender(sender);
+    const conversationId = typeof msg.conversationId === "string" ? msg.conversationId : "";
+    if (!platform || !conversationId.startsWith(`${platform}:`)) {
+      sendResponse({ ok: false, error: "forbidden" });
+      return;
+    }
+    const images = Array.isArray(msg.images) ? msg.images.slice(0, 4) : [];
+    saveImageRecords(conversationId, images)
+      .then((result) => {
+        if (result?.quota) {
+          sendResponse({ ok: false, error: "quota" });
+          return;
+        }
+        if (result?.saved) notifyImagesLater();
+        sendResponse({ ok: true, saved: result?.saved || 0 });
       })
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;

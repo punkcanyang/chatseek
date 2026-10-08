@@ -8,9 +8,11 @@ import {
 } from "./preview.js";
 import { mergeMessageOrder, orderMessages } from "./message-order.js";
 import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-list.js";
+import { normalizeImageRecord } from "./image-cache.js";
 
 const DB_NAME = "chatseek";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+const IMAGE_BYTES_KEY = "imageBytes";
 
 let dbPromise;
 
@@ -86,6 +88,12 @@ export function openDb() {
             tokens.createIndex("conversationId", "conversationId");
           }
         }
+        // 1.6.0: thumbnails and uncached placeholders. Not part of search.
+        if (!db.objectStoreNames.contains("images")) {
+          const images = db.createObjectStore("images", { keyPath: ["messageId", "index"] });
+          images.createIndex("conversationId", "conversationId");
+          images.createIndex("messageId", "messageId");
+        }
       };
       req.onsuccess = () => {
         const db = req.result;
@@ -99,6 +107,11 @@ export function openDb() {
     });
   }
   return dbPromise;
+}
+
+function isQuotaError(err) {
+  const name = err?.name || "";
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
 
 function isDeadConnection(err) {
@@ -792,10 +805,94 @@ export async function readCaptureHealth() {
  * Does not message the page. A tombstone in meta keeps sidebar rescans from
  * adding it back; opening the chat with messages on screen captures it again.
  */
+async function adjustImageBytes(metaStore, delta) {
+  const row = await requestDone(metaStore.get(IMAGE_BYTES_KEY));
+  const next = Math.max(0, (Number(row?.bytes) || 0) + delta);
+  metaStore.put({ key: IMAGE_BYTES_KEY, bytes: next });
+  return next;
+}
+
+export async function saveImageRecords(conversationId, images) {
+  if (typeof conversationId !== "string" || !conversationId || !images?.length) {
+    return { saved: 0 };
+  }
+  try {
+    return await withDb(async (db) => {
+      const tx = db.transaction(["images", "meta"], "readwrite");
+      const store = tx.objectStore("images");
+      const meta = tx.objectStore("meta");
+      let saved = 0;
+      for (const raw of images) {
+        const rec = normalizeImageRecord(conversationId, raw);
+        if (!rec) continue;
+        const prev = await requestDone(store.get([rec.messageId, rec.index]));
+        let delta = rec.status === "cached" ? rec.bytes : 0;
+        if (prev?.bytes) delta -= Number(prev.bytes) || 0;
+        try {
+          store.put(rec);
+        } catch (err) {
+          if (!isQuotaError(err)) throw err;
+          try { tx.abort(); } catch { /* already aborting */ }
+          return { saved: 0, quota: true };
+        }
+        if (delta) await adjustImageBytes(meta, delta);
+        saved += 1;
+      }
+      await txDone(tx);
+      return { saved };
+    });
+  } catch (err) {
+    // A failed put aborts the transaction, so the byte counter is unchanged
+    // and conversation rows (a different transaction) stay put.
+    if (isQuotaError(err)) return { saved: 0, quota: true };
+    throw err;
+  }
+}
+
+export async function readImagesForMessages(ids) {
+  const wanted = (Array.isArray(ids) ? ids : [])
+    .filter((id) => typeof id === "string" && id)
+    .slice(0, 80);
+  if (!wanted.length) return [];
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images")) return [];
+    const tx = db.transaction("images", "readonly");
+    const index = tx.objectStore("images").index("messageId");
+    const out = [];
+    for (const id of wanted) {
+      await cursorEach(index, { range: IDBKeyRange.only(id) }, (row) => {
+        if (row) out.push(row);
+      });
+    }
+    out.sort((a, b) => (a.index || 0) - (b.index || 0));
+    return out;
+  });
+}
+
+export async function imageCacheUsage() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("meta")) return 0;
+    const tx = db.transaction("meta", "readonly");
+    const row = await requestDone(tx.objectStore("meta").get(IMAGE_BYTES_KEY));
+    return Math.max(0, Number(row?.bytes) || 0);
+  });
+}
+
+export async function clearImageCache() {
+  return withDb(async (db) => {
+    const tx = db.transaction(["images", "meta"], "readwrite");
+    tx.objectStore("images").clear();
+    tx.objectStore("meta").put({ key: IMAGE_BYTES_KEY, bytes: 0 });
+    await txDone(tx);
+  });
+}
+
 export async function removeConversation(id) {
   if (typeof id !== "string" || !id) return;
   return withDb(async (db) => {
-    const tx = db.transaction(["conversations", "messages", "tokenMap", "meta"], "readwrite");
+    const stores = ["conversations", "messages", "tokenMap", "meta"];
+    if (db.objectStoreNames.contains("images")) stores.push("images");
+    const tx = db.transaction(stores, "readwrite");
     tx.objectStore("conversations").delete(id);
     tx.objectStore("meta").put({ key: REMOVED_PREFIX + id, removedAt: Date.now() });
     tx.objectStore("meta").delete(ORDER_PREFIX + id);
@@ -816,20 +913,29 @@ export async function removeConversation(id) {
         if (row?.conversationId === id) cursor.delete();
       });
     }
+    if (db.objectStoreNames.contains("images")) {
+      const imageIndex = tx.objectStore("images").index("conversationId");
+      let freed = 0;
+      await cursorEach(imageIndex, { range: IDBKeyRange.only(id) }, (row, cursor) => {
+        freed += Number(row?.bytes) || 0;
+        cursor.delete();
+      });
+      if (freed) await adjustImageBytes(tx.objectStore("meta"), -freed);
+    }
     await txDone(tx);
   });
 }
 
 export async function clearAll() {
   return withDb(async (db) => {
-    const tx = db.transaction(
-      ["conversations", "messages", "tokenMap", "meta"],
-      "readwrite",
-    );
+    const names = ["conversations", "messages", "tokenMap", "meta"];
+    if (db.objectStoreNames.contains("images")) names.push("images");
+    const tx = db.transaction(names, "readwrite");
     tx.objectStore("conversations").clear();
     tx.objectStore("messages").clear();
     tx.objectStore("tokenMap").clear();
     tx.objectStore("meta").clear();
+    if (names.includes("images")) tx.objectStore("images").clear();
     await txDone(tx);
   });
 }

@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "verify": "node scripts/verify.mjs && node scripts/chatgpt-fixture-test.mjs",
-    "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs && node scripts/preview-test.mjs && node scripts/sort-test.mjs && node scripts/relevance-test.mjs && node scripts/panel-test.mjs && node scripts/archive-test.mjs && node scripts/i18n-test.mjs && node scripts/reader-test.mjs && node scripts/markdown-test.mjs && node scripts/markdown-attack-test.mjs && node scripts/focus-tab-test.mjs && node scripts/icon-a11y-test.mjs",
-    "test:upgrade": "node scripts/upgrade-test.mjs && node scripts/upgrade-1.4-test.mjs",
+    "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs && node scripts/preview-test.mjs && node scripts/sort-test.mjs && node scripts/relevance-test.mjs && node scripts/panel-test.mjs && node scripts/archive-test.mjs && node scripts/i18n-test.mjs && node scripts/reader-test.mjs && node scripts/markdown-test.mjs && node scripts/markdown-attack-test.mjs && node scripts/focus-tab-test.mjs && node scripts/icon-a11y-test.mjs && node scripts/image-cache-test.mjs",
+    "test:upgrade": "node scripts/upgrade-test.mjs && node scripts/upgrade-1.4-test.mjs && node scripts/image-cache-test.mjs",
     "test:fixture": "node scripts/chatgpt-fixture-test.mjs && node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs",
     "test:gemini": "node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs",
     "screenshot": "node scripts/screenshot-panel.mjs"

@@ -317,5 +317,25 @@
   },
   "imageLabel": {
     "message": "Image"
+  },
+  "imageCache": {
+    "message": "Image cache $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "Clear image cache"
+  },
+  "confirmClearImages": {
+    "message": "Delete cached images on this computer? Conversations and messages stay. This cannot be undone."
+  },
+  "imageUncached": {
+    "message": "Image wasn’t cached (the original site doesn’t allow it)"
+  },
+  "imageOversized": {
+    "message": "Image wasn’t cached (the file is too large)"
   }
 }

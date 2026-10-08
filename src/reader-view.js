@@ -8,11 +8,12 @@
 
 import { fill, text } from "./i18n.js";
 import { formatActivityLabel } from "./activity-time.js";
-import { cachedMarkdown, renderMarkdown } from "./markdown-dom.js";
+import { altBag, cachedMarkdown, consumedImageRanges, renderMarkdown } from "./markdown-dom.js";
 import { hitMayBeMarkup, visibleRanges } from "./markdown.js";
 import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
 import { safeOriginalUrl } from "./reader-url.js";
 import { externalIcon } from "./icons.js";
+import { dataUrlFromBytes, snapOffset } from "./image-cache.js";
 
 export const MAX_NODES = 60;
 const OVERSCAN_PX = 480;
@@ -68,7 +69,7 @@ export function splitPlainBlocks(text) {
   return blocks;
 }
 
-export function collectHits(title, messages, query) {
+export function collectHits(title, messages, query, images) {
   const terms = highlightTerms(query);
   const hits = [];
   if (!terms.length) return hits;
@@ -85,7 +86,12 @@ export function collectHits(title, messages, query) {
     const shown = ranges.some((range) => hitMayBeMarkup(body, range))
       ? visibleRanges(cachedMarkdown(msg, body))
       : null;
+    const shots = images?.get?.(msg?.id) || [];
+    const hidden = shots.length
+      ? consumedImageRanges(body, shots.map((shot) => shot?.alt || ""))
+      : [];
     for (const range of ranges) {
+      if (hidden.some(([start, end]) => range[0] >= start && range[1] <= end)) continue;
       if (!shown || overlapsAny(shown, range)) hits.push({ where: "message", messageIndex, range });
     }
   });
@@ -147,7 +153,93 @@ function messageHits(hits, messageIndex) {
   return local;
 }
 
-function renderMessage(doc, msg, index, hits, current, locale) {
+function shiftHits(hits, from, to) {
+  const local = [];
+  for (const hit of hits || []) {
+    const start = hit.range[0];
+    const end = hit.range[1];
+    if (end <= from || start >= to) continue;
+    local.push({
+      index: hit.index,
+      range: [Math.max(0, start - from), Math.min(to, end) - from],
+    });
+  }
+  return local;
+}
+
+function imageSlot(doc, shot, locale, onOpen) {
+  const fig = doc.createElement("figure");
+  fig.className = "image-slot";
+  const cachedUrl = shot?.status === "cached"
+    ? (shot.dataUrl || dataUrlFromBytes(shot.blob, shot.mime))
+    : "";
+  if (typeof cachedUrl === "string" && cachedUrl.startsWith("data:image/")) {
+    const btn = doc.createElement("button");
+    btn.type = "button";
+    btn.className = "thumb-btn";
+    const label = text(locale, "openOriginal");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    const img = doc.createElement("img");
+    img.className = "cached-thumb";
+    const alt = String(shot.alt || shot.prompt || text(locale, "imageLabel")).slice(0, 200);
+    img.alt = alt;
+    img.src = cachedUrl;
+    btn.append(img);
+    btn.addEventListener("click", () => onOpen?.());
+    fig.append(btn);
+    return fig;
+  }
+  fig.classList.add("image-missing");
+  const oversized = shot?.status === "oversized";
+  fig.dataset.reason = oversized ? "oversized" : "site";
+  const note = doc.createElement("p");
+  note.className = "image-missing-text";
+  note.textContent = text(locale, oversized ? "imageOversized" : "imageUncached");
+  const btn = doc.createElement("button");
+  btn.type = "button";
+  btn.className = "link image-open";
+  btn.textContent = text(locale, "openOriginal");
+  btn.addEventListener("click", () => onOpen?.());
+  fig.append(note, btn);
+  return fig;
+}
+
+function renderBodyWithImages(parent, msg, shots, hits, current, locale, onOpen) {
+  const body = String(msg?.body || "");
+  const points = [];
+  for (const shot of [...shots].sort((a, b) => (a.index || 0) - (b.index || 0))) {
+    const at = snapOffset(body, shot?.offset);
+    let group = points.find((row) => row.at === at);
+    if (!group) {
+      group = { at, shots: [] };
+      points.push(group);
+    }
+    group.shots.push(shot);
+  }
+  points.sort((a, b) => a.at - b.at);
+  let cursor = 0;
+  const skipAlts = altBag(shots.map((shot) => shot?.alt || ""));
+  const paint = (from, to) => {
+    if (to <= from && body) return;
+    renderMarkdown(parent, body.slice(from, to), {
+      hits: shiftHits(hits, from, to),
+      current,
+      locale,
+      owner: null,
+      skipAlts,
+    });
+  };
+  for (const group of points) {
+    const at = Math.max(cursor, Math.min(body.length, group.at));
+    if (at > cursor) paint(cursor, at);
+    for (const shot of group.shots) parent.append(imageSlot(parent.ownerDocument, shot, locale, onOpen));
+    cursor = at;
+  }
+  if (cursor < body.length) paint(cursor, body.length);
+}
+
+function renderMessage(doc, msg, index, hits, current, locale, images, onOpen) {
   const assistant = msg?.role === "assistant";
   const article = doc.createElement("article");
   article.className = `msg msg-${assistant ? "assistant" : "user"}`;
@@ -158,12 +250,18 @@ function renderMessage(doc, msg, index, hits, current, locale) {
   role.textContent = text(locale, assistant ? "roleAssistant" : "roleUser");
   const body = doc.createElement("div");
   body.className = "msg-body";
-  renderMarkdown(body, msg?.body || "", {
-    hits: messageHits(hits, index),
-    current,
-    locale,
-    owner: msg,
-  });
+  const shots = images?.get?.(msg?.id) || [];
+  const localHits = messageHits(hits, index);
+  if (shots.length) {
+    renderBodyWithImages(body, msg, shots, localHits, current, locale, onOpen);
+  } else {
+    renderMarkdown(body, msg?.body || "", {
+      hits: localHits,
+      current,
+      locale,
+      owner: msg,
+    });
+  }
   article.append(role, body);
   return article;
 }
@@ -185,9 +283,10 @@ export function mountReader(root, options = {}) {
   const conversation = options.conversation || null;
   // Already in page order (readConversation). The view does not reorder.
   const messages = (options.messages || []).filter((msg) => msg && msg.id);
+  let imageMap = options.images instanceof Map ? options.images : new Map();
   const hits = options.missing || options.error || !conversation
     ? []
-    : collectHits(conversation.title || conversation.platformId || "", messages, query);
+    : collectHits(conversation.title || conversation.platformId || "", messages, query, imageMap);
   let hitIndex = hits.length ? 0 : -1;
   const heights = messages.map(estimateHeight);
   let prefix = buildPrefix(heights);
@@ -362,7 +461,16 @@ export function mountReader(root, options = {}) {
     const next = new Map();
     const nodes = [];
     for (let i = start; i <= end; i++) {
-      const el = live.get(i) || renderMessage(doc, messages[i], i, hits, hitIndex, locale);
+      const el = live.get(i) || renderMessage(
+        doc,
+        messages[i],
+        i,
+        hits,
+        hitIndex,
+        locale,
+        imageMap,
+        openOriginalNow,
+      );
       next.set(i, el);
       nodes.push(el);
     }
@@ -370,6 +478,13 @@ export function mountReader(root, options = {}) {
     pool.replaceChildren(...nodes);
     renderedStart = start;
     renderedEnd = end;
+    if (typeof options.onWindow === "function" && mode === "messages") {
+      const ids = [];
+      for (let i = start; i <= end; i += 1) {
+        if (messages[i]?.id) ids.push(messages[i].id);
+      }
+      options.onWindow(ids);
+    }
   }
 
   function placePads() {
@@ -479,10 +594,12 @@ function focusHit() {
 
   prevBtn.addEventListener("click", () => step(-1));
   nextBtn.addEventListener("click", () => step(1));
-  openBtn.addEventListener("click", () => {
+  function openOriginalNow() {
     if (!original || typeof options.onOpenOriginal !== "function") return;
     options.onOpenOriginal(original);
-  });
+  }
+
+  openBtn.addEventListener("click", openOriginalNow);
   scroller.addEventListener("scroll", () => {
     if (hasLayout()) scrollCursor = scroller.scrollTop || 0;
     renderWindow();
@@ -511,5 +628,12 @@ function focusHit() {
     next: () => step(1),
     renderedMessages: () => pool.querySelectorAll(".msg").length,
     mode: () => mode,
+    setImages(next) {
+      imageMap = next instanceof Map ? next : new Map();
+      live = new Map();
+      renderedStart = -1;
+      renderedEnd = -1;
+      renderWindow({ force: true });
+    },
   };
 }

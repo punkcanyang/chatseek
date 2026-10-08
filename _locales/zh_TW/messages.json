@@ -317,5 +317,25 @@
   },
   "imageLabel": {
     "message": "圖片"
+  },
+  "imageCache": {
+    "message": "圖片快取 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "clearImages": {
+    "message": "清除圖片快取"
+  },
+  "confirmClearImages": {
+    "message": "刪除這台電腦上的圖片快取？對話和訊息會保留。此操作無法復原。"
+  },
+  "imageUncached": {
+    "message": "圖片未快取（原網站限制）"
+  },
+  "imageOversized": {
+    "message": "圖片未快取（檔案過大）"
   }
 }

@@ -81,7 +81,8 @@ v2.close();
 
 const db = await import("../src/db.js");
 const handle = await db.openDb();
-assert(handle.version === 3, `1.3.0 database should upgrade to 3, got ${handle.version}`);
+assert(handle.version === 4, `1.3.0 database should upgrade to 4, got ${handle.version}`);
+assert(handle.objectStoreNames.contains("images"), "upgrade should add the images store");
 const convStore = handle.transaction("conversations").objectStore("conversations");
 assert(convStore.indexNames.contains("updatedAt") && convStore.indexNames.contains("platform"), "old indexes stay");
 assert(
