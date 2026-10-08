@@ -1,0 +1,294 @@
+import "fake-indexeddb/auto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
+import { openDb, upsertConversations, upsertMessages } from "../src/db.js";
+import {
+  activeTabUrl,
+  eventInWindow,
+  locationFromMessage,
+  readableTabUrl,
+} from "../src/current-tab.js";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function until(check, label, timeout = 4000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    if (check()) return;
+    await sleep(20);
+  }
+  throw new Error(`timed out: ${label}`);
+}
+
+// Pure helpers first.
+assert(readableTabUrl({ url: "https://chatgpt.com/c/x" }) === "https://chatgpt.com/c/x", "readable https URL");
+assert(readableTabUrl({}) === "", "a tab without host permission has no URL");
+assert(readableTabUrl({ url: "chrome://newtab/" }) === "", "chrome:// is not a chat");
+const remote = { type: "ACTIVE_LOCATION", url: "https://chatgpt.com/c/x" };
+assert(locationFromMessage(remote, { tab: { active: true, windowId: 2, url: remote.url } }, 1) === null, "another window's tab is ignored");
+assert(locationFromMessage(remote, { tab: { active: false, windowId: 1, url: remote.url } }, 1) === null, "a background tab is ignored");
+assert(locationFromMessage(remote, { tab: { active: true, windowId: 1, url: remote.url } }, 1) === remote.url, "this window's active tab is used");
+assert(locationFromMessage(remote, { tab: { active: true, windowId: 1 } }, 1) === remote.url, "message URL is the fallback");
+assert(locationFromMessage(remote, { tab: { active: true, windowId: 1 } }, null) === null, "unknown panel window does not trust messages");
+assert(eventInWindow(2, 1) === false && eventInWindow(1, 1) === true && eventInWindow(undefined, 1) === true, "eventInWindow");
+{
+  const calls = [];
+  const api = {
+    async query(q) {
+      calls.push(q);
+      if (q.lastFocusedWindow) return [{ windowId: 2, url: "https://chatgpt.com/c/other" }];
+      return [{ windowId: 1 }];
+    },
+  };
+  assert(await activeTabUrl(api, 1) === "", "an unreadable tab in this window clears the frame");
+  assert(calls.length === 1 && calls[0].windowId === 1, `only this window is queried: ${JSON.stringify(calls)}`);
+  assert(await activeTabUrl(api, null) === "" && calls[1].currentWindow === true, "no window id asks for currentWindow");
+  assert(await activeTabUrl({ query: () => Promise.reject(new Error("gone")) }, 1) === "", "query errors clear");
+}
+
+const uuid = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const chatgpt = (n) => ({
+  id: `chatgpt:${uuid(n)}`,
+  platform: "chatgpt",
+  platformId: uuid(n),
+  url: `https://chatgpt.com/c/${uuid(n)}`,
+});
+const now = Date.now();
+const A = { ...chatgpt(1), title: "Alpha trip", updatedAt: now - 60000, updatedAtSource: "page-exact" };
+const B = { ...chatgpt(2), title: "Bravo notes", updatedAt: now - 120000, updatedAtSource: "page-exact" };
+const geminiId = "a1b2c3d4e5f67890";
+const G = {
+  id: `gemini:${geminiId}`,
+  platform: "gemini",
+  platformId: geminiId,
+  url: `https://gemini.google.com/u/1/app/${geminiId}`,
+  title: "Gemini orchid",
+  updatedAt: now - 180000,
+  updatedAtSource: "page-exact",
+};
+const X = {
+  ...chatgpt(3),
+  title: '<img src=x onerror="globalThis.pwned=1"> markup',
+  updatedAt: now - 240000,
+  updatedAtSource: "page-exact",
+};
+
+for (const conv of [A, B, G, X]) {
+  const msgs = [
+    { id: `${conv.id}:u`, role: "user", body: `first prompt of ${conv.title} <script>globalThis.pwned=2</script>` },
+    { id: `${conv.id}:a`, role: "assistant", body: "assistant reply" },
+  ];
+  await upsertMessages(conv, msgs, { pageMessageIds: msgs.map((m) => m.id), captureId: conv.id });
+}
+
+// 85 newer sidebar-only rows push a 1.2.1 row out of the idle top 80.
+await upsertConversations(Array.from({ length: 85 }, (_, i) => ({
+  ...chatgpt(100 + i),
+  title: `Filler ${i}`,
+  updatedAt: now - 3600000 - 1000 * i,
+  updatedAtSource: "page-exact",
+})));
+const legacyId = `chatgpt:${uuid(900)}`;
+{
+  const db = await openDb();
+  const tx = db.transaction(["conversations", "messages", "tokenMap"], "readwrite");
+  tx.objectStore("conversations").put({
+    ...chatgpt(900),
+    title: "Legacyzeta saved in 1.2.1",
+    updatedAt: now - 86400000 * 30,
+    updatedAtSource: "page-exact",
+    messageCount: 1,
+    tailMessageId: `${legacyId}:u`,
+  });
+  tx.objectStore("messages").put({
+    id: `${legacyId}:u`,
+    conversationId: legacyId,
+    role: "user",
+    body: "legacy question about ferns",
+    capturedAt: now,
+  });
+  for (const token of ["legacyzeta", "saved", "in"]) {
+    tx.objectStore("tokenMap").put({ token, conversationId: legacyId, source: "title" });
+  }
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const html = readFileSync(join(root, "sidepanel/index.html"), "utf8")
+  .replace(/<script[^>]*panel\.js[^>]*><\/script>/, "");
+const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel/index.html" });
+const { window } = dom;
+globalThis.window = window;
+globalThis.document = window.document;
+Object.defineProperty(globalThis, "navigator", {
+  value: { language: "zh-CN", languages: ["zh-CN"] },
+  configurable: true,
+});
+globalThis.confirm = () => false;
+
+const scrolled = [];
+window.Element.prototype.scrollIntoView = function () {
+  scrolled.push(this.dataset?.id || "");
+};
+const inView = new Set();
+window.Element.prototype.getBoundingClientRect = function () {
+  const on = inView.has(this.dataset?.id);
+  return { top: on ? 100 : 5000, bottom: on ? 160 : 5060, left: 0, right: 300, width: 300, height: 60 };
+};
+Object.defineProperty(window, "innerHeight", { value: 900, configurable: true });
+
+// Window 1 holds the panel. Window 2 is another browser window.
+const active = {
+  1: { id: 11, windowId: 1, active: true, url: A.url },
+  2: { id: 21, windowId: 2, active: true, url: B.url },
+};
+let lastFocused = 1;
+const listeners = { message: [], activated: [], updated: [] };
+globalThis.chrome = {
+  windows: { async getCurrent() { return { id: 1 }; } },
+  tabs: {
+    async query(q) {
+      if (q.url) return [];
+      const win = q.windowId ?? (q.currentWindow ? 1 : q.lastFocusedWindow ? lastFocused : null);
+      return active[win] ? [{ ...active[win] }] : [];
+    },
+    async update() {},
+    async create() {},
+    onActivated: { addListener(fn) { listeners.activated.push(fn); } },
+    onUpdated: { addListener(fn) { listeners.updated.push(fn); } },
+  },
+  runtime: {
+    onMessage: { addListener(fn) { listeners.message.push(fn); } },
+    sendMessage() {},
+  },
+  action: { setBadgeText() { return Promise.resolve(); } },
+};
+
+const message = (msg, sender = {}) => listeners.message.forEach((fn) => fn(msg, sender));
+const activate = (windowId) => listeners.activated.forEach((fn) => fn({ tabId: active[windowId]?.id, windowId }));
+const updated = (windowId, info) => listeners.updated.forEach((fn) => fn(active[windowId]?.id, info, active[windowId]));
+const currentIds = () => [...document.querySelectorAll(".item.is-current")].map((el) => el.dataset.id);
+const rowFor = (id) => document.querySelector(`.item[data-id="${id}"]`);
+
+await import("../sidepanel/panel.js");
+
+await until(() => currentIds().length === 1, "initial current row");
+assert(currentIds()[0] === A.id, `initial frame on A, got ${currentIds()}`);
+assert(rowFor(A.id).getAttribute("aria-current") === "true", "aria-current on the framed row");
+assert(scrolled.length === 1 && scrolled[0] === A.id, `off-screen current row scrolls once: ${scrolled}`);
+await until(() => document.getElementById("counts").textContent.includes("条消息"), "zh-CN counts say 条消息");
+assert(!document.getElementById("counts").textContent.includes("则"), "zh-CN counts never say 则");
+
+const preview = rowFor(A.id).querySelector(".item-preview");
+assert(preview.dataset.preview === "first-user" && preview.textContent.startsWith("first prompt of Alpha"), "idle preview is the first prompt");
+const draft = rowFor(`chatgpt:${uuid(100)}`).querySelector(".item-preview");
+assert(draft.classList.contains("is-title-only") && draft.textContent === "仅有标题，未收录消息", "sidebar-only rows are marked");
+
+const list = document.getElementById("list");
+assert(!list.querySelector("img, script"), "chat text and titles never become elements");
+assert(rowFor(X.id).querySelector(".item-title").textContent.startsWith("<img"), "markup title shows as text");
+assert(globalThis.pwned === undefined, "no chat text ran");
+
+// Index updates for the same chat must not pull the list back.
+message({ type: "INDEX_UPDATED" });
+await sleep(400);
+assert(currentIds()[0] === A.id && scrolled.length === 1, `refresh re-scrolled: ${scrolled}`);
+updated(1, { status: "complete" });
+await sleep(200);
+assert(scrolled.length === 1, "a reload of the same chat does not scroll again");
+
+// Another window's active tab must not move this panel's frame.
+message({ type: "ACTIVE_LOCATION", url: B.url }, { tab: { ...active[2] } });
+await sleep(50);
+assert(currentIds()[0] === A.id, `another window's ACTIVE_LOCATION moved the frame: ${currentIds()}`);
+lastFocused = 2;
+activate(2);
+updated(2, { url: B.url });
+await sleep(200);
+assert(currentIds()[0] === A.id, `another window's tab events moved the frame: ${currentIds()}`);
+
+// Tab switch in this window to a site without host permission clears it,
+// even while the last focused window shows a chat.
+active[1] = { id: 12, windowId: 1, active: true };
+activate(1);
+await until(() => currentIds().length === 0, "non-chat tab clears the frame");
+lastFocused = 1;
+
+// Tab switch back to B in this window.
+active[1] = { id: 13, windowId: 1, active: true, url: B.url };
+activate(1);
+await until(() => currentIds()[0] === B.id, "tab switch frames B");
+assert(scrolled.at(-1) === B.id, "a new off-screen chat scrolls once");
+
+// In-page navigation in this window; Gemini /u/4/ matches the /u/1/ row.
+const geminiUrl = `https://gemini.google.com/u/4/app/${geminiId}`;
+active[1] = { id: 13, windowId: 1, active: true, url: geminiUrl };
+message({ type: "ACTIVE_LOCATION", url: geminiUrl }, { tab: { ...active[1] } });
+await until(() => currentIds()[0] === G.id, "SPA navigation frames the Gemini row");
+assert(currentIds().length === 1, "exactly one frame");
+
+// A visible row is not scrolled.
+inView.add(A.id);
+const before = scrolled.length;
+active[1] = { id: 13, windowId: 1, active: true, url: A.url };
+updated(1, { url: A.url });
+await until(() => currentIds()[0] === A.id, "back to A");
+assert(scrolled.length === before, "an on-screen row does not scroll");
+
+// Share pages and Gemini non-thread pages do not light anything.
+for (const url of [
+  `https://gemini.google.com/share/${geminiId}`,
+  "https://gemini.google.com/u/1/app/download",
+  `https://chatgpt.com/share/${uuid(1)}`,
+  "https://chatgpt.com/",
+]) {
+  active[1] = { id: 13, windowId: 1, active: true, url };
+  updated(1, { url });
+  await until(() => currentIds().length === 0, `no frame on ${url}`);
+}
+
+// New chat that is not indexed yet: no frame until the row arrives.
+const fresh = { ...chatgpt(4), title: "Brand new chat", updatedAtSource: "page-exact", updatedAt: Date.now() };
+active[1] = { id: 13, windowId: 1, active: true, url: fresh.url };
+message({ type: "ACTIVE_LOCATION", url: fresh.url }, { tab: { ...active[1] } });
+await sleep(100);
+assert(currentIds().length === 0, "an unindexed chat frames nothing");
+const freshMsgs = [{ id: `${fresh.id}:u`, role: "user", body: "brand new question" }];
+await upsertMessages(fresh, freshMsgs, { pageMessageIds: [freshMsgs[0].id], captureId: "fresh" });
+message({ type: "INDEX_UPDATED" });
+await until(() => currentIds()[0] === fresh.id, "new chat framed after it is indexed");
+assert(scrolled.at(-1) === fresh.id, "the new chat row is scrolled into view once");
+assert(rowFor(fresh.id).querySelector(".item-preview").textContent === "brand new question", "new chat preview");
+
+// Search: a 1.2.1 row outside the idle top 80 shows its message, not "title only".
+const q = document.getElementById("q");
+const scrolledBeforeSearch = scrolled.length;
+q.value = "legacyzeta";
+q.dispatchEvent(new window.Event("input"));
+await until(() => rowFor(legacyId), "search finds the legacy row");
+const legacyPreview = rowFor(legacyId).querySelector(".item-preview");
+assert(legacyPreview && !legacyPreview.classList.contains("is-title-only"), "legacy row with messages is not title-only");
+assert(legacyPreview.textContent.includes("ferns"), `legacy preview backfilled in search: ${legacyPreview.textContent}`);
+assert(rowFor(legacyId).querySelector(".item-title mark")?.textContent.toLowerCase() === "legacyzeta", "title hit highlighted");
+
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => rowFor(A.id) && !rowFor(B.id), "search for Alpha");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => rowFor(B.id), "cleared search");
+assert(currentIds()[0] === fresh.id, "frame survives search and clear");
+assert(scrolled.length === scrolledBeforeSearch, "searching for the same chat does not scroll");
+
+console.log("panel-test ok", { scrolls: scrolled.length });
+process.exit(0);

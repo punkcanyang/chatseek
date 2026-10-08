@@ -8,7 +8,7 @@
 - 权限只多了 `https://gemini.google.com/*`。其他 google.com 子域名、Perplexity、DeepSeek 仍然不收。
 - 侧栏可以筛 Gemini。多账号网址保留 `/u/N/`。从 Gem 打开的对话保留 `/gem/<gemId>/<id>`。`/share/`、没有 id 的 `/app`、Gem 编辑页不收。
 - 消息走 `Chatseek.queryLayers`：`user-query` / `model-response`，然后 `data-message-author-role`，再然后正文节点。思考过程、屏幕阅读器标签、按钮和输入框不收。
-- 对话页抓到 0 则消息时，走 1.1.0 的健康检查：大约 8 秒后仍是 0，侧栏底部和工具栏 `!` 才提示。临时页和没有 id 的页面不当成改版失败。
+- 对话页抓到 0 条消息时，走 1.1.0 的健康检查：大约 8 秒后仍是 0，侧栏底部和工具栏 `!` 才提示。临时页和没有 id 的页面不当成改版失败。
 
 ## 日期
 

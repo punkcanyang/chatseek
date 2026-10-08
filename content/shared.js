@@ -61,8 +61,15 @@ const Chatseek = {
     let retryDelay = 0;
     let mo = null;
     let poll = 0;
+    const announce = () => {
+      // URL only. The side panel matches it to a stored id; no message text.
+      Chatseek.send({ type: "ACTIVE_LOCATION", url: location.href });
+    };
     const onVisible = () => {
-      if (!document.hidden) run();
+      if (!document.hidden) {
+        announce();
+        run();
+      }
     };
     // After an extension reload this script is orphaned: every send fails
     // and nothing would ever stop the DOM scans.
@@ -119,10 +126,12 @@ const Chatseek = {
       if (!alive()) return;
       if (location.href !== href) {
         href = location.href;
+        announce();
         run();
       }
     }, 1200);
     document.addEventListener("visibilitychange", onVisible);
+    announce();
     run();
   },
 

@@ -85,7 +85,11 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.2.1") fail(`version should be 1.2.1, got ${manifest.version}`);
+if (manifest.version !== "1.3.0") fail(`version should be 1.3.0, got ${manifest.version}`);
+const perms = manifest.permissions || [];
+if (perms.length !== 1 || perms[0] !== "sidePanel") {
+  fail(`permissions should stay ["sidePanel"], got ${JSON.stringify(perms)}`);
+}
 
 const referenced = new Set([
   manifest.background?.service_worker,
@@ -94,6 +98,10 @@ const referenced = new Set([
   "sidepanel/panel.css",
   "src/db.js",
   "src/tokenize.js",
+  "src/activity-time.js",
+  "src/preview.js",
+  "src/conversation-url.js",
+  "src/current-tab.js",
   "LICENSE",
   ...Object.values(manifest.icons || {}),
   ...Object.values(manifest.action?.default_icon || {}),
@@ -138,6 +146,10 @@ for (const rel of [
   "content/shared.js",
   "src/activity-time.js",
   "src/db.js",
+  "src/tokenize.js",
+  "src/preview.js",
+  "src/conversation-url.js",
+  "src/current-tab.js",
   "sidepanel/panel.js",
 ]) {
   const src = read(rel);
@@ -517,6 +529,12 @@ const panelHtml = read("sidepanel/index.html");
 const panelSrc = read("sidepanel/panel.js");
 if (!/data-platform="gemini"/.test(panelHtml)) fail("side panel needs a Gemini filter");
 if (!/gemini:\s*"Gemini"/.test(panelSrc)) fail("side panel should name Gemini");
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(panelSrc)) {
+  fail("side panel must not assign HTML from chat text");
+}
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("src/preview.js"))) {
+  fail("preview renderer must not use innerHTML");
+}
 if (!/\.plat\.gemini/.test(read("sidepanel/panel.css"))) fail("missing .plat.gemini color");
 const backgroundSrc = read("background.js");
 if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc)) {
