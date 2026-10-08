@@ -944,6 +944,7 @@ const Chatseek = {
 
     const captureId = `${conversation.id}:${msgs.length}:${msgs[msgs.length - 1]?.id || ""}:${Date.now()}`;
     const pageMessageIds = msgs.map((m) => m.id);
+    let observed = false;
     for (const chunk of Chatseek.chunkMessages(msgs)) {
       const res = await Chatseek.send({
         type: "CAPTURE_MESSAGES",
@@ -954,10 +955,17 @@ const Chatseek = {
         captureId,
       });
       if (!res || !res.ok) return false;
+      if (res.observed) observed = true;
     }
     state.lastMsgFp = msgFp;
     state.lastMsgConvId = conversation.id;
     state.lastMsgKeys = new Set(keys);
+    // The sidebar was written before this anchor existed. Rewrite it now so
+    // its neighbours are estimated from the new time, even if the order did not move.
+    if (observed && inSidebar) {
+      if (await Chatseek.sendConversations(platform, list)) state.lastListFp = listFp;
+      else ok = false;
+    }
     return ok;
   },
 
