@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { openDb, readConversation, removeConversation, upsertMessages } from "../src/db.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
-import { mergeMessageOrder } from "../src/message-order.js";
-import { parseReaderSearch, readerPageUrl, safeOriginalUrl } from "../src/reader-url.js";
-import { collectHits, mountReader, splitPlainBlocks } from "../src/reader-view.js";
+import { mergeMessageOrder, orderMessages } from "../src/message-order.js";
+import { ORIGINAL_HOSTS, parseReaderSearch, readerPageUrl, safeOriginalUrl } from "../src/reader-url.js";
+import { collectHits, MAX_NODES, mountReader, splitPlainBlocks } from "../src/reader-view.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -51,6 +51,31 @@ assert(mergeMessageOrder(["m3", "m4", "m5"], ["m1", "m2", "m3"]).join() === "m1,
 assert(mergeMessageOrder(["m1", "m2", "m3"], ["m2", "m3", "m4"]).join() === "m1,m2,m3,m4", "newer tail appends");
 assert(mergeMessageOrder(["m1", "m2"], ["m9"]).join() === "m1,m2,m9", "disjoint page ids append");
 
+const sameMs = 1710000000000;
+const legacyBatch = ["f3c1", "07aa", "c9d2", "1b0e"].map((id, captureIndex) => ({
+  id,
+  capturedAt: sameMs,
+  captureIndex,
+}));
+assert(
+  orderMessages(legacyBatch.slice().reverse(), undefined).map((msg) => msg.id).join() === "f3c1,07aa,c9d2,1b0e",
+  "one capture in the same millisecond keeps page position, not random id order",
+);
+const reopened = [
+  { id: "old-1", capturedAt: sameMs, captureIndex: 0 },
+  { id: "old-2", capturedAt: sameMs, captureIndex: 1 },
+  { id: "zz-new", capturedAt: sameMs + 5000, captureIndex: 0 },
+  { id: "aa-new", capturedAt: sameMs + 5000 },
+];
+assert(
+  orderMessages(reopened, ["zz-new", "aa-new"]).map((msg) => msg.id).join() === "old-1,old-2,zz-new,aa-new",
+  "a pre-1.5.0 thread reopened at its tail keeps older turns in front",
+);
+assert(
+  orderMessages([{ id: "b", capturedAt: 2 }, { id: "a", capturedAt: 1 }], ["b", "a"]).map((msg) => msg.id).join() === "b,a",
+  "stored page order wins over capture time",
+);
+
 const round = readerPageUrl("chatgpt:abc", "红叶", {
   getURL: (path) => `chrome-extension://chatseek-test/${path}`,
 });
@@ -59,7 +84,34 @@ assert(parsed.id === "chatgpt:abc" && parsed.query === "红叶", `reader url rou
 const gemini = "https://gemini.google.com/u/2/app/a1b2c3d4e5f67890";
 assert(safeOriginalUrl(gemini) === gemini, "Gemini /u/N/ is preserved");
 assert(safeOriginalUrl("javascript:alert(1)") === "", "javascript URLs are not opened");
-assert(safeOriginalUrl("https://evil.example/x.png").startsWith("https://evil.example/"), "https URLs stay intact");
+for (const bad of [
+  "https://evil.example/x.png",
+  "http://chatgpt.com/c/abc",
+  "data:text/html,<script>alert(1)</script>",
+  "JaVaScRiPt:alert(1)",
+  "https://chatgpt.com.evil.example/c/abc",
+  "https://user:pw@claude.ai/chat/abc",
+  "https://claude.ai:8443/chat/abc",
+  "chrome://settings",
+  "",
+]) {
+  assert(safeOriginalUrl(bad) === "", `not one of the four sites: ${bad}`);
+}
+for (const good of [
+  "https://chatgpt.com/c/abc",
+  "https://chat.openai.com/c/abc",
+  "https://claude.ai/chat/abc",
+  "https://grok.com/c/abc",
+  "https://gemini.google.com/app/abc",
+]) {
+  assert(safeOriginalUrl(good) === good, `known site kept: ${good}`);
+}
+const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+const manifestHosts = manifest.host_permissions.map((pattern) => new URL(pattern.replace("/*", "/")).hostname);
+assert(
+  manifestHosts.slice().sort().join() === [...ORIGINAL_HOSTS].sort().join(),
+  `reader host list matches host_permissions ${manifestHosts}`,
+);
 
 const plain = mount({
   conversation: {
@@ -96,6 +148,27 @@ assert(plain.host.querySelector(".msg-user .msg-role")?.textContent === "你", "
 assert(plain.host.querySelector(".msg-assistant .msg-role")?.textContent === "助手", "assistant role label");
 assert(plain.host.querySelector("#readerPlatform")?.textContent === "ChatGPT", "platform label");
 assert(plain.host.querySelector("#readerDate")?.textContent, "date label");
+assert(plain.host.querySelector("#hitCount")?.hidden === true, "no search: no hit counter");
+assert(plain.host.querySelector("#prevHit")?.hidden && plain.host.querySelector("#nextHit")?.hidden, "no search: no hit buttons");
+assert(!plain.host.querySelector("#openOriginal")?.hidden, "no search: original site stays");
+
+const evilHost = mount({
+  conversation: {
+    id: "chatgpt:evil",
+    platform: "chatgpt",
+    title: "evil",
+    url: "https://evil.example/c/1",
+    updatedAt: Date.now(),
+    updatedAtSource: "page-exact",
+  },
+  messages: [{ id: "e1", role: "user", body: "hello" }],
+  query: "nothing-here",
+});
+assert(evilHost.host.querySelector("#openOriginal")?.hidden === true, "unknown host has no open button");
+evilHost.host.querySelector("#openOriginal").click();
+assert(evilHost.opened.length === 0, "unknown host is never opened");
+assert(evilHost.host.querySelector("#hitCount")?.textContent === CATALOG["zh-CN"].noHits, "search without hits says so");
+assert(!evilHost.host.querySelector("#hitCount")?.hidden, "search without hits keeps the counter");
 
 const hits = mount({
   conversation: {
@@ -258,13 +331,46 @@ const long = mount({
 const elapsed = performance.now() - started;
 const rendered = long.view.renderedMessages();
 assert(elapsed < 1500, `3000 messages took ${elapsed.toFixed(0)}ms`);
-assert(rendered > 0 && rendered <= 32, `bounded DOM nodes, got ${rendered}`);
+assert(rendered > 0 && rendered <= MAX_NODES, `bounded DOM nodes, got ${rendered}`);
 assert(rendered < 3000, "does not mount every message");
 assert(long.host.querySelector('.msg[data-index="2500"]'), "first hit message is mounted");
 assert(!long.host.querySelector('.msg[data-index="0"]'), "messages far above the hit stay unmounted");
 assert(long.view.hitCount() === 1 && long.view.hitIndex() === 0, "single far hit");
 assert(long.host.querySelector("#prevHit")?.disabled && long.host.querySelector("#nextHit")?.disabled, "ends disable both controls");
 assert(long.host.querySelector("mark")?.textContent === "needle", "far hit is marked");
+
+const spread = [40, 1500, 2960];
+const jumpy = mount({
+  conversation: {
+    id: "chatgpt:jumpy",
+    platform: "chatgpt",
+    title: "跳转",
+    url: "https://chatgpt.com/c/jumpy",
+    updatedAt: Date.now(),
+    updatedAtSource: "page-exact",
+  },
+  messages: Array.from({ length: 3000 }, (_, i) => ({
+    id: `j-${i}`,
+    role: i % 2 ? "assistant" : "user",
+    capturedAt: 1710000000000,
+    captureIndex: i,
+    body: spread.includes(i) ? `第 ${i} 条提到了红叶` : `第 ${i} 条只是普通内容`,
+  })),
+  query: "红叶",
+});
+assert(jumpy.view.hitCount() === spread.length, `three far CJK hits, got ${jumpy.view.hitCount()}`);
+for (let step = 0; step < spread.length; step++) {
+  if (step) jumpy.view.next();
+  const want = spread[step];
+  const current = jumpy.host.querySelector("mark.is-current");
+  assert(current?.textContent === "红叶", `hit ${step} is marked`);
+  assert(current.closest(".msg")?.dataset.index === String(want), `hit ${step} is in message ${want}, got ${current.closest(".msg")?.dataset.index}`);
+  assert(jumpy.view.renderedMessages() <= MAX_NODES, "jumps keep the DOM bounded");
+  assert(jumpy.host.querySelectorAll("mark.is-current").length === 1, "one current hit");
+}
+jumpy.view.prev();
+jumpy.view.prev();
+assert(jumpy.host.querySelector("mark.is-current")?.closest(".msg")?.dataset.index === "40", "back to the first chunk");
 
 const id = "chatgpt:ordered";
 const conv = {
@@ -291,6 +397,15 @@ const read = await readConversation(id);
 const after = JSON.stringify(await requestDone(db.transaction("conversations").objectStore("conversations").get(id)));
 assert(before === after, "reading does not modify the conversation");
 assert(read.messages.map((msg) => msg.body).join() === "first,second,third,fourth", `order ${read.messages.map((msg) => msg.body)}`);
+const m2Before = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
+assert(m2Before.captureIndex === 1, `page position stored ${m2Before.captureIndex}`);
+await new Promise((resolve) => setTimeout(resolve, 5));
+await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second, streamed longer" }], { captureId: "stream" });
+const m2After = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
+assert(m2After.body === "second, streamed longer", "streamed body is saved");
+assert(m2After.capturedAt === m2Before.capturedAt && m2After.captureIndex === 1, "a body rewrite keeps the turn's place");
+const reread = await readConversation(id);
+assert(reread.messages.map((msg) => msg.id.split(":").pop()).join() === "m1,m2,m3,m4", "order holds after a rewrite");
 
 await removeConversation(id);
 const tomb = await requestDone(db.transaction("meta").objectStore("meta").get(`removed:${id}`));

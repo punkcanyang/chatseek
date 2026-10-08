@@ -47,17 +47,30 @@ export function mergeMessageOrder(stored, pageIds) {
   return out;
 }
 
-/** Stored page order, then capture time, then id. Does not write. */
+function byCapture(a, b) {
+  const ca = typeof a.capturedAt === "number" ? a.capturedAt : 0;
+  const cb = typeof b.capturedAt === "number" ? b.capturedAt : 0;
+  if (ca !== cb) return ca - cb;
+  const ia = Number.isInteger(a.captureIndex) ? a.captureIndex : Number.POSITIVE_INFINITY;
+  const ib = Number.isInteger(b.captureIndex) ? b.captureIndex : Number.POSITIVE_INFINITY;
+  if (ia !== ib) return ia < ib ? -1 : 1;
+  return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+}
+
+/**
+ * Capture time (then page position, then id) for every message, then the
+ * ids in messageOrder are put in their stored order inside the slots they
+ * already hold. A pre-1.5.0 thread that was reopened at its newest turns
+ * keeps its older turns in front instead of pushing them to the end.
+ * Does not write.
+ */
 export function orderMessages(messages, messageOrder) {
-  const list = (messages || []).filter((msg) => msg && msg.id);
+  const base = (messages || []).filter((msg) => msg && msg.id).sort(byCapture);
   const rank = new Map((messageOrder || []).map((id, index) => [id, index]));
-  return list.slice().sort((a, b) => {
-    const ra = rank.has(a.id) ? rank.get(a.id) : Number.POSITIVE_INFINITY;
-    const rb = rank.has(b.id) ? rank.get(b.id) : Number.POSITIVE_INFINITY;
-    if (ra !== rb) return ra - rb;
-    const ca = typeof a.capturedAt === "number" ? a.capturedAt : 0;
-    const cb = typeof b.capturedAt === "number" ? b.capturedAt : 0;
-    if (ca !== cb) return ca - cb;
-    return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
-  });
+  if (!rank.size) return base;
+  const ranked = base
+    .filter((msg) => rank.has(msg.id))
+    .sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  let next = 0;
+  return base.map((msg) => (rank.has(msg.id) ? ranked[next++] : msg));
 }

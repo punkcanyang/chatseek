@@ -358,7 +358,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   let tailBodyChanged = false;
   let observedNow = false;
   const freshIds = new Set();
-  for (const msg of messages) {
+  for (const [captureIndex, msg] of messages.entries()) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
     if (!existing) freshIds.add(msg.id);
@@ -378,7 +378,10 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       conversationId: conversation.id,
       role: msg.role === "assistant" ? "assistant" : "user",
       body: msg.body,
-      capturedAt: Date.now(),
+      // First capture time and page position order turns that share a
+      // millisecond. A streamed body rewrite keeps both so the turn stays put.
+      capturedAt: typeof existing?.capturedAt === "number" ? existing.capturedAt : Date.now(),
+      captureIndex: Number.isInteger(existing?.captureIndex) ? existing.captureIndex : captureIndex,
     };
     msgStore.put(record);
     writeTokens(

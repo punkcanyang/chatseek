@@ -93,6 +93,17 @@ if (!/img-src/.test(csp) || /img-src[^;]*(https:|\*)/.test(csp)) {
   fail("extension CSP must block external images");
 }
 if (/unsafe-inline|unsafe-eval/.test(csp)) fail("extension CSP must not allow inline or eval scripts");
+if (manifest.web_accessible_resources) {
+  fail("no web_accessible_resources: websites must not frame or open extension pages");
+}
+const { ORIGINAL_HOSTS, safeOriginalUrl } = await import("../src/reader-url.js");
+const permittedHosts = (manifest.host_permissions || []).map(hostOf).filter(Boolean).sort();
+if ([...ORIGINAL_HOSTS].sort().join() !== permittedHosts.join()) {
+  fail(`reader ORIGINAL_HOSTS should equal host_permissions hosts ${permittedHosts}`);
+}
+for (const bad of ["javascript:alert(1)", "http://chatgpt.com/c/x", "https://evil.example/c/x", "data:text/html,x"]) {
+  if (safeOriginalUrl(bad)) fail(`reader would open ${bad}`);
+}
 if (manifest.default_locale !== "en") fail("default_locale should be en");
 if (manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") {
   fail("manifest name and description should use chrome.i18n messages");

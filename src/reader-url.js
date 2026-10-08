@@ -27,7 +27,22 @@ export function parseReaderSearch(search) {
   };
 }
 
-/** https only. javascript: and other schemes are not opened. Path is kept. */
+// Same hosts as host_permissions in manifest.json and HOSTS in background.js.
+export const ORIGINAL_HOSTS = new Set([
+  "chatgpt.com",
+  "chat.openai.com",
+  "claude.ai",
+  "grok.com",
+  "www.grok.com",
+  "grok.x.com",
+  "x.ai",
+  "gemini.google.com",
+]);
+
+/**
+ * https on one of the four sites only. javascript:, data:, other hosts,
+ * credentials, and explicit ports are not opened. Path and query are kept.
+ */
 export function safeOriginalUrl(raw) {
   let url;
   try {
@@ -36,5 +51,7 @@ export function safeOriginalUrl(raw) {
     return "";
   }
   if (url.protocol !== "https:") return "";
+  if (url.username || url.password || url.port) return "";
+  if (!ORIGINAL_HOSTS.has(url.hostname.toLowerCase())) return "";
   return url.href;
 }

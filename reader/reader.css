@@ -154,18 +154,15 @@ body {
 
 .thread {
   flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  position: relative;
+  /* The view keeps its own anchor while spacer heights change. */
+  overflow-anchor: none;
   padding: 8px 0 32px;
 }
 
 .spacer {
-  position: relative;
   width: 100%;
-}
-
-.pool {
-  position: relative;
 }
 
 .msg {
