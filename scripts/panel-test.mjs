@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { openDb, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
+import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import {
   activeTabUrl,
   eventInWindow,
@@ -216,6 +217,24 @@ assert(
   "every row has a read button",
 );
 assert([...document.querySelectorAll(".read")].every((btn) => btn.textContent === "阅读"), "zh-CN read label");
+{
+  const css = readFileSync(join(root, "sidepanel/panel.css"), "utf8");
+  assert(css.includes(".remove:focus-visible"), "remove button has a focus ring");
+  assert(css.includes(".row:focus-within > .remove"), "keyboard focus inside the row reveals the X");
+  assert(css.includes(".row:hover > .remove"), "hover reveals the X");
+  assert(css.includes("#3DDC97"), "current-conversation frame stays green");
+  const sample = rowFor(A.id).parentElement.querySelector(":scope > .remove");
+  assert(sample && !rowFor(A.id).contains(sample), "the X is a sibling of the card, not nested in it");
+  assert(sample.type === "button" && sample.tabIndex >= 0, "the X stays in tab order");
+  assert(sample.textContent.trim() === "" && sample.querySelector("svg[aria-hidden='true']"), "the X is an icon");
+  assert(sample.getAttribute("aria-label") === "从索引移除" && sample.title === "从索引移除", "zh-CN name and tooltip");
+  assert(
+    [...document.querySelectorAll(".remove")].every(
+      (btn) => btn.getAttribute("aria-label") === CATALOG["zh-CN"].remove && btn.title === CATALOG["zh-CN"].remove,
+    ),
+    "every zh-CN row reuses the remove message",
+  );
+}
 openedTabs.length = 0;
 rowFor(A.id).parentElement.querySelector(".read").click();
 await until(() => openedTabs.length === 1, "read opens a tab");
@@ -388,8 +407,25 @@ document.querySelector("#filterAll").click();
 await until(() => rowFor(archivedId) && rowFor(A.id), "all tab includes archived and active");
 
 const removeBtn = rowFor(archivedId).parentElement.querySelector(".remove");
-removeBtn.click();
 const dialog = document.getElementById("removeDialog");
+const pressRemove = (key) => {
+  const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  removeBtn.dispatchEvent(event);
+  assert(event.defaultPrevented, `${JSON.stringify(key)} is handled on the button`);
+};
+pressRemove("Enter");
+await until(() => !dialog.hidden, "Enter opens confirm");
+assert(rowFor(archivedId), "Enter does not delete before confirm");
+document.getElementById("removeCancel").click();
+await until(() => dialog.hidden, "cancel after Enter");
+assert(rowFor(archivedId), "cancel after Enter keeps the row");
+pressRemove(" ");
+await until(() => !dialog.hidden, "Space opens confirm");
+assert(rowFor(archivedId), "Space does not delete before confirm");
+document.getElementById("removeCancel").click();
+await until(() => dialog.hidden, "cancel after Space");
+assert(rowFor(archivedId), "cancel after Space keeps the row");
+removeBtn.click();
 await until(() => !dialog.hidden, "remove dialog opens");
 assert(document.getElementById("removeBody").textContent.includes("Archived fern notes"), "confirm names the chat");
 document.getElementById("removeCancel").click();
@@ -433,6 +469,30 @@ document.getElementById("lang").value = "auto";
 document.getElementById("lang").dispatchEvent(new window.Event("change"));
 await until(() => document.getElementById("filterActive").textContent === "活跃中", "follow browser returns to zh-CN");
 assert(!store.has("chatseek.uiLocale"), "follow browser clears the stored choice");
+assert(CATALOG["zh-TW"].remove === "從索引移除", "zh-TW remove copy");
+for (const code of LOCALE_ORDER) {
+  document.getElementById("lang").value = code;
+  document.getElementById("lang").dispatchEvent(new window.Event("change"));
+  const expected = CATALOG[code].remove;
+  await until(() => {
+    const btn = document.querySelector(".remove");
+    return btn && btn.getAttribute("aria-label") === expected && btn.title === expected;
+  }, `${code} remove label`);
+  const buttons = [...document.querySelectorAll(".remove")];
+  assert(buttons.length > 0, `${code} still renders a remove control`);
+  assert(
+    buttons.every(
+      (btn) => btn.getAttribute("aria-label") === expected
+        && btn.title === expected
+        && btn.textContent.trim() === ""
+        && btn.querySelector("svg"),
+    ),
+    `${code} aria-label and title reuse the remove message`,
+  );
+}
+document.getElementById("lang").value = "auto";
+document.getElementById("lang").dispatchEvent(new window.Event("change"));
+await until(() => document.getElementById("filterActive").textContent === "活跃中", "follow browser restored");
 assert(
   document.querySelector(".chip.is-on")?.getAttribute("aria-selected") === "true" &&
     document.querySelectorAll('.chip[aria-selected="true"]').length === 1,

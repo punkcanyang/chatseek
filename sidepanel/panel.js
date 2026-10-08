@@ -262,16 +262,42 @@ function render(items, { emptyKind, error }) {
     removeBtn.type = "button";
     removeBtn.className = "remove";
     removeBtn.dataset.id = conv.id || "";
-    removeBtn.textContent = t.remove;
+    removeBtn.setAttribute("aria-label", t.remove);
+    removeBtn.title = t.remove;
+    removeBtn.append(removeIcon());
+    removeBtn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+      event.preventDefault();
+      if (event.repeat) return;
+      askRemove(conv);
+    });
     removeBtn.addEventListener("click", () => askRemove(conv));
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    actions.append(readBtn, removeBtn);
-    row.append(btn, actions);
+    actions.append(readBtn);
+    row.append(btn, removeBtn, actions);
     li.append(row);
     listEl.append(li);
   }
+}
+
+function removeIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 12 12");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M3 3l6 6M9 3L3 9");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  svg.append(path);
+  return svg;
 }
 
 function closeRemove(answer) {

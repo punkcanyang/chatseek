@@ -25,7 +25,7 @@
 - **本机阅读页**：每一行可以点「阅读」，也可以点预览。浏览器会新开一个分页，只读这台电脑 IndexedDB 里的标题、平台、日期和已收录消息，不连接四家网站。从搜索进来时，第一处命中是黄底，页顶可以上一处、下一处。页顶的「去原网站打开」才回到原来的网址（Gemini 的 `/u/数字/` 会保留）。聊天文字按纯文本显示，不会当成网页去执行。
 - **当前这段对话有绿框**：侧栏里正在打开的那一行用绿色边框标出，换标签或在页面里点进另一段会跟着走。
 - **封存仍可搜**：页面上明确标成已封存的对话留在索引里，带灰色「已封存」标签。目前只有 ChatGPT 有这种明确标记（封存列表，或打开后的封存横幅／取消封存按钮）。从侧栏消失不会改状态，也不会自动删。之后又在未封存的页面上看到，会恢复成活跃。
-- **从索引移除**：每一行都可以在确认后，从这台浏览器的索引里删掉这一段（对话、消息、倒排索引一起删）。网站上的聊天不动。网站侧栏里还列着它也不会被加回来；以后在网站上再打开这一段，才会重新收进来。
+- **从索引移除**：每一行右上角有一个圆形叉。平常比较淡，鼠标停在这一行或用键盘聚焦时变清楚。悬停提示仍是「从索引移除」（其他语言用各自的译文）。确认后，才从这台浏览器的索引里删掉这一段（对话、消息、倒排索引一起删）。网站上的聊天不动。网站侧栏里还列着它也不会被加回来；以后在网站上再打开这一段，才会重新收进来。
 - **按最后活动时间排**：日期尽量取对话的最后活动时间，不拿收录时间冒充，规则见下方「侧栏日期怎么读」。
 - **收不到会提示**：对话页连续约 8 秒一条消息都没读到时，侧栏底部会提示「页面可能改版」，工具栏图标出现「!」。
 - **界面语言**默认跟随浏览器，侧栏右上角也可以手动切换，选择会记在这台浏览器里。内置繁体中文、简体中文、English、日本語、한국어、español、français、Deutsch、português（巴西）。日期用该语言的 `Intl` 格式；「约」「早于」「日期未知」也会跟着翻。扩展在 `chrome://extensions` 上的名称和说明跟随浏览器语言。
@@ -57,7 +57,7 @@
 
 1. 打开 chatgpt.com、claude.ai、grok.com 或 gemini.google.com，浏览对话列表，点进你想以后搜得到的对话。
 2. 点工具栏的 Chatseek 图标打开侧栏，输入关键词。
-3. 用上方页签看活跃、某一家、已封存或全部。搜索框只搜当前页签。点标题回到原对话。点「阅读」或预览，在新分页里看本机收录的内容。每一行的「从索引移除」只删本机这一条，要先确认。
+3. 用上方页签看活跃、某一家、已封存或全部。搜索框只搜当前页签。点标题回到原对话。点「阅读」或预览，在新分页里看本机收录的内容。每一行右上角的圆形叉只删本机这一条，要先确认。
 
 很长的对话只会收已经画在页面上的消息；想多收，就在那段对话里往上滚。
 
@@ -110,7 +110,7 @@ npm run test:fixture  # ChatGPT / Gemini 离线样本
 npm run test:gemini   # Gemini 收录到 IndexedDB 全流程
 ```
 
-当前版本 1.5.0。版本记录在 [`notes/`](notes/)：[`CHANGELOG-1.1.0.md`](notes/CHANGELOG-1.1.0.md)（ChatGPT 收录与最后活动时间）、[`CHANGELOG-1.2.0.md`](notes/CHANGELOG-1.2.0.md)（Gemini）、[`CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)（日期显示）、[`CHANGELOG-1.3.0.md`](notes/CHANGELOG-1.3.0.md)（预览、当前对话绿框、简体「条消息」）、[`CHANGELOG-1.4.0.md`](notes/CHANGELOG-1.4.0.md)（封存、页签、九种语言）、[`CHANGELOG-1.5.0.md`](notes/CHANGELOG-1.5.0.md)（本机阅读页）。侧栏预览的示例截图：[`docs/panel-1.3.0-idle.png`](docs/panel-1.3.0-idle.png)、[`docs/panel-1.3.0-search.png`](docs/panel-1.3.0-search.png)。1.4.0 页签、封存标签、移除确认和语言切换：[`docs/panel-1.4.0-active.png`](docs/panel-1.4.0-active.png)、[`docs/panel-1.4.0-archived.png`](docs/panel-1.4.0-archived.png)、[`docs/panel-1.4.0-remove.png`](docs/panel-1.4.0-remove.png)、[`docs/panel-1.4.0-en.png`](docs/panel-1.4.0-en.png)、[`docs/panel-1.4.0-ja.png`](docs/panel-1.4.0-ja.png)。1.5.0 阅读页（示例数据）：[`docs/reader-1.5.0-hit.png`](docs/reader-1.5.0-hit.png)、[`docs/reader-1.5.0-title-only.png`](docs/reader-1.5.0-title-only.png)、[`docs/reader-1.5.0-archived.png`](docs/reader-1.5.0-archived.png)、[`docs/panel-1.5.0-read.png`](docs/panel-1.5.0-read.png)。画面里是示例数据；「封存的读书笔记」那一行是写进示例索引的，不是 Claude 被检测成已封存。
+当前版本 1.5.0。版本记录在 [`notes/`](notes/)：[`CHANGELOG-1.1.0.md`](notes/CHANGELOG-1.1.0.md)（ChatGPT 收录与最后活动时间）、[`CHANGELOG-1.2.0.md`](notes/CHANGELOG-1.2.0.md)（Gemini）、[`CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)（日期显示）、[`CHANGELOG-1.3.0.md`](notes/CHANGELOG-1.3.0.md)（预览、当前对话绿框、简体「条消息」）、[`CHANGELOG-1.4.0.md`](notes/CHANGELOG-1.4.0.md)（封存、页签、九种语言）、[`CHANGELOG-1.5.0.md`](notes/CHANGELOG-1.5.0.md)（本机阅读页）。侧栏预览的示例截图：[`docs/panel-1.3.0-idle.png`](docs/panel-1.3.0-idle.png)、[`docs/panel-1.3.0-search.png`](docs/panel-1.3.0-search.png)。1.4.0 页签、封存标签、移除确认和语言切换：[`docs/panel-1.4.0-active.png`](docs/panel-1.4.0-active.png)、[`docs/panel-1.4.0-archived.png`](docs/panel-1.4.0-archived.png)、[`docs/panel-1.4.0-remove.png`](docs/panel-1.4.0-remove.png)、[`docs/panel-1.4.0-en.png`](docs/panel-1.4.0-en.png)、[`docs/panel-1.4.0-ja.png`](docs/panel-1.4.0-ja.png)。1.5.0 阅读页（示例数据）：[`docs/reader-1.5.0-hit.png`](docs/reader-1.5.0-hit.png)、[`docs/reader-1.5.0-title-only.png`](docs/reader-1.5.0-title-only.png)、[`docs/reader-1.5.0-archived.png`](docs/reader-1.5.0-archived.png)、[`docs/panel-1.5.0-read.png`](docs/panel-1.5.0-read.png)、[`docs/panel-1.5.0-remove-x.png`](docs/panel-1.5.0-remove-x.png)。画面里是示例数据；「封存的读书笔记」那一行是写进示例索引的，不是 Claude 被检测成已封存。
 
 ## License
 

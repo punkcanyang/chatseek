@@ -17,6 +17,8 @@ const hour = 3600000;
 const kyoto = "11111111-1111-4111-8111-111111111111";
 const draft = "99999999-9999-4999-8999-999999999999";
 const camera = "44444444-4444-4444-8444-444444444444";
+const walk = "55555555-5555-4555-8555-555555555555";
+const kyotoUrl = `https://chatgpt.com/c/${kyoto}`;
 
 function conv(platform, platformId, title, url, updatedAt, extra = {}) {
   return {
@@ -39,7 +41,20 @@ function rows(now) {
   const orchid = "a1b2c3d4e5f67890";
   return [
     {
-      conv: conv("chatgpt", kyoto, "京都红叶行程", `https://chatgpt.com/c/${kyoto}`, now - 2 * hour),
+      conv: conv(
+        "chatgpt",
+        walk,
+        "从京都车站走到哲学之道再折回四条河原町的红叶散步路线，标题故意写长以便确认圆形按钮不会盖住文字也不会压到绿色边框",
+        `https://chatgpt.com/c/${walk}`,
+        now - 20 * 60 * 1000,
+      ),
+      messages: [
+        user(`chatgpt:${walk}:u`, "这条路如果下雨，哪一段要改去室内？"),
+        bot(`chatgpt:${walk}:a`, "先把哲学之道换成室内展厅。"),
+      ],
+    },
+    {
+      conv: conv("chatgpt", kyoto, "京都红叶行程", kyotoUrl, now - 35 * 60 * 1000),
       messages: [
         user(
           `chatgpt:${kyoto}:u`,
@@ -186,7 +201,18 @@ async function main() {
       window.chrome = {
         i18n: { getUILanguage: () => "zh-CN" },
         tabs: {
-          async query() { return []; },
+          async query(q) {
+            if (q && q.url) return [];
+            if (q && (q.active || q.windowId || q.currentWindow)) {
+              return [{
+                id: 1,
+                windowId: 1,
+                active: true,
+                url: "https://chatgpt.com/c/11111111-1111-4111-8111-111111111111",
+              }];
+            }
+            return [];
+          },
           async update() {},
           async create() {},
           onActivated: { addListener() {} },
@@ -208,7 +234,8 @@ async function main() {
     await page.waitForFunction(() => {
       const read = document.querySelector(".read")?.textContent || "";
       const counts = document.getElementById("counts")?.textContent || "";
-      return read === "阅读" && counts.includes("条消息");
+      const current = document.querySelector(".item.is-current .item-title")?.textContent || "";
+      return read === "阅读" && counts.includes("条消息") && current === "京都红叶行程";
     }, { timeout: 10000 });
     await page.evaluate(() => document.fonts?.ready);
     const docs = join(root, "docs");
@@ -217,11 +244,132 @@ async function main() {
     await mkdir(artifacts, { recursive: true });
     const shots = {
       panel: join(docs, "panel-1.5.0-read.png"),
+      removeX: join(docs, "panel-1.5.0-remove-x.png"),
       hit: join(docs, "reader-1.5.0-hit.png"),
       titleOnly: join(docs, "reader-1.5.0-title-only.png"),
       archived: join(docs, "reader-1.5.0-archived.png"),
     };
     await page.screenshot({ path: shots.panel, fullPage: true });
+
+    await page.setViewport({ width: 360, height: 900, deviceScaleFactor: 2 });
+    await page.evaluate(() => {
+      const hover = [...document.querySelectorAll(".row")].find((row) =>
+        (row.querySelector(".item-title")?.textContent || "").includes("哲学之道"),
+      );
+      hover.dataset.shot = "hover";
+      const current = document.querySelector(".item.is-current");
+      current.parentElement.querySelector(".remove").dataset.shot = "focus";
+      const top = Math.min(
+        hover.getBoundingClientRect().top,
+        current.parentElement.getBoundingClientRect().top,
+      );
+      window.scrollBy(0, top - 28);
+    });
+    await page.hover("[data-shot='hover'] .item-title");
+    await page.evaluate(() => {
+      document.querySelector("[data-shot='focus']").focus({ focusVisible: true, preventScroll: true });
+    });
+    const layout = await page.evaluate(() => {
+      const overlaps = (a, b) =>
+        a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+      const box = (el) => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top, right: r.right, bottom: r.bottom, left: r.left };
+      };
+      const problems = [];
+      for (const row of document.querySelectorAll(".row")) {
+        const item = row.querySelector(".item");
+        const x = row.querySelector(":scope > .remove");
+        if (!item || !x) continue;
+        const xb = box(x);
+        for (const [name, el] of [
+          ["title", item.querySelector(".item-title")],
+          ["preview", item.querySelector(".item-preview")],
+          ["time", item.querySelector("time")],
+        ]) {
+          if (el && overlaps(xb, box(el))) problems.push(`${item.dataset.id} X overlaps ${name}`);
+        }
+        const bw = parseFloat(getComputedStyle(item).borderTopWidth) || 0;
+        const itemBox = box(item);
+        const inner = {
+          top: itemBox.top + bw,
+          right: itemBox.right - bw,
+          bottom: itemBox.bottom - bw,
+          left: itemBox.left + bw,
+        };
+        const xcs = getComputedStyle(x);
+        const ring = (parseFloat(xcs.outlineWidth) || 0) + (parseFloat(xcs.outlineOffset) || 0);
+        const visual = {
+          top: xb.top - ring,
+          right: xb.right + ring,
+          bottom: xb.bottom + ring,
+          left: xb.left - ring,
+        };
+        if (
+          visual.top < inner.top - 0.5
+          || visual.right > inner.right + 0.5
+          || visual.bottom > inner.bottom + 0.5
+          || visual.left < inner.left - 0.5
+        ) {
+          problems.push(`${item.dataset.id} X meets the card frame`);
+        }
+      }
+      const hover = document.querySelector("[data-shot='hover'] > .remove");
+      const focus = document.querySelector("[data-shot='focus']");
+      const idle = [...document.querySelectorAll(".row > .remove")].find((el) => el !== hover && el !== focus);
+      const hoverRow = document.querySelector("[data-shot='hover']");
+      const focusItem = document.querySelector(".item.is-current");
+      const top = Math.min(hoverRow.getBoundingClientRect().top, focusItem.getBoundingClientRect().top);
+      const bottom = Math.max(hoverRow.getBoundingClientRect().bottom, focusItem.getBoundingClientRect().bottom);
+      const clipTop = Math.max(0, top - 10);
+      return {
+        problems,
+        hoverOpacity: getComputedStyle(hover).opacity,
+        focusOpacity: getComputedStyle(focus).opacity,
+        focusVisible: focus.matches(":focus-visible"),
+        outline: `${getComputedStyle(focus).outlineStyle} ${getComputedStyle(focus).outlineWidth}`,
+        idleOpacity: getComputedStyle(idle).opacity,
+        longTitle: (hoverRow.querySelector(".item-title")?.textContent || "").length,
+        green: getComputedStyle(document.querySelector(".item.is-current")).borderTopColor,
+        aria: focus.getAttribute("aria-label"),
+        title: focus.title,
+        width: window.innerWidth,
+        clipTop: window.scrollY + clipTop,
+        clipHeight: Math.ceil(bottom - clipTop + 16),
+        hoverTop: hoverRow.getBoundingClientRect().top,
+        hoverBottom: hoverRow.getBoundingClientRect().bottom,
+        focusTop: focusItem.getBoundingClientRect().top,
+        focusBottom: focusItem.getBoundingClientRect().bottom,
+        viewport: window.innerHeight,
+      };
+    });
+    if (layout.problems.length) throw new Error(layout.problems.join("; "));
+    if (layout.width > 360) throw new Error(`panel wider than the narrow check: ${layout.width}`);
+    if (layout.longTitle < 40) throw new Error("long title was not rendered");
+    if (layout.hoverOpacity !== "1") throw new Error(`hovered X opacity ${layout.hoverOpacity}`);
+    if (layout.focusOpacity !== "1" || !layout.focusVisible) {
+      throw new Error(`focused X opacity ${layout.focusOpacity} visible ${layout.focusVisible} ${layout.outline}`);
+    }
+    if (!layout.outline.startsWith("solid")) throw new Error(`focus ring ${layout.outline}`);
+    if (Number(layout.idleOpacity) > 0.5) throw new Error(`idle X opacity ${layout.idleOpacity}`);
+    if (layout.green !== "rgb(61, 220, 151)") throw new Error(`green frame ${layout.green}`);
+    if (layout.aria !== "从索引移除" || layout.title !== "从索引移除") {
+      throw new Error(`remove name ${layout.aria} / ${layout.title}`);
+    }
+    if (layout.hoverTop < 8 || layout.focusBottom > layout.viewport - 8) {
+      throw new Error(`rows outside the viewport ${JSON.stringify({
+        hoverTop: layout.hoverTop,
+        focusBottom: layout.focusBottom,
+        viewport: layout.viewport,
+      })}`);
+    }
+    if (layout.focusBottom + 28 > layout.viewport) {
+      throw new Error(`focused row has no room below it ${layout.focusBottom}`);
+    }
+    await page.screenshot({
+      path: shots.removeX,
+      clip: { x: 0, y: layout.clipTop, width: 360, height: layout.clipHeight },
+    });
 
     await page.setViewport({ width: 960, height: 520, deviceScaleFactor: 2 });
     const kyotoId = `chatgpt:${kyoto}`;
