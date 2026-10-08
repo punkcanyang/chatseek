@@ -143,6 +143,8 @@ const Chatseek = {
   // 2020-01-01. No indexed chat predates this; V8 turns "Top 10" into 2001.
   MIN_MS: 1577836800000,
 
+  HEALTH_GRACE_MS: 8000,
+
   /**
    * Keep in sync with TIME_SOURCE_RANK in src/activity-time.js.
    * Adapters only set page-exact or page-bucket; the database ranks the rest.
@@ -829,7 +831,26 @@ const Chatseek = {
     let ok = true;
     const list = sidebar || [];
     const msgs = (messages || []).filter((m) => m && m.id && m.body);
+    // A thread is empty for a moment after SPA navigation while it loads.
+    // Report 0 messages only once it stays empty; returning false makes
+    // observe() look again in a few seconds even if the DOM goes quiet.
+    let settling = false;
     if (health) {
+      const now = Date.now();
+      const zeroKey = health.pathKind === "conversation" && !msgs.length
+        ? (conversation?.id || "conversation")
+        : "";
+      if (!zeroKey) {
+        state.zeroKey = "";
+      } else if (state.zeroKey !== zeroKey) {
+        state.zeroKey = zeroKey;
+        state.zeroSince = now;
+      }
+      settling = !!zeroKey && now - (state.zeroSince || 0) < Chatseek.HEALTH_GRACE_MS;
+    }
+    if (settling) {
+      ok = false;
+    } else if (health) {
       const report = Chatseek.buildHealthReport({
         platform,
         pathKind: health.pathKind,

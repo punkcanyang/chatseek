@@ -290,6 +290,57 @@ if (sidebarWrites.length !== 1 || sidebarWrites[0].conversations.length !== 120)
   fail("a whole sidebar must reach the database in one write so order estimates see every anchor");
 }
 
+const healthSent = () => sent.filter((p) => p.type === "CAPTURE_HEALTH");
+const threadHealth = {
+  pathKind: "conversation",
+  selector: null,
+  selectorsTried: ["[data-message-author-role]", "[data-turn]"],
+};
+const loading = { lastListFp: "", lastMsgFp: "" };
+pageTime._healthWarned = "";
+healthWarns.length = 0;
+sent.length = 0;
+capOk = await pageTime.runCapture(loading, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("loading"),
+  messages: [],
+  health: threadHealth,
+});
+if (capOk !== false) fail("an empty thread inside the grace period should ask observe() to look again");
+if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
+  fail("a thread that is still loading must not raise the 0-message warning");
+}
+capOk = await pageTime.runCapture(loading, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("loading"),
+  messages: [msg("loading", "m1", "loaded in time")],
+  health: threadHealth,
+});
+if (capOk !== true || healthSent().some((p) => p.health.warn)) {
+  fail("a thread that renders within the grace period should never warn");
+}
+sent.length = 0;
+await pageTime.runCapture(loading, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("broken"),
+  messages: [],
+  health: threadHealth,
+});
+loading.zeroSince -= pageTime.HEALTH_GRACE_MS;
+capOk = await pageTime.runCapture(loading, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("broken"),
+  messages: [],
+  health: threadHealth,
+});
+if (capOk !== true || !healthSent().some((p) => p.health.warn && p.health.messageCount === 0)) {
+  fail("a thread that stays empty past the grace period should report the warning");
+}
+healthWarns.length = 0;
 if (!/runCapture/.test(sharedSrc) || !/sectionTimesFor/.test(sharedSrc)) {
   fail("shared.js should serialize capture and assign section dates");
 }
