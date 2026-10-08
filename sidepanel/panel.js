@@ -12,6 +12,7 @@ import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-ur
 import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
+import { bookIcon, externalIcon } from "../src/icons.js";
 import {
   BROWSE_FIELDS,
   SEARCH_FIELDS,
@@ -90,6 +91,7 @@ function bundle(code) {
     cancel: say("cancel"),
     confirmRemove: say("confirmRemove"),
     read: say("read"),
+    openOriginal: say("openOriginal"),
     langLabel: say("langLabel"),
     langFollow: say("langFollow"),
     sortBy: say("sortBy"),
@@ -288,8 +290,19 @@ function render(items, { emptyKind, error }) {
     readBtn.type = "button";
     readBtn.className = "read";
     readBtn.dataset.id = conv.id || "";
-    readBtn.textContent = t.read;
+    readBtn.setAttribute("aria-label", t.read);
+    readBtn.title = t.read;
+    readBtn.append(bookIcon(document));
     readBtn.addEventListener("click", () => openReader(conv));
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "open-site";
+    openBtn.dataset.id = conv.id || "";
+    openBtn.setAttribute("aria-label", t.openOriginal);
+    openBtn.title = t.openOriginal;
+    openBtn.append(externalIcon(document));
+    openBtn.addEventListener("click", () => openChat(conv.url));
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -308,7 +321,7 @@ function render(items, { emptyKind, error }) {
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    actions.append(readBtn);
+    actions.append(readBtn, openBtn);
     row.append(btn, removeBtn, actions);
     li.append(row);
     listEl.append(li);
@@ -357,8 +370,20 @@ function askRemove(conv) {
   removeCancel?.focus();
 }
 
+async function reuseOpenTab(message) {
+  try {
+    const send = chrome.runtime?.sendMessage;
+    if (typeof send !== "function") return false;
+    const res = await send(message);
+    return res?.focused === true;
+  } catch {
+    return false;
+  }
+}
+
 async function openReader(conv) {
   if (!conv?.id) return;
+  if (await reuseOpenTab({ type: "FOCUS_READER", id: conv.id })) return;
   // Extension page in a new tab. chrome.tabs.create does not need the tabs permission.
   const url = readerPageUrl(conv.id, qEl.value, chrome.runtime);
   try {
@@ -373,17 +398,17 @@ async function openReader(conv) {
 }
 
 async function openChat(url) {
-  if (!url || !chrome.tabs?.create) return;
+  if (!url) return;
+  if (await reuseOpenTab({ type: "FOCUS_ORIGINAL", url })) return;
   try {
-    const existing = await chrome.tabs.query({ url });
-    if (existing[0]) {
-      await chrome.tabs.update(existing[0].id, { active: true });
+    if (chrome.tabs?.create) {
+      await chrome.tabs.create({ url });
       return;
     }
   } catch {
-    // host permissions cover ChatGPT/Claude/Grok/Gemini URLs; fall through to create
+    // Fall through to window.open, which also needs no tabs permission.
   }
-  await chrome.tabs.create({ url });
+  window.open(url, "_blank", "noopener");
 }
 
 async function renderHealth() {

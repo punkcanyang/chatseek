@@ -311,5 +311,11 @@
   },
   "sortDirLow": {
     "message": "低→高"
+  },
+  "copyCode": {
+    "message": "複製"
+  },
+  "imageLabel": {
+    "message": "圖片"
   }
 }

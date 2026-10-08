@@ -85,7 +85,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.5.0") fail(`version should be 1.5.0, got ${manifest.version}`);
+if (manifest.version !== "1.5.1") fail(`version should be 1.5.1, got ${manifest.version}`);
 const csp = manifest.content_security_policy?.extension_pages || "";
 if (!/script-src[^;]*'self'/.test(csp)) fail("extension CSP must keep script-src 'self'");
 if (!/object-src[^;]*'self'/.test(csp)) fail("extension CSP must keep object-src 'self'");
@@ -188,6 +188,8 @@ for (const rel of [
   "src/message-order.js",
   "src/reader-url.js",
   "src/reader-view.js",
+  "src/markdown.js",
+  "src/markdown-dom.js",
   "src/sort-list.js",
   "reader/reader.js",
   "sidepanel/panel.js",
@@ -608,10 +610,39 @@ if (/innerHTML|insertAdjacentHTML|outerHTML/.test(panelSrc)) {
 if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("src/preview.js"))) {
   fail("preview renderer must not use innerHTML");
 }
-for (const rel of ["src/reader-view.js", "reader/reader.js", "reader/index.html"]) {
+for (const rel of ["src/reader-view.js", "src/markdown.js", "src/markdown-dom.js", "reader/reader.js", "reader/index.html"]) {
   if (/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(read(rel))) {
     fail(`${rel} must not assign HTML`);
   }
+}
+const markdownSrc = read("src/markdown.js") + read("src/markdown-dom.js");
+if (!existsSync(join(root, "src/markdown.js")) || !existsSync(join(root, "src/markdown-dom.js"))) {
+  fail("in-repo markdown parser is missing");
+}
+if (/createElement\(\s*["'](img|script|iframe|object|embed)["']\s*\)/.test(markdownSrc)) {
+  fail("markdown renderer must not create img, script, or iframe elements");
+}
+if (/cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|esm\.sh|skypack\.dev/.test(markdownSrc)) {
+  fail("markdown renderer must not load a CDN");
+}
+const cdnRe = /cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|esm\.sh|skypack\.dev/;
+for (const rel of [
+  "background.js",
+  "reader/index.html",
+  "reader/reader.js",
+  "reader/reader.css",
+  "sidepanel/index.html",
+  "sidepanel/panel.js",
+  "sidepanel/panel.css",
+  "src/markdown.js",
+  "src/markdown-dom.js",
+  "src/reader-view.js",
+  "src/preview.js",
+  "src/icons.js",
+  "src/focus-tab.js",
+]) {
+  if (cdnRe.test(read(rel))) fail(`${rel} must not reference a CDN`);
+  if (/<script[^>]+src\s*=\s*["']https?:/i.test(read(rel))) fail(`${rel} must not load a remote script`);
 }
 const readerPage = read("reader/reader.js");
 if (/upsert|removeConversation|clearAll|readwrite/.test(readerPage)) {
@@ -628,10 +659,17 @@ if (!read("sidepanel/panel.js").includes("reader/index.html") && !read("sidepane
   fail("side panel should open the reader page");
 }
 if (!read("sidepanel/panel.js").includes('className = "read"')) fail("side panel needs a read control");
+if (!read("sidepanel/panel.js").includes('className = "open-site"')) fail("side panel needs an original-site control");
+if (/chrome\.tabs\.query\(\s*\{\s*url/.test(read("sidepanel/panel.js"))) {
+  fail("opening a chat must not depend on tabs.query url matching");
+}
 if (!/\.plat\.gemini/.test(read("sidepanel/panel.css"))) fail("missing .plat.gemini color");
 const backgroundSrc = read("background.js");
 if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc)) {
   fail("background.js should accept gemini through HOSTS");
+}
+if (!/FOCUS_ORIGINAL/.test(backgroundSrc) || !/FOCUS_READER/.test(backgroundSrc) || !/getContexts/.test(backgroundSrc)) {
+  fail("background should reuse an open conversation tab before creating one");
 }
 
 if (errors.length) {

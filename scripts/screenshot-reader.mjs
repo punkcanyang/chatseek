@@ -245,7 +245,7 @@ async function main() {
     await page.setViewport({ width: 440, height: 860, deviceScaleFactor: 2 });
     await page.goto(`${origin}/__shot/bootstrap.html`, { waitUntil: "networkidle0", timeout: 20000 });
     await page.waitForFunction(() => {
-      const read = document.querySelector(".read")?.textContent || "";
+      const read = document.querySelector(".read")?.getAttribute("aria-label") || "";
       const counts = document.getElementById("counts")?.textContent || "";
       const current = document.querySelector(".item.is-current .item-title")?.textContent || "";
       return read === "阅读" && counts.includes("条消息") && current === "京都红叶行程";
@@ -305,7 +305,7 @@ async function main() {
       window.scrollTo(0, 0);
     });
     await page.waitForFunction(() => {
-      const read = document.querySelector(".read")?.textContent || "";
+      const read = document.querySelector(".read")?.getAttribute("aria-label") || "";
       const sort = document.getElementById("sortField")?.textContent || "";
       return read === "阅读" && sort === "最后对话时间" && !document.getElementById("q").value;
     }, { timeout: 10000 });
@@ -439,7 +439,7 @@ async function main() {
     await page.waitForFunction(() => {
       const mark = document.querySelector("mark.is-current");
       const count = document.getElementById("hitCount")?.textContent || "";
-      const open = document.getElementById("openOriginal")?.textContent || "";
+      const open = document.getElementById("openOriginal")?.getAttribute("aria-label") || "";
       return mark?.textContent === "咖啡馆" && count.startsWith("1 /") && open === "去原网站打开";
     }, { timeout: 10000 });
     const yellow = await page.$eval("mark.is-current", (el) => getComputedStyle(el).backgroundColor);
@@ -453,7 +453,7 @@ async function main() {
     );
     await page.waitForFunction(() => {
       return document.getElementById("readerNote")?.textContent === "仅有标题，未收录消息"
-        && document.getElementById("openOriginal")?.textContent === "去原网站打开";
+        && document.getElementById("openOriginal")?.getAttribute("aria-label") === "去原网站打开";
     }, { timeout: 10000 });
     await page.screenshot({ path: shots.titleOnly, fullPage: false });
 

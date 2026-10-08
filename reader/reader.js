@@ -37,9 +37,18 @@ let localePref = readLocalePref();
 let row = null;
 let failed = false;
 
-function openOriginal(url) {
+async function openOriginal(url) {
   const safe = safeOriginalUrl(url);
   if (!safe) return;
+  try {
+    const send = globalThis.chrome?.runtime?.sendMessage;
+    if (typeof send === "function") {
+      const res = await send({ type: "FOCUS_ORIGINAL", url: safe });
+      if (res?.focused) return;
+    }
+  } catch {
+    // The worker did not answer. Open a tab instead of leaving the click dead.
+  }
   const tabs = globalThis.chrome?.tabs;
   if (typeof tabs?.create === "function") {
     tabs.create({ url: safe });

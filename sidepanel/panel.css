@@ -329,21 +329,49 @@ body {
   gap: 6px;
 }
 
-.read {
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--accent);
+.read,
+.open-site {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
-  padding: 4px 8px;
-  font-size: 12px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.38;
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  white-space: nowrap;
+  line-height: 0;
+  flex: 0 0 auto;
 }
 
+.read svg,
+.open-site svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.row:hover > .row-actions > .read,
+.row:hover > .row-actions > .open-site,
+.row:focus-within > .row-actions > .read,
+.row:focus-within > .row-actions > .open-site,
 .read:hover,
-.read:focus {
-  border-color: var(--accent);
-  outline: none;
+.read:focus-visible,
+.open-site:hover,
+.open-site:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--card) 82%, var(--fg));
+  border-color: var(--line);
+}
+
+.read:focus-visible,
+.open-site:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .remove {

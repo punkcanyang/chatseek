@@ -97,6 +97,8 @@ export const CATALOG = {
     sortDirFewer: "少→多",
     sortDirHigh: "高→低",
     sortDirLow: "低→高",
+    copyCode: "複製",
+    imageLabel: "圖片",
   },
   "zh-CN": {
     extName: "Chatseek",
@@ -168,6 +170,8 @@ export const CATALOG = {
     sortDirFewer: "少→多",
     sortDirHigh: "高→低",
     sortDirLow: "低→高",
+    copyCode: "复制",
+    imageLabel: "图片",
   },
   en: {
     extName: "Chatseek",
@@ -239,6 +243,8 @@ export const CATALOG = {
     sortDirFewer: "Fewest first",
     sortDirHigh: "Highest first",
     sortDirLow: "Lowest first",
+    copyCode: "Copy",
+    imageLabel: "Image",
   },
   ja: {
     extName: "Chatseek",
@@ -310,6 +316,8 @@ export const CATALOG = {
     sortDirFewer: "少ない順",
     sortDirHigh: "高い順",
     sortDirLow: "低い順",
+    copyCode: "コピー",
+    imageLabel: "画像",
   },
   ko: {
     extName: "Chatseek",
@@ -381,6 +389,8 @@ export const CATALOG = {
     sortDirFewer: "적은순",
     sortDirHigh: "높은순",
     sortDirLow: "낮은순",
+    copyCode: "복사",
+    imageLabel: "이미지",
   },
   es: {
     extName: "Chatseek",
@@ -452,6 +462,8 @@ export const CATALOG = {
     sortDirFewer: "De menos a más",
     sortDirHigh: "Más relevante primero",
     sortDirLow: "Menos relevante primero",
+    copyCode: "Copiar",
+    imageLabel: "Imagen",
   },
   fr: {
     extName: "Chatseek",
@@ -523,6 +535,8 @@ export const CATALOG = {
     sortDirFewer: "Du moins au plus",
     sortDirHigh: "Plus pertinent d’abord",
     sortDirLow: "Moins pertinent d’abord",
+    copyCode: "Copier",
+    imageLabel: "Image",
   },
   de: {
     extName: "Chatseek",
@@ -594,6 +608,8 @@ export const CATALOG = {
     sortDirFewer: "Wenigste zuerst",
     sortDirHigh: "Höchste zuerst",
     sortDirLow: "Niedrigste zuerst",
+    copyCode: "Kopieren",
+    imageLabel: "Bild",
   },
   "pt-BR": {
     extName: "Chatseek",
@@ -665,6 +681,8 @@ export const CATALOG = {
     sortDirFewer: "Do menor ao maior",
     sortDirHigh: "Mais relevante primeiro",
     sortDirLow: "Menos relevante primeiro",
+    copyCode: "Copiar",
+    imageLabel: "Imagem",
   },
 };
 

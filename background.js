@@ -1,5 +1,6 @@
 import { upsertConversations, upsertMessages, saveCaptureHealth, readCaptureHealth } from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
+import { findReaderContext, findSiteTab, focusTab, siteKey } from "./src/focus-tab.js";
 
 const HOSTS = {
   chatgpt: [/^https:\/\/chatgpt\.com\//, /^https:\/\/chat\.openai\.com\//],
@@ -49,6 +50,58 @@ function notifyIndexUpdated() {
   chrome.runtime.sendMessage({ type: "INDEX_UPDATED" }).catch(() => {});
 }
 
+// Content scripts report the page they are on. The id is enough to focus that
+// tab later; the URL itself is not stored. A closed tab is dropped on the
+// next failed focus, and also here when the browser tells us it went away.
+const siteTabs = new Map();
+let siteSeq = 0;
+
+function rememberSite(sender, url) {
+  const tabId = sender?.tab?.id;
+  if (!Number.isInteger(tabId)) return;
+  const key = siteKey(url);
+  if (!key) {
+    siteTabs.delete(tabId);
+    return;
+  }
+  siteTabs.set(tabId, {
+    tabId,
+    windowId: sender.tab.windowId,
+    key,
+    at: ++siteSeq,
+  });
+}
+
+if (chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    siteTabs.delete(tabId);
+  });
+}
+
+async function focusRequest(msg) {
+  try {
+    if (msg.type === "FOCUS_ORIGINAL") {
+      const key = siteKey(msg.url);
+      const candidates = [...siteTabs.values()]
+        .filter((entry) => entry.key === key)
+        .sort((a, b) => (b.at || 0) - (a.at || 0));
+      for (const target of candidates) {
+        const focused = await focusTab(chrome.tabs, chrome.windows, target);
+        if (focused) return { focused: true };
+        siteTabs.delete(target.tabId);
+      }
+      return { focused: false };
+    }
+    const contexts = typeof chrome.runtime.getContexts === "function"
+      ? await chrome.runtime.getContexts({ contextTypes: ["TAB"] })
+      : [];
+    const target = findReaderContext(contexts, msg.id);
+    return { focused: await focusTab(chrome.tabs, chrome.windows, target) };
+  } catch {
+    return { focused: false };
+  }
+}
+
 function paintBadge(health) {
   const badge = chrome.action;
   if (!badge?.setBadgeText) return;
@@ -83,7 +136,15 @@ function validHealth(health) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
-  if (msg.type === "INDEX_UPDATED" || msg.type === "ACTIVE_LOCATION") return;
+  if (msg.type === "ACTIVE_LOCATION") {
+    rememberSite(sender, msg.url);
+    return;
+  }
+  if (msg.type === "INDEX_UPDATED") return;
+  if (msg.type === "FOCUS_ORIGINAL" || msg.type === "FOCUS_READER") {
+    focusRequest(msg).then(sendResponse);
+    return true;
+  }
 
   const platform = msg.conversation?.platform || msg.platform ||
     msg.conversations?.[0]?.platform;

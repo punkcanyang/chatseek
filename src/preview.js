@@ -1,3 +1,4 @@
+import { markdownToPlain } from "./markdown.js";
 import { queryTokens } from "./tokenize.js";
 
 /** Stored on the conversation so the idle list does not read the messages store. */
@@ -13,15 +14,23 @@ const CJK =
  * The last message is the fallback when no user prompt was stored.
  */
 export function selectIdlePreview(conv) {
-  const first = flattenPreview(conv?.firstUserPreview);
+  const first = presentPreview(conv?.firstUserPreview);
   if (first) return { kind: "first-user", text: clipPreviewText(first) };
-  const last = flattenPreview(conv?.lastPreview);
+  const last = presentPreview(conv?.lastPreview);
   if (last) return { kind: "last", text: clipPreviewText(last) };
   return { kind: "title-only", text: "" };
 }
 
 export function flattenPreview(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Side-panel text. Markdown markers are removed at display time, so an excerpt
+ * stored before 1.5.1 still shows as plain words. Storage itself is unchanged.
+ */
+export function presentPreview(text) {
+  return flattenPreview(markdownToPlain(text));
 }
 
 export function clipPreviewText(text, max = PREVIEW_STORE_CHARS) {
@@ -93,7 +102,7 @@ function mergeRanges(ranges) {
  * the two collapsed lines; the rest is context for hover.
  */
 export function snippetAround(text, terms, { before = 28, after = 120, maxLen = 180 } = {}) {
-  const flat = flattenPreview(text);
+  const flat = presentPreview(text);
   const wanted = Array.isArray(terms) ? terms : highlightTerms(terms);
   const found = wanted.length ? findMatchRanges(flat, wanted) : [];
   if (!found.length) return null;
@@ -135,7 +144,7 @@ export function bestSnippet(bodies, terms, options) {
   let best = null;
   let bestScore = -1;
   for (const body of bodies || []) {
-    const flat = flattenPreview(body);
+    const flat = presentPreview(body);
     const ranges = findMatchRanges(flat, wanted);
     if (!ranges.length) continue;
     const score = ranges.length * 100000 - ranges[0][0];
