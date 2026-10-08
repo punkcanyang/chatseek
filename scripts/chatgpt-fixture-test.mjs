@@ -13,7 +13,7 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-function load(html, url, chrome = { runtime: { id: "test" } }) {
+function load(html, url, chrome = { runtime: { id: "test" } }, consoleImpl) {
   const dom = new JSDOM(html, { url });
   const warns = [];
   const fn = new Function(
@@ -33,7 +33,7 @@ function load(html, url, chrome = { runtime: { id: "test" } }) {
     dom.window.location,
     dom.window.Node,
     dom.window.NodeFilter,
-    { warn: (line) => warns.push(String(line)), log() {} },
+    consoleImpl || { warn: (line) => warns.push(String(line)), log() {} },
     chrome,
   );
   return { dom, api, warns };
@@ -223,6 +223,78 @@ assert(
   iframeCase.api.conversationIdFromPath(`/g/${gizmoDecoy}/c/${afterSlashC}?model=gpt-4`) === afterSlashC,
   "fixture id helper must keep the uuid after /c/",
 );
+
+const noiseHtml = `<body>
+  <nav>
+    <a href="/c/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa">one chat</a>
+    <a href="/c/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb">two chat</a>
+    <a href="/c/cccccccc-cccc-4ccc-8ccc-cccccccccccc">three chat</a>
+  </nav>
+  <main>
+    <div class="cookie-banner" role="dialog"><p>We use cookies to remember your preferences across this browser today.</p><button>Accept all</button></div>
+    <div class="upgrade-banner" role="banner"><p>Upgrade to ChatGPT Plus for longer messages and faster replies today.</p></div>
+    <p>ChatGPT can make mistakes. Check important info before you rely on it.</p>
+    <div><h2>You</h2><p>${USER}</p></div>
+    <div><h2>You</h2><p>${USER}</p></div>
+    <div><h2>ChatGPT</h2><p>${ASST}</p></div>
+    <div class="composer">
+      <p>Ask a follow up about the pangolin habitat.</p>
+      <textarea>draft a very long prompt about pangolins that must not be stored</textarea>
+    </div>
+    <div><button>Regenerate a much longer reply about the pangolin habitat</button></div>
+  </main>
+  <footer><p>Footer chrome must stay out of the stored transcript entirely.</p></footer>
+</body>`;
+const noise = load(noiseHtml, threadUrl);
+assertTopMisses(noise.dom.window.document, "noise page");
+const noiseHit = noise.api.platforms.chatgpt.inspect();
+assert(noiseHit.selector === "heuristic", `noise page selector ${noiseHit.selector}`);
+assert(noiseHit.messages.length === 2, `chrome leaked into messages: ${noiseHit.messages.length} ${noiseHit.messages.map((m) => m.body).join(" | ")}`);
+assert(noiseHit.messages.map((m) => m.role).join(",") === "user,assistant", `noise roles ${noiseHit.messages.map((m) => m.role)}`);
+assert(noiseHit.messages[0].body.includes("southern forest ridge"), "noise user missing");
+assert(noiseHit.messages[1].body.includes("rolls into a ball"), "noise assistant missing");
+assert(!noiseHit.messages.some((m) => /cookie|upgrade|must not be stored|footer|follow up|regenerate|make mistakes/i.test(m.body)), "sidebar, composer, cookie, or hint was stored");
+
+const selectorWins = load(`<main>
+  <div data-message-author-role="user" data-message-id="u1"><div class="whitespace-pre-wrap">classic user line about habitat</div></div>
+  <div data-message-author-role="assistant" data-message-id="a1"><div class="markdown">classic assistant line about habitat</div></div>
+  <div><h2>You</h2><p>This heuristic paragraph must not replace the selector transcript at all.</p></div>
+</main>`, threadUrl);
+const selectorHit = selectorWins.api.platforms.chatgpt.inspect();
+assert(selectorHit.selector === "[data-message-author-role]", `selector should win, got ${selectorHit.selector}`);
+assert(selectorHit.messages.length === 2, `heuristic replaced selector turns: ${selectorHit.messages.length}`);
+assert(!selectorHit.messages.some((m) => /must not replace/.test(m.body)), "heuristic text overwrote a selector hit");
+
+const hashed = load(`<main><div class="conversation-turn thread-cafebabe" data-testid="11111111-1111-4111-8111-111111111111"><h2>You</h2><p>${USER}</p></div></main>`, threadUrl);
+const hashedSkel = hashed.api.platforms.chatgpt.inspect().structure.skeleton;
+assert(!/cafebabe|11111111|pangolin|southern/i.test(hashedSkel), `skeleton leaked: ${hashedSkel}`);
+assert(/conversation-turn/.test(hashedSkel), `skeleton dropped the structural token: ${hashedSkel}`);
+
+const home = load("<main><p>Welcome back</p></main>", "https://chatgpt.com/");
+const homeHit = home.api.platforms.chatgpt.inspect();
+assert(homeHit.health.pathKind === "home", `home kind ${homeHit.health.pathKind}`);
+assert(homeHit.health.warn === false, "home must not warn");
+
+const fresh = load("<main><p>Welcome back</p></main>", "https://chatgpt.com/?model=gpt-4o");
+assert(fresh.api.platforms.chatgpt.inspect().health.warn === false, "a new chat must not warn");
+
+assert(noise.api.emptyRescanDelay(0, true) === 0, "hidden tab pauses the empty rescan");
+assert(noise.api.emptyRescanDelay(0, false) === 2000, "first empty look is 2s");
+assert(noise.api.emptyRescanDelay(1, false) === 4000, "empty rescan backs off");
+assert(noise.api.emptyRescanDelay(4, false) === 30000, "empty rescan delay caps");
+assert(noise.api.emptyRescanDelay(8, false) === 0, "empty rescan stops");
+
+const diagLogs = [];
+const diagCase = load("<main><p>Welcome back</p></main>", threadUrl, { runtime: { id: "test" } }, {
+  warn: (line) => diagLogs.push(String(line)),
+  log: (line) => diagLogs.push(String(line)),
+});
+diagCase.api.noteDiag("[Chatseek] diag v=1.6.2 hits=none at=2026-10-08T00:00:00.000Z", "log");
+diagCase.api.noteDiag("[Chatseek] diag v=1.6.2 hits=none at=2026-10-08T00:00:04.000Z", "log");
+assert(diagLogs.length === 1, `diag line repeated: ${diagLogs.length}`);
+diagCase.api.noteDiag("[Chatseek] diag v=1.6.2 hits=turn:2 at=2026-10-08T00:00:08.000Z", "log");
+await new Promise((resolve) => setTimeout(resolve, 4100));
+assert(diagLogs.length === 2, `a changed diag line should still print, got ${diagLogs.length}`);
 
 console.log("chatgpt-fixture ok", {
   selector: turnedHit.selector,

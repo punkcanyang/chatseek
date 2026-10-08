@@ -257,11 +257,30 @@
     };
   }
 
+  function rememberHeuristic(chosen, built, seen) {
+    if (!built) return;
+    const key = `${built.message.role}:${built.message.body}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    chosen.push(built);
+  }
+
   function takeHeuristic(scopes, chosen, conversationId) {
     if (chosen.length) return null;
+    const seen = new Set();
     for (const block of Chatseek.heuristicBlocks(scopes)) {
-      const built = heuristicFromBlock(block, conversationId);
-      if (built) chosen.push(built);
+      rememberHeuristic(chosen, heuristicFromBlock(block, conversationId), seen);
+    }
+    return chosen.length ? "heuristic" : null;
+  }
+
+  async function takeHeuristicPaced(scopes, chosen, conversationId) {
+    if (chosen.length) return null;
+    const blocks = await Chatseek.heuristicBlocksPaced(scopes);
+    const seen = new Set();
+    for (let index = 0; index < blocks.length; index += 1) {
+      if ((index & 7) === 7) await Chatseek.paceDom();
+      rememberHeuristic(chosen, heuristicFromBlock(blocks[index], conversationId), seen);
     }
     return chosen.length ? "heuristic" : null;
   }
@@ -291,22 +310,27 @@
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
-    const scopes = Chatseek.readScopes(root);
     imageHosts = [];
     const chosen = [];
     chosen.conversationId = conversationId;
     Chatseek._paceAt = Date.now();
-    let selector = null;
-    for (const scope of scopes) {
-      noteScopeHits(selectorHits, scope);
-      const got = await takeLayerPaced(scope.node, chosen);
-      if (chosen.length) {
-        selector = scopeLabel(scope, got);
-        break;
+    // Matched top-level turns skip the shadow and iframe walk.
+    let selector = await takeLayerPaced(root, chosen);
+    const scopes = [{ kind: "top", node: root }];
+    if (!chosen.length) {
+      const embedded = await Chatseek.readEmbeddedPaced(root);
+      for (const scope of embedded) {
+        scopes.push(scope);
+        noteScopeHits(selectorHits, scope);
+        const got = await takeLayerPaced(scope.node, chosen);
+        if (chosen.length) {
+          selector = scopeLabel(scope, got);
+          break;
+        }
+        await Chatseek.paceDom();
       }
-      await Chatseek.paceDom();
     }
-    if (!chosen.length) selector = takeHeuristic(scopes, chosen, conversationId);
+    if (!chosen.length) selector = await takeHeuristicPaced(scopes, chosen, conversationId);
     return packMessages(chosen, selector, selectorsTried, selectorHits);
   }
 
@@ -383,7 +407,10 @@
     }
     const stats = Chatseek.messageStats(extracted.messages);
     const pathKind = Chatseek.pageKind(here, !!platformId);
-    const structure = Chatseek.structureDiag(root);
+    const selectorName = extracted.selector || "";
+    const structure = !extracted.messages.length || /shadow|iframe|heuristic/.test(selectorName)
+      ? await Chatseek.structureDiagPaced(root)
+      : Chatseek.structureDiagLight(root, stats.charCount);
     if (typeof Chatseek.noteEmptyConversation === "function") {
       Chatseek.noteEmptyConversation(pathKind === "conversation" && !extracted.messages.length);
     }
@@ -455,6 +482,9 @@
     let child = false;
     try { child = window.top !== window; } catch { child = true; }
     if (child) Chatseek.watchChildFrame();
-    else Chatseek.observe(() => capture());
+    else {
+      Chatseek.watchEmbedded = true;
+      Chatseek.observe(() => capture());
+    }
   }
 })();

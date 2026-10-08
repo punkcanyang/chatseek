@@ -93,6 +93,11 @@ for (const script of manifest.content_scripts || []) {
     if (script.all_frames !== true || script.match_about_blank !== true || script.match_origin_as_fallback !== true) {
       fail("chatgpt content script must set all_frames, match_about_blank, and match_origin_as_fallback");
     }
+    for (const match of script.matches || []) {
+      if (!String(match).endsWith("/*")) {
+        fail(`match_origin_as_fallback requires a /* path: ${match}`);
+      }
+    }
     chatgptFrames = true;
   } else if (script.all_frames || script.match_about_blank || script.match_origin_as_fallback) {
     fail("only the chatgpt content script may match child frames");
@@ -724,6 +729,26 @@ if (/stringify\(health\)\.length > 2000/.test(backgroundSrc)) {
 if (!/senderPageUrl/.test(backgroundSrc)) fail("health should accept sender.url when tab.url is empty");
 if (!/\[Chatseek\] loaded v=/.test(sharedSrc)) fail("content script must log once when it loads");
 if (!/CHATSEEK_PING/.test(sharedSrc)) fail("content script must answer the side panel ping");
+if (!/emptyRescanDelay/.test(sharedSrc)) fail("empty conversations need a capped rescan");
+if (!/document\.hidden/.test(sharedSrc)) fail("a hidden tab must pause the empty rescan");
+const chatgptSrc = read("content/chatgpt.js");
+if (!/watchEmbedded = true/.test(chatgptSrc)) fail("chatgpt should opt in to embedded watching");
+for (const rel of ["content/claude.js", "content/gemini.js", "content/grok.js"]) {
+  if (/watchEmbedded/.test(read(rel))) fail(`${rel} must not opt in to embedded frame watching`);
+}
+const childBranch = chatgptSrc.slice(chatgptSrc.lastIndexOf("if (child)"));
+if (!/watchChildFrame\(\)/.test(childBranch) || /runCapture|observe\(/.test(childBranch.split("else")[0] || "")) {
+  fail("a child frame must not capture or write");
+}
+const openShadowFn = sharedSrc.slice(sharedSrc.indexOf("openShadowRoots(doc)"), sharedSrc.indexOf("openShadowRoots(doc)") + 320);
+if (/closed:\s*true/.test(openShadowFn)) fail("the shared open-shadow walk must not probe closed roots");
+const pingSrc = read("sidepanel/panel.js");
+const pingAt = pingSrc.indexOf("async function pingInjection");
+const guardAt = pingSrc.indexOf("isChatTabUrl", pingAt);
+const sendAt = pingSrc.indexOf("chrome.tabs.sendMessage", pingAt);
+if (pingAt < 0 || guardAt < 0 || sendAt < 0 || guardAt > sendAt) {
+  fail("the injection ping must check the chat host before sendMessage");
+}
 if (!/openOrClosedShadowRoot/.test(sharedSrc)) fail("closed shadow roots must be readable without a new permission");
 if (!/readScopes/.test(read("content/chatgpt.js"))) fail("chatgpt capture must walk shadow and iframe scopes");
 if (!/conversationIdFromPath/.test(read("content/chatgpt.js"))) fail("chatgpt ids must come from the /c/ uuid");

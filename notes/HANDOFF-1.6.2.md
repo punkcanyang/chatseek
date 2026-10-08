@@ -60,7 +60,7 @@ node scripts/reader-bench.mjs
 
 端到端用 Chrome for Testing 155.0.8059.39。官方 Chrome 148 已不能 `--load-extension`。
 
-3000 則閱讀頁（這台機器跑一次）：命中 900，畫面上 3 則、136 個節點。掛載 42ms、跳轉 2.47ms、捲動 p50 1.5ms / p95 2.8ms / 最大 4.8ms。1.6.1 交接上記的是掛載 46ms、跳轉 2.9ms、捲動 p50 2ms / p95 3.6ms / 最大 6.5ms。閱讀頁這條路徑沒有改掛載演算法。
+3000 則閱讀頁的程式和 `861ba8f` 相同。同一台機器、同一次瀏覽器、各跑 3 次取中位數：這版掛載 50ms、跳轉 2.65ms、捲動 p50 1.7ms / p95 3.0ms / 最大 6.0ms；緊接著的 `861ba8f` 是掛載 42ms、跳轉 2.39ms、捲動 p50 1.5ms / p95 2.8ms / 最大 4.9ms。兩邊都是命中 900、畫面上 3 則、136 個節點。差落在同一台機器的抖動裡，閱讀頁演算法沒有改。
 
 ## 截圖
 
@@ -69,6 +69,17 @@ node scripts/reader-bench.mjs
 - `docs/panel-1.6.2-empty-warn.png`：八個選擇器 0 命中、過了寬限期，頁腳紅字警告。
 - `docs/panel-1.6.2-skeleton-diag.png`：同一筆診斷的結構行，含 skeleton。
 - `docs/panel-1.6.2-inject-warn.png`：分頁沒有回應 ping 時的載入警告，下面仍有健康檢查警告。
+
+## 複審修正
+
+複審在同一個分支補了這些，沒有加權限，也沒有新的網路請求：
+
+- 空對話重掃從 2 秒倍增到 30 秒，最多 8 次。分頁隱藏時不排程。換網址才重新計次。
+- shadow / iframe 的觀察只開在 ChatGPT 頂層頁框。Claude、Gemini、Grok 仍只看 light DOM，共用的 open shadow 掃描也不探封閉 shadow。
+- 頂層選擇器已有實質內文時，不再掃 shadow、iframe，也不跑 heuristic，診斷走輕量路徑。嵌入掃描用 TreeWalker，每 64 個元素讓出一次主執行緒。
+- 備援排除側欄、頁尾、對話列表、輸入框和旁邊的提示、按鈕、cookie 與升級橫幅。相同內文只留一則。有選擇器結果時不用備援蓋掉。
+- class / testid 去掉 hex hash 和超過 24 字的片段。診斷行只在內容變了才再印，`at=` 變了不算。
+- 側欄 ping 先確認是四家網站才送 `CHATSEEK_PING`。
 
 ## 請你在自己的 Chrome 裡看
 

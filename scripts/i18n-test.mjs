@@ -44,6 +44,8 @@ assert(CATALOG["zh-CN"].read === "阅读" && CATALOG["zh-TW"].read === "閱讀",
 assert(CATALOG["zh-CN"].openOriginal === "去原网站打开", "zh-CN original site");
 assert(CATALOG["zh-TW"].prevHit === "上一處" && CATALOG["zh-TW"].nextHit === "下一處", "zh-TW hit nav");
 assert(CATALOG["zh-CN"].titleOnly === "仅有标题，未收录消息", "title-only copy reused by the reader");
+assert(CATALOG.en.injectMissing.includes("has not loaded Chatseek"), "inject warning");
+assert(new Set(LOCALE_ORDER.map((code) => CATALOG[code].injectMissing)).size === 9, "inject warning is translated in all nine locales");
 assert(CATALOG["zh-TW"].sortActivity === "最後對話時間" && CATALOG["zh-TW"].sortRelevance === "相關度", "zh-TW sort labels");
 assert(CATALOG["zh-TW"].sortCount === "訊息數" && CATALOG["zh-CN"].sortCount === "消息数", "sort count wording");
 for (const key of ["read", "openOriginal", "prevHit", "nextHit", "hitCount", "noHits", "roleUser", "roleAssistant", "missingChat", "readerLoading"]) {

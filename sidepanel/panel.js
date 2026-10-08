@@ -12,7 +12,7 @@ import { formatByteSize } from "../src/image-cache.js";
 import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
-import { activeTabUrl, eventInWindow, injectionUnloaded, locationFromMessage } from "../src/current-tab.js";
+import { activeTabUrl, eventInWindow, injectionUnloaded, isChatTabUrl, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
 import { bookIcon, externalIcon } from "../src/icons.js";
@@ -879,7 +879,7 @@ async function pingInjection() {
     url = "";
   }
   if (seq !== pingSeq) return;
-  if (!Number.isInteger(tabId)) {
+  if (!Number.isInteger(tabId) || !isChatTabUrl(url)) {
     injectWarnEl.hidden = true;
     return;
   }
