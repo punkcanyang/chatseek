@@ -253,5 +253,57 @@
   },
   "readerLoading": {
     "message": "読み込んでいます…"
+  },
+  "sortBy": {
+    "message": "並べ替え"
+  },
+  "sortCurrent": {
+    "message": "並べ替え：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "向きを切り替える（$ARG1$）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "最後の会話"
+  },
+  "sortTitle": {
+    "message": "タイトル"
+  },
+  "sortCaptured": {
+    "message": "収録時刻"
+  },
+  "sortCount": {
+    "message": "メッセージ数"
+  },
+  "sortRelevance": {
+    "message": "関連度"
+  },
+  "sortDirNewest": {
+    "message": "新しい順"
+  },
+  "sortDirOldest": {
+    "message": "古い順"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "多い順"
+  },
+  "sortDirFewer": {
+    "message": "少ない順"
   }
 }

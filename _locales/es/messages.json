@@ -253,5 +253,57 @@
   },
   "readerLoading": {
     "message": "Leyendo…"
+  },
+  "sortBy": {
+    "message": "Orden"
+  },
+  "sortCurrent": {
+    "message": "Orden: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "Invertir el orden, $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "Última actividad"
+  },
+  "sortTitle": {
+    "message": "Título"
+  },
+  "sortCaptured": {
+    "message": "Hora de captura"
+  },
+  "sortCount": {
+    "message": "Número de mensajes"
+  },
+  "sortRelevance": {
+    "message": "Relevancia"
+  },
+  "sortDirNewest": {
+    "message": "Más reciente"
+  },
+  "sortDirOldest": {
+    "message": "Más antiguo"
+  },
+  "sortDirAz": {
+    "message": "A a Z"
+  },
+  "sortDirZa": {
+    "message": "Z a A"
+  },
+  "sortDirMore": {
+    "message": "Más primero"
+  },
+  "sortDirFewer": {
+    "message": "Menos primero"
   }
 }

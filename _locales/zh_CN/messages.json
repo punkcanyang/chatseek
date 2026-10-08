@@ -253,5 +253,57 @@
   },
   "readerLoading": {
     "message": "正在读取…"
+  },
+  "sortBy": {
+    "message": "排序"
+  },
+  "sortCurrent": {
+    "message": "排序：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "切换排序方向，$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "最后对话时间"
+  },
+  "sortTitle": {
+    "message": "标题"
+  },
+  "sortCaptured": {
+    "message": "收录时间"
+  },
+  "sortCount": {
+    "message": "消息数"
+  },
+  "sortRelevance": {
+    "message": "相关度"
+  },
+  "sortDirNewest": {
+    "message": "新→旧"
+  },
+  "sortDirOldest": {
+    "message": "旧→新"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "多→少"
+  },
+  "sortDirFewer": {
+    "message": "少→多"
   }
 }

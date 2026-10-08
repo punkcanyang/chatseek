@@ -253,5 +253,57 @@
   },
   "readerLoading": {
     "message": "Lecture…"
+  },
+  "sortBy": {
+    "message": "Tri"
+  },
+  "sortCurrent": {
+    "message": "Tri : $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "Inverser le tri, $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "Dernière activité"
+  },
+  "sortTitle": {
+    "message": "Titre"
+  },
+  "sortCaptured": {
+    "message": "Heure de capture"
+  },
+  "sortCount": {
+    "message": "Nombre de messages"
+  },
+  "sortRelevance": {
+    "message": "Pertinence"
+  },
+  "sortDirNewest": {
+    "message": "Plus récent"
+  },
+  "sortDirOldest": {
+    "message": "Plus ancien"
+  },
+  "sortDirAz": {
+    "message": "A à Z"
+  },
+  "sortDirZa": {
+    "message": "Z à A"
+  },
+  "sortDirMore": {
+    "message": "Plus nombreux"
+  },
+  "sortDirFewer": {
+    "message": "Moins nombreux"
   }
 }

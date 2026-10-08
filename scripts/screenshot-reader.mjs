@@ -43,6 +43,19 @@ function rows(now) {
     {
       conv: conv(
         "chatgpt",
+        "66666666-6666-4666-8666-666666666666",
+        "安静的咖啡馆",
+        "https://chatgpt.com/c/66666666-6666-4666-8666-666666666666",
+        now - 8 * 60 * 1000,
+      ),
+      messages: [
+        user("chatgpt:66666666-6666-4666-8666-666666666666:u", "靠窗的位置就好。"),
+        bot("chatgpt:66666666-6666-4666-8666-666666666666:a", "我记下了。"),
+      ],
+    },
+    {
+      conv: conv(
+        "chatgpt",
         walk,
         "从京都车站走到哲学之道再折回四条河原町的红叶散步路线，标题故意写长以便确认圆形按钮不会盖住文字也不会压到绿色边框",
         `https://chatgpt.com/c/${walk}`,
@@ -244,12 +257,58 @@ async function main() {
     await mkdir(artifacts, { recursive: true });
     const shots = {
       panel: join(docs, "panel-1.5.0-read.png"),
+      sortMenu: join(docs, "panel-1.5.0-sort-menu.png"),
+      sortRelevance: join(docs, "panel-1.5.0-sort-relevance.png"),
       removeX: join(docs, "panel-1.5.0-remove-x.png"),
       hit: join(docs, "reader-1.5.0-hit.png"),
       titleOnly: join(docs, "reader-1.5.0-title-only.png"),
       archived: join(docs, "reader-1.5.0-archived.png"),
     };
     await page.screenshot({ path: shots.panel, fullPage: true });
+
+    await page.select("#lang", "zh-TW");
+    await page.waitForFunction(() => document.getElementById("sortField")?.textContent === "最後對話時間", { timeout: 10000 });
+    await page.click("#sortField");
+    await page.waitForFunction(() => {
+      const menu = document.getElementById("sortMenu");
+      return menu && !menu.hidden && (menu.textContent || "").includes("收錄時間") && !(menu.textContent || "").includes("相關度");
+    }, { timeout: 10000 });
+    const menuClip = await page.evaluate(() => {
+      const bar = document.getElementById("sortBar").getBoundingClientRect();
+      const menu = document.getElementById("sortMenu").getBoundingClientRect();
+      const top = Math.max(0, Math.min(bar.top, menu.top) - 12);
+      const bottom = Math.max(bar.bottom, menu.bottom) + 16;
+      return { x: 0, y: window.scrollY + top, width: 440, height: Math.ceil(bottom - top) };
+    });
+    await page.screenshot({ path: shots.sortMenu, clip: menuClip });
+    await page.keyboard.press("Escape");
+    await page.click("#q");
+    await page.keyboard.type("咖啡馆");
+    await page.waitForFunction(() => {
+      const label = document.getElementById("sortField")?.textContent || "";
+      const first = document.querySelector(".item-title")?.textContent || "";
+      return label === "相關度" && first.includes("咖啡馆");
+    }, { timeout: 10000 });
+    const searchClip = await page.evaluate(() => {
+      const search = document.querySelector(".search").getBoundingClientRect();
+      const rows = [...document.querySelectorAll(".row")].slice(0, 2);
+      const bottom = rows.length ? rows[rows.length - 1].getBoundingClientRect().bottom : search.bottom + 80;
+      const top = Math.max(0, search.top - 8);
+      return { x: 0, y: window.scrollY + top, width: 440, height: Math.ceil(bottom - top + 12) };
+    });
+    await page.screenshot({ path: shots.sortRelevance, clip: searchClip });
+    await page.select("#lang", "zh-CN");
+    await page.evaluate(() => {
+      const input = document.getElementById("q");
+      input.value = "";
+      input.dispatchEvent(new Event("input"));
+      window.scrollTo(0, 0);
+    });
+    await page.waitForFunction(() => {
+      const read = document.querySelector(".read")?.textContent || "";
+      const sort = document.getElementById("sortField")?.textContent || "";
+      return read === "阅读" && sort === "最后对话时间" && !document.getElementById("q").value;
+    }, { timeout: 10000 });
 
     await page.setViewport({ width: 360, height: 900, deviceScaleFactor: 2 });
     await page.evaluate(() => {

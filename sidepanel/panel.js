@@ -12,9 +12,20 @@ import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-ur
 import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
+import {
+  BROWSE_FIELDS,
+  SEARCH_FIELDS,
+  SORT_KEY,
+  activeSort,
+  directionLabelKey,
+  parseSortPref,
+  readSortPref,
+  sortLabelKey,
+  writeSortPref,
+} from "../src/sort-list.js";
 
-// The panel is an extension page, so its own localStorage keeps the choice
-// without the "storage" permission. Only the panel reads it.
+// The panel is an extension page, so its own localStorage keeps the language
+// and the list sort without the "storage" permission. Only the panel reads them.
 const STORAGE_KEY = "chatseek.uiLocale";
 
 function browserLocale() {
@@ -81,6 +92,20 @@ function bundle(code) {
     read: say("read"),
     langLabel: say("langLabel"),
     langFollow: say("langFollow"),
+    sortBy: say("sortBy"),
+    sortCurrent: (name) => say("sortCurrent", name),
+    sortDirHint: (name) => say("sortDirHint", name),
+    sortActivity: say("sortActivity"),
+    sortTitle: say("sortTitle"),
+    sortCaptured: say("sortCaptured"),
+    sortCount: say("sortCount"),
+    sortRelevance: say("sortRelevance"),
+    sortDirNewest: say("sortDirNewest"),
+    sortDirOldest: say("sortDirOldest"),
+    sortDirAz: say("sortDirAz"),
+    sortDirZa: say("sortDirZa"),
+    sortDirMore: say("sortDirMore"),
+    sortDirFewer: say("sortDirFewer"),
     chatgpt: "ChatGPT",
     claude: "Claude",
     grok: "Grok",
@@ -109,6 +134,11 @@ const removeTitle = document.getElementById("removeTitle");
 const removeBody = document.getElementById("removeBody");
 const removeCancel = document.getElementById("removeCancel");
 const removeConfirm = document.getElementById("removeConfirm");
+const sortFieldBtn = document.getElementById("sortField");
+const sortDirBtn = document.getElementById("sortDir");
+const sortMenu = document.getElementById("sortMenu");
+
+let sortPref = readSortPref();
 
 let scope = "active";
 let platform = "";
@@ -152,6 +182,7 @@ function applyStatic() {
   if (removeCancel) removeCancel.textContent = t.cancel;
   if (removeConfirm) removeConfirm.textContent = t.confirmRemove;
   fillLanguageSelect();
+  renderSortControls();
 }
 
 function fillLanguageSelect() {
@@ -367,7 +398,95 @@ async function renderHealth() {
   }
 }
 
+function searchingNow() {
+  return !!qEl.value.trim();
+}
+
+function labelFor(key) {
+  const value = t[key];
+  return typeof value === "string" ? value : "";
+}
+
+function renderSortControls() {
+  if (!sortFieldBtn || !sortDirBtn || !sortMenu) return;
+  const searching = searchingNow();
+  const choice = activeSort(sortPref, { searching, locale: localeCode });
+  const fields = searching ? SEARCH_FIELDS : BROWSE_FIELDS;
+  const fieldName = labelFor(sortLabelKey(choice.field));
+  const dirName = labelFor(directionLabelKey(choice.field, choice.dir));
+  sortFieldBtn.textContent = fieldName;
+  sortFieldBtn.setAttribute("aria-label", t.sortCurrent(fieldName));
+  sortDirBtn.textContent = dirName;
+  sortDirBtn.setAttribute("aria-label", t.sortDirHint(dirName));
+  const wasOpen = !sortMenu.hidden;
+  sortMenu.replaceChildren();
+  sortMenu.setAttribute("aria-label", t.sortBy);
+  for (const field of fields) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "sort-option";
+    item.setAttribute("role", "menuitemradio");
+    item.dataset.field = field;
+    const on = field === choice.field;
+    item.setAttribute("aria-checked", on ? "true" : "false");
+    item.tabIndex = on ? 0 : -1;
+    item.textContent = labelFor(sortLabelKey(field));
+    item.addEventListener("click", () => chooseSortField(field));
+    sortMenu.append(item);
+  }
+  sortMenu.hidden = !wasOpen;
+  sortFieldBtn.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+}
+
+function focusSortOption(el) {
+  if (!el || !sortMenu) return;
+  for (const item of sortMenu.querySelectorAll(".sort-option")) {
+    item.tabIndex = item === el ? 0 : -1;
+  }
+  el.focus();
+}
+
+function openSortMenu() {
+  if (!sortMenu || !sortFieldBtn) return;
+  renderSortControls();
+  sortMenu.hidden = false;
+  sortFieldBtn.setAttribute("aria-expanded", "true");
+  const selected = sortMenu.querySelector('[aria-checked="true"]') || sortMenu.querySelector(".sort-option");
+  focusSortOption(selected);
+}
+
+function closeSortMenu() {
+  if (!sortMenu || !sortFieldBtn) return;
+  sortMenu.hidden = true;
+  sortFieldBtn.setAttribute("aria-expanded", "false");
+}
+
+function chooseSortField(field) {
+  const allowed = searchingNow() ? SEARCH_FIELDS : BROWSE_FIELDS;
+  if (!allowed.includes(field)) return;
+  if (searchingNow()) sortPref.searchField = field;
+  else sortPref.field = field;
+  sortPref = parseSortPref(sortPref);
+  writeSortPref(sortPref);
+  closeSortMenu();
+  renderSortControls();
+  refresh();
+}
+
+function toggleSortDir() {
+  const searching = searchingNow();
+  const choice = activeSort(sortPref, { searching, locale: localeCode });
+  const next = choice.dir === "asc" ? "desc" : "asc";
+  if (searching) sortPref.searchDirs[choice.field] = next;
+  else sortPref.dirs[choice.field] = next;
+  sortPref = parseSortPref(sortPref);
+  writeSortPref(sortPref);
+  renderSortControls();
+  refresh();
+}
+
 async function refresh() {
+  renderSortControls();
   const seq = ++requestSeq;
   const query = qEl.value;
   const showStatus = !loadedOnce || !!query.trim();
@@ -379,6 +498,7 @@ async function refresh() {
       platform: scope === "platform" ? platform : "",
       scope: scope === "platform" ? "active" : scope,
       limit: 80,
+      sort: activeSort(sortPref, { searching: !!query.trim(), locale: localeCode }),
     });
     if (seq !== requestSeq) return;
     const shown = await attachPreviews(items, query);
@@ -447,7 +567,73 @@ removeDialog?.addEventListener("click", (event) => {
   if (event.target === removeDialog) closeRemove(false);
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && removeDialog && !removeDialog.hidden) closeRemove(false);
+  if (event.key !== "Escape") return;
+  if (removeDialog && !removeDialog.hidden) {
+    closeRemove(false);
+    return;
+  }
+  if (sortMenu && !sortMenu.hidden) {
+    closeSortMenu();
+    sortFieldBtn?.focus();
+  }
+});
+
+sortFieldBtn?.addEventListener("click", () => {
+  if (sortMenu?.hidden) openSortMenu();
+  else closeSortMenu();
+});
+sortFieldBtn?.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+  event.preventDefault();
+  if (event.repeat) return;
+  if (sortMenu?.hidden) openSortMenu();
+  else if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") closeSortMenu();
+});
+sortDirBtn?.addEventListener("click", () => toggleSortDir());
+sortDirBtn?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+  event.preventDefault();
+  if (event.repeat) return;
+  toggleSortDir();
+});
+sortMenu?.addEventListener("keydown", (event) => {
+  const items = [...sortMenu.querySelectorAll(".sort-option")];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const next = items[(index + step + items.length) % items.length];
+    focusSortOption(next);
+    return;
+  }
+  if (event.key === "Home") {
+    event.preventDefault();
+    focusSortOption(items[0]);
+    return;
+  }
+  if (event.key === "End") {
+    event.preventDefault();
+    focusSortOption(items[items.length - 1]);
+    return;
+  }
+  if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+    event.preventDefault();
+    const host = event.target?.dataset ? event.target : document.activeElement;
+    const field = host?.dataset?.field;
+    if (field) chooseSortField(field);
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSortMenu();
+    sortFieldBtn?.focus();
+  }
+});
+document.addEventListener("click", (event) => {
+  if (!sortMenu || sortMenu.hidden) return;
+  if (sortFieldBtn?.contains(event.target)) return;
+  if (sortMenu.contains(event.target)) return;
+  closeSortMenu();
 });
 
 function setLocalePref(pref) {
@@ -465,9 +651,19 @@ langEl?.addEventListener("change", () => {
 
 // A side panel open in another window follows the change.
 window.addEventListener("storage", (event) => {
-  if (event.key !== STORAGE_KEY && event.key !== null) return;
-  const pref = readLocalePref();
-  if (pref !== localePref) setLocalePref(pref);
+  if (event.key !== null && event.key !== STORAGE_KEY && event.key !== SORT_KEY) return;
+  if (event.key === null || event.key === STORAGE_KEY) {
+    const pref = readLocalePref();
+    if (pref !== localePref) setLocalePref(pref);
+  }
+  if (event.key === null || event.key === SORT_KEY) {
+    const next = readSortPref();
+    if (JSON.stringify(next) !== JSON.stringify(parseSortPref(sortPref))) {
+      sortPref = next;
+      renderSortControls();
+      refresh();
+    }
+  }
 });
 
 document.addEventListener("visibilitychange", () => {

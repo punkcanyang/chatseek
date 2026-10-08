@@ -7,6 +7,7 @@ import {
   snippetTokens,
 } from "./preview.js";
 import { mergeMessageOrder, orderMessages } from "./message-order.js";
+import { compareConversations, relevanceScore } from "./sort-list.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 3;
@@ -495,7 +496,10 @@ function intersectSets(sets) {
  */
 export async function searchConversations(options = {}) {
   const q = (options.query || "").trim();
-  if (!q) return listRecent(options);
+  if (!q) {
+    if (options.sort) return withDb((db) => listSortedOn(db, options));
+    return listRecent(options);
+  }
   return withDb((db) => searchOn(db, options));
 }
 
@@ -504,6 +508,7 @@ async function searchOn(db, {
   platform = "",
   scope = "all",
   limit = 80,
+  sort,
 } = {}) {
   const q = query.trim();
   const tokens = queryTokens(q);
@@ -535,8 +540,31 @@ async function searchOn(db, {
     if (!passesScope(conv, { platform, scope })) continue;
     matches.push(conv);
   }
-  matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (sort?.field) {
+    for (const conv of matches) {
+      conv.relevance = relevanceScore(conv, {
+        tokenSets,
+        titleHit: fromTitle.has(conv.id),
+        tokens,
+      });
+    }
+    matches.sort((a, b) => compareConversations(a, b, sort));
+  } else {
+    matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
   return matches.slice(0, limit);
+}
+
+/** Every in-scope conversation record, sorted, then limited. Does not open messages. */
+async function listSortedOn(db, { platform = "", scope = "all", limit = 80, sort } = {}) {
+  const tx = db.transaction("conversations", "readonly");
+  const items = [];
+  await cursorEach(tx.objectStore("conversations"), {}, (conv) => {
+    if (!passesScope(conv, { platform, scope })) return;
+    items.push(conv);
+  });
+  items.sort((a, b) => compareConversations(a, b, sort));
+  return items.slice(0, limit);
 }
 
 export async function listRecent(options = {}) {

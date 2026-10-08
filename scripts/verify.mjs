@@ -177,6 +177,7 @@ for (const rel of [
   "src/message-order.js",
   "src/reader-url.js",
   "src/reader-view.js",
+  "src/sort-list.js",
   "reader/reader.js",
   "sidepanel/panel.js",
 ]) {

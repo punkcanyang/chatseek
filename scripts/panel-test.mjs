@@ -499,5 +499,55 @@ assert(
   "exactly one tab is selected",
 );
 
+const sortField = document.getElementById("sortField");
+const sortDir = document.getElementById("sortDir");
+const sortMenu = document.getElementById("sortMenu");
+assert(sortField.textContent === "最后对话时间" && sortDir.textContent === "新→旧", "default sort is newest activity");
+assert(sortMenu.hidden && sortField.getAttribute("aria-expanded") === "false", "sort menu starts closed");
+sortField.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+await until(() => !sortMenu.hidden, "ArrowDown opens the sort menu");
+assert(sortField.getAttribute("aria-expanded") === "true", "sort button exposes the open menu");
+assert(!sortMenu.querySelector('[data-field="relevance"]'), "relevance is absent until there is a query");
+assert(sortMenu.querySelector('[data-field="title"]')?.getAttribute("role") === "menuitemradio", "sort choices are radio menu items");
+sortMenu.querySelector('[data-field="title"]').dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+await until(() => sortMenu.hidden && sortField.textContent === "标题", "Enter selects title sort");
+assert(sortDir.textContent === "A→Z", "title starts at A to Z");
+const titleIds = () => [...document.querySelectorAll(".item")].map((el) => el.dataset.id);
+assert(titleIds().indexOf(A.id) < titleIds().indexOf(B.id), "A to Z puts Alpha before Bravo");
+const saved = JSON.parse(store.get("chatseek.listSort"));
+assert(saved.field === "title" && saved.dirs.title === "asc" && saved.searchField === "relevance", "browse sort is stored apart from the search default");
+sortDir.dispatchEvent(new window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+await until(() => sortDir.textContent === "Z→A", "Space reverses the direction");
+await until(() => document.querySelector(".item-title")?.textContent.startsWith("Legacyzeta"), "Z to A brings the last title to the top");
+document.getElementById("filterArchived").click();
+await until(() => document.getElementById("sortField").textContent === "标题", "archived tab keeps the sort");
+document.getElementById("filterAll").click();
+await until(() => document.getElementById("sortField").textContent === "标题" && sortDir.textContent === "Z→A", "all tab keeps the same sort");
+store.set("chatseek.listSort", JSON.stringify({
+  field: "count",
+  dirs: { activity: "desc", title: "asc", captured: "desc", count: "asc" },
+  searchField: "relevance",
+  searchDirs: { relevance: "desc", activity: "desc", title: "asc", captured: "desc", count: "desc" },
+}));
+window.dispatchEvent(new window.StorageEvent("storage", { key: "chatseek.listSort" }));
+await until(() => sortField.textContent === "消息数" && sortDir.textContent === "少→多", "another panel's sort arrives");
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "相关度" && sortDir.textContent === "多→少", "search switches to relevance");
+sortField.click();
+await until(() => !sortMenu.hidden && sortMenu.querySelector('[data-field="relevance"][aria-checked="true"]'), "relevance is checked in the menu");
+sortField.click();
+sortDir.click();
+await until(() => sortDir.textContent === "少→多", "search direction is its own toggle");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "消息数" && sortDir.textContent === "少→多", "clearing search restores the saved non-search sort");
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "相关度" && sortDir.textContent === "少→多", "the search direction is remembered");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "消息数", "search cleared again");
+
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);
