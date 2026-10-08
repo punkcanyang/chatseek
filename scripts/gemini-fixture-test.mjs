@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { applySidebarEstimates, formatActivityLabel } from "../src/activity-time.js";
+import { applySidebarEstimates, formatAbsoluteStamp, formatActivityLabel } from "../src/activity-time.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sharedSrc = readFileSync(join(root, "content/shared.js"), "utf8");
@@ -13,10 +13,8 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-function absoluteStamp(ts) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function absoluteStamp(ts, locale) {
+  return formatAbsoluteStamp(ts, locale);
 }
 
 function load(html, url) {
@@ -180,13 +178,12 @@ assert(estNew.updatedAtSource === "sidebar-rank" && estOld.updatedAtSource === "
 assert(estNew.updatedAt > estMid.updatedAt && estOld.updatedAt < estMid.updatedAt, "sidebar estimate should keep newest first");
 assert(estNew.olderThanAt == null, "the row above the clock has no before-bound");
 assert(estOld.olderThanAt === exact, "the row below stores the exact anchor time");
-const stamp = absoluteStamp(exact);
 const belowHant = formatActivityLabel(estOld, Date.now(), "zh-TW");
 const belowHans = formatActivityLabel(estOld, Date.now(), "zh-CN");
 const belowEn = formatActivityLabel(estOld, Date.now(), "en");
-assert(belowHant.before && belowHant.text === `早於 ${stamp}` && !belowHant.text.includes("約"), belowHant.text);
-assert(belowHans.before && belowHans.text === `早于 ${stamp}` && !belowHans.text.includes("约"), belowHans.text);
-assert(belowEn.before && belowEn.text === `before ${stamp}`, belowEn.text);
+assert(belowHant.before && belowHant.text === `早於 ${absoluteStamp(exact, "zh-TW")}` && !belowHant.text.includes("約"), belowHant.text);
+assert(belowHans.before && belowHans.text === `早于 ${absoluteStamp(exact, "zh-CN")}` && !belowHans.text.includes("约"), belowHans.text);
+assert(belowEn.before && belowEn.text === `before ${absoluteStamp(exact, "en")}`, belowEn.text);
 const aboveHant = formatActivityLabel(estNew, Date.now(), "zh-TW");
 assert(aboveHant.unknown && aboveHant.text.includes("日期未知（收錄於") && !aboveHant.text.includes("約"), aboveHant.text);
 const midLabel = formatActivityLabel(estMid, Date.now(), "zh-TW");

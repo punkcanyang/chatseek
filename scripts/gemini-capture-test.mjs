@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { formatActivityLabel } from "../src/activity-time.js";
+import { formatAbsoluteStamp, formatActivityLabel } from "../src/activity-time.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sharedSrc = readFileSync(join(root, "content/shared.js"), "utf8");
@@ -15,10 +15,8 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-function absoluteStamp(ts) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function absoluteStamp(ts, locale) {
+  return formatAbsoluteStamp(ts, locale);
 }
 
 let listener = null;
@@ -156,16 +154,15 @@ const aboveLabel = formatActivityLabel(rows[aboveId], Date.now(), "zh-TW");
 assert(rows[aboveId].updatedAtSource === "sidebar-rank" && rows[aboveId].olderThanAt == null, aboveId);
 assert(aboveLabel.unknown && aboveLabel.text.startsWith("日期未知（收錄於"), aboveLabel.text);
 assert(!aboveLabel.text.includes("約") && !aboveLabel.text.includes("早於"), aboveLabel.text);
-const boundStamp = absoluteStamp(anchor.updatedAt);
 for (const id of ROWS.slice(2)) {
   assert(rows[id].updatedAtSource === "sidebar-rank", `${id} should be estimated, got ${rows[id].updatedAtSource}`);
   assert(rows[id].olderThanAt === anchor.updatedAt, `${id} should use the nearest clock above`);
   const hant = formatActivityLabel(rows[id], Date.now(), "zh-TW");
   const hans = formatActivityLabel(rows[id], Date.now(), "zh-CN");
   const en = formatActivityLabel(rows[id], Date.now(), "en");
-  assert(hant.before && hant.text === `早於 ${boundStamp}` && !hant.text.includes("約"), hant.text);
-  assert(hans.before && hans.text === `早于 ${boundStamp}` && !hans.text.includes("约"), hans.text);
-  assert(en.before && en.text === `before ${boundStamp}`, en.text);
+  assert(hant.before && hant.text === `早於 ${absoluteStamp(anchor.updatedAt, "zh-TW")}` && !hant.text.includes("約"), hant.text);
+  assert(hans.before && hans.text === `早于 ${absoluteStamp(anchor.updatedAt, "zh-CN")}` && !hans.text.includes("约"), hans.text);
+  assert(en.before && en.text === `before ${absoluteStamp(anchor.updatedAt, "en")}`, en.text);
   assert(hant.text === formatActivityLabel(rows[ROWS[2]], Date.now(), "zh-TW").text, "rows under one clock share a label");
 }
 assert(rows[ROWS[0]].updatedAt >= anchor.updatedAt, "row above the anchor must not sort older than it");
@@ -186,11 +183,13 @@ assert(await gemini.capture(), "reorder capture failed");
 rows = await stored();
 assert((await order()).join() === moved.join(), `order after reorder: ${(await order()).join()}`);
 assert(rows[OPEN].updatedAtSource === "observed", "reorder must not downgrade the observed anchor");
-const movedStamp = absoluteStamp(rows[OPEN].updatedAt);
 for (const id of moved.slice(1)) {
   assert(rows[id].updatedAtSource === "sidebar-rank", `${id} after reorder: ${rows[id].updatedAtSource}`);
   assert(rows[id].olderThanAt === rows[OPEN].updatedAt, `${id} after reorder should sit before the open chat`);
-  assert(formatActivityLabel(rows[id], Date.now(), "zh-TW").text === `早於 ${movedStamp}`, id);
+  assert(
+    formatActivityLabel(rows[id], Date.now(), "zh-TW").text === `早於 ${absoluteStamp(rows[OPEN].updatedAt, "zh-TW")}`,
+    id,
+  );
 }
 
 assert(Object.values(TITLES).every((title) => Object.values(rows).some((row) => row.title === title)), "titles drifted");

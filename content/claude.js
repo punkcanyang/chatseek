@@ -1,5 +1,7 @@
 (() => {
   const PLATFORM = "claude";
+  // claude.ai has no conversation archive banner or archived-chat list.
+  // Project archive is a different object. Do not mark chats archived.
   const state = { lastListFp: "", lastMsgFp: "" };
   const MESSAGE_SELECTORS = [
     '[data-testid="user-message"]',

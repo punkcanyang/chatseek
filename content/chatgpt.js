@@ -42,32 +42,61 @@
     return cachedJsonTimes;
   }
 
-  function extractSidebar(doc) {
+  function rowFromAnchor(a, times, sectionMap, slot) {
+    const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+    if (!id) return null;
+    const title = Chatseek.textOf(a);
+    if (!title) return null;
+    const conv = {
+      id: `${PLATFORM}:${id}`,
+      platform: PLATFORM,
+      platformId: id,
+      title,
+      url: canonicalUrl(id),
+    };
+    if (slot && slot.sidebarIndex != null) conv.sidebarIndex = slot.sidebarIndex;
+    Chatseek.attachPageTime(conv, a, times, sectionMap);
+    return conv;
+  }
+
+  function extractArchivedList(doc, archiveRoot) {
+    if (!archiveRoot) return [];
+    const root = doc || document;
+    const byId = new Map();
+    const times = jsonTimes(root);
+    const anchors = [];
+    archiveRoot.querySelectorAll('a[href*="/c/"]').forEach((a) => {
+      const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
+      if (!id) return;
+      anchors.push(a);
+    });
+    const sectionMap = Chatseek.sectionTimesFor(anchors);
+    for (const a of anchors) {
+      const conv = rowFromAnchor(a, times, sectionMap, null);
+      if (!conv) continue;
+      conv.archived = true;
+      conv.archiveSource = "chatgpt:archive-list";
+      delete conv.sidebarIndex;
+      Chatseek.rememberConv(byId, conv);
+    }
+    return [...byId.values()];
+  }
+
+  function extractSidebar(doc, archiveRoot) {
     const root = doc || document;
     const byId = new Map();
     const times = jsonTimes(root);
     const anchors = [];
     root.querySelectorAll('a[href*="/c/"]').forEach((a) => {
+      if (archiveRoot && archiveRoot.contains(a)) return;
       const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
     });
     const sectionMap = Chatseek.sectionTimesFor(anchors);
     for (const slot of Chatseek.sidebarSlots(anchors)) {
-      const a = slot.el;
-      const id = Chatseek.uuidFrom(a.getAttribute("href") || a.href);
-      if (!id) continue;
-      const title = Chatseek.textOf(a);
-      if (!title) continue;
-      const conv = {
-        id: `${PLATFORM}:${id}`,
-        platform: PLATFORM,
-        platformId: id,
-        title,
-        url: canonicalUrl(id),
-      };
-      if (slot.sidebarIndex != null) conv.sidebarIndex = slot.sidebarIndex;
-      Chatseek.attachPageTime(conv, a, times, sectionMap);
+      const conv = rowFromAnchor(slot.el, times, sectionMap, slot);
+      if (!conv) continue;
       Chatseek.rememberConv(byId, conv);
     }
     return [...byId.values()];
@@ -149,10 +178,20 @@
     };
   }
 
+  function markSeenActive(conv, source) {
+    conv.archived = false;
+    conv.archiveSource = source;
+    return conv;
+  }
+
   async function capture(doc, loc) {
     const root = doc || document;
     const here = loc || location;
-    const sidebar = extractSidebar(root);
+    const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
+    const sidebar = extractSidebar(root, signals.archiveRoot).map((conv) =>
+      markSeenActive(conv, "chatgpt:sidebar"),
+    );
+    const archivedRows = extractArchivedList(root, signals.archiveRoot);
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : conversationIdFromLocation(here);
     let conversation = null;
@@ -168,11 +207,22 @@
         url: canonicalUrl(platformId),
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes(root));
+      // The live sidebar is a non-archived context and wins over a stale banner.
+      // A banner or archive-list-only view is the explicit archived signal.
+      if (fromSidebar) markSeenActive(conversation, "chatgpt:sidebar");
+      else if (signals.banner) {
+        conversation.archived = true;
+        conversation.archiveSource = "chatgpt:banner";
+      } else if (archivedRows.some((row) => row.platformId === platformId)) {
+        conversation.archived = true;
+        conversation.archiveSource = "chatgpt:archive-list";
+      } else markSeenActive(conversation, "chatgpt:conversation");
       extracted = extractMessages(platformId, root);
     }
     return Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
+      archivedRows,
       conversation,
       messages: extracted.messages,
       health: {

@@ -8,7 +8,7 @@ import {
 } from "./preview.js";
 
 const DB_NAME = "chatseek";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise;
 
@@ -52,7 +52,7 @@ export function openDb() {
         dbPromise = null;
         reject(req.error || new Error("indexedDB open failed"));
       };
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (event) => {
         const db = req.result;
         if (!db.objectStoreNames.contains("conversations")) {
           const conv = db.createObjectStore("conversations", { keyPath: "id" });
@@ -73,6 +73,21 @@ export function openDb() {
         // Capture health and other small flags. Not part of search.
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta", { keyPath: "key" });
+        }
+        // 1.4.0: archived is a field on the conversation. The index exists so
+        // the upgrade is a real schema step; listing still filters in the
+        // updatedAt cursor because rows saved before this version have no
+        // archived property and would be missing from an archived=false index.
+        if (event.oldVersion < 3) {
+          const tx = req.transaction;
+          const conv = tx.objectStore("conversations");
+          if (!conv.indexNames.contains("archived")) {
+            conv.createIndex("archived", "archived");
+          }
+          const tokens = tx.objectStore("tokenMap");
+          if (!tokens.indexNames.contains("conversationId")) {
+            tokens.createIndex("conversationId", "conversationId");
+          }
         }
       };
       req.onsuccess = () => {
@@ -149,6 +164,41 @@ function deleteTokens(tokenStore, tokens, conversationId, source) {
   }
 }
 
+/**
+ * archived true only when this observation explicitly says so.
+ * archived false restores active (seen again outside an archive banner/list).
+ * Omitted leaves the stored flag alone — leaving the sidebar is not a signal.
+ */
+function applyArchiveState(next, old, incoming, now) {
+  if (incoming.archived === true) {
+    const source = String(incoming.archiveSource || "explicit").slice(0, 80);
+    const changed = old?.archived !== true || old?.archiveSource !== source;
+    next.archived = true;
+    next.archiveSource = source;
+    next.archivedAt = !changed && isValidPageMs(old?.archivedAt) ? old.archivedAt : now;
+    return;
+  }
+  if (incoming.archived === false) {
+    next.archived = false;
+    delete next.archiveSource;
+    delete next.archivedAt;
+    return;
+  }
+  if (old?.archived === true) {
+    next.archived = true;
+    if (old.archiveSource) next.archiveSource = old.archiveSource;
+    if (isValidPageMs(old.archivedAt)) next.archivedAt = old.archivedAt;
+  }
+}
+
+export function passesScope(conv, { platform = "", scope = "all" } = {}) {
+  if (!conv) return false;
+  if (platform && conv.platform !== platform) return false;
+  if (scope === "active") return conv.archived !== true;
+  if (scope === "archived") return conv.archived === true;
+  return true;
+}
+
 export async function upsertConversations(list) {
   if (!list?.length) return;
   return withDb((db) => writeConversations(db, list));
@@ -200,7 +250,7 @@ async function writeConversations(db, list) {
     next.sidebarIndex = Number.isInteger(incoming.sidebarIndex)
       ? incoming.sidebarIndex
       : null;
-    drafts.push({ old, next });
+    drafts.push({ old, next, incoming });
   }
 
   const ordered = drafts
@@ -219,11 +269,12 @@ async function writeConversations(db, list) {
     });
   }
 
-  for (const { old, next } of drafts) {
+  for (const { old, next, incoming } of drafts) {
     delete next.sidebarIndex;
     if (next.updatedAtSource !== "sidebar-rank" || !isValidPageMs(next.olderThanAt)) {
       delete next.olderThanAt;
     }
+    applyArchiveState(next, old, incoming, Date.now());
     const oldTitleTokens = tokenize(old?.title || "");
     const newTitleTokens = tokenize(next.title || "");
     if (old && old.title !== next.title) {
@@ -437,6 +488,7 @@ export async function searchConversations(options = {}) {
 async function searchOn(db, {
   query = "",
   platform = "",
+  scope = "all",
   limit = 80,
 } = {}) {
   const q = query.trim();
@@ -455,7 +507,7 @@ async function searchOn(db, {
   const needle = q.toLowerCase().normalize("NFKC");
   const fromTitle = new Set();
   await cursorEach(convStore, {}, (conv) => {
-    if (platform && conv.platform !== platform) return;
+    if (!passesScope(conv, { platform, scope })) return;
     if (titleContainsQuery(conv.title, needle)) {
       fromTitle.add(conv.id);
     }
@@ -466,7 +518,7 @@ async function searchOn(db, {
   for (const id of ids) {
     const conv = await requestDone(convStore.get(id));
     if (!conv) continue;
-    if (platform && conv.platform !== platform) continue;
+    if (!passesScope(conv, { platform, scope })) continue;
     matches.push(conv);
   }
   matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -477,12 +529,12 @@ export async function listRecent(options = {}) {
   return withDb((db) => listRecentOn(db, options));
 }
 
-async function listRecentOn(db, { platform = "", limit = 80 } = {}) {
+async function listRecentOn(db, { platform = "", scope = "all", limit = 80 } = {}) {
   const tx = db.transaction("conversations", "readonly");
   const index = tx.objectStore("conversations").index("updatedAt");
   const items = [];
   await cursorEach(index, { direction: "prev" }, (conv) => {
-    if (platform && conv.platform !== platform) return;
+    if (!passesScope(conv, { platform, scope })) return;
     items.push(conv);
     return items.length >= limit;
   });
@@ -635,6 +687,36 @@ export async function readCaptureHealth() {
       if (row?.key?.startsWith?.("health:") && row.platform) out[row.platform] = row;
     });
     return out;
+  });
+}
+
+/**
+ * Deletes one conversation, its messages, and its inverted-index rows.
+ * Does not message the page. A later visit can capture the chat again.
+ */
+export async function removeConversation(id) {
+  if (typeof id !== "string" || !id) return;
+  return withDb(async (db) => {
+    const tx = db.transaction(["conversations", "messages", "tokenMap"], "readwrite");
+    tx.objectStore("conversations").delete(id);
+    const messages = tx.objectStore("messages").index("conversationId");
+    await cursorEach(messages, { range: IDBKeyRange.only(id) }, (_row, cursor) => {
+      cursor.delete();
+    });
+    const tokenStore = tx.objectStore("tokenMap");
+    const tokenIndex = tokenStore.indexNames.contains("conversationId")
+      ? tokenStore.index("conversationId")
+      : null;
+    if (tokenIndex) {
+      await cursorEach(tokenIndex, { range: IDBKeyRange.only(id) }, (_row, cursor) => {
+        cursor.delete();
+      });
+    } else {
+      await cursorEach(tokenStore, {}, (row, cursor) => {
+        if (row?.conversationId === id) cursor.delete();
+      });
+    }
+    await txDone(tx);
   });
 }
 

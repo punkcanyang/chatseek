@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "このパソコンで ChatGPT、Claude、Grok、Gemini の会話を検索。データはブラウザの外に出ません。"
+  },
+  "tag": {
+    "message": "このブラウザの中だけ"
+  },
+  "searchLabel": {
+    "message": "タイトルとメッセージ全文を検索"
+  },
+  "searchPlaceholder": {
+    "message": "会話を検索…"
+  },
+  "tabActive": {
+    "message": "アクティブ"
+  },
+  "tabArchived": {
+    "message": "アーカイブ"
+  },
+  "tabAll": {
+    "message": "すべて"
+  },
+  "empty": {
+    "message": "まだ会話がありません。ChatGPT、Claude、Grok、Gemini のタブを開き、一覧か会話を表示すると、タイトルと画面上のメッセージがこの端末の索引に保存されます。"
+  },
+  "none": {
+    "message": "一致する会話がありません。"
+  },
+  "loading": {
+    "message": "検索しています…"
+  },
+  "booting": {
+    "message": "ローカルの索引を読み込んでいます…"
+  },
+  "hint": {
+    "message": "開いている ChatGPT / Claude / Grok / Gemini のタブに表示された会話だけを保存します。ディスクの走査やアップロードはしません。拡張機能の更新後は会話のページを再読み込みしてください。メッセージを読めないページでは下に注意が出ます。"
+  },
+  "counts": {
+    "message": "$ARG1$ 件の会話 · $ARG2$ 件のメッセージ",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "タイトルのみ（メッセージ未保存）"
+  },
+  "clear": {
+    "message": "ローカル索引を消去"
+  },
+  "confirmClear": {
+    "message": "このブラウザの IndexedDB にある会話とメッセージをすべて削除しますか？元に戻せません。"
+  },
+  "error": {
+    "message": "ローカル索引を読み取れませんでした。"
+  },
+  "archivedBadge": {
+    "message": "アーカイブ済み"
+  },
+  "remove": {
+    "message": "索引から外す"
+  },
+  "confirmRemoveTitle": {
+    "message": "索引から外しますか？"
+  },
+  "confirmRemoveBody": {
+    "message": "「$ARG1$」をこの端末の索引から外しますか？サイト上の会話は削除されません。あとでその会話を開くと、もう一度索引に入ります。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "キャンセル"
+  },
+  "confirmRemove": {
+    "message": "外す"
+  },
+  "langLabel": {
+    "message": "言語"
+  },
+  "langFollow": {
+    "message": "ブラウザに合わせる"
+  },
+  "langNative": {
+    "message": "日本語"
+  },
+  "noDate": {
+    "message": "日付なし"
+  },
+  "justNow": {
+    "message": "たった今"
+  },
+  "minutes": {
+    "message": "$ARG1$ 分前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "$ARG1$ 時間前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "$ARG1$ 日前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "約 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "$ARG1$ より前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "上にある直近の確定時刻より前 · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "日付不明"
+  },
+  "unknownSaved": {
+    "message": "日付不明（保存 $ARG1$）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "保存 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "サイドバーのグループから推定"
+  },
+  "temporary": {
+    "message": "$ARG1$：一時チャットは保存しません",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "$ARG1$ のページが変わった可能性があります。報告してください（最終取得 $ARG2$、メッセージ 0 件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$：最終取得 $ARG2$、メッセージ $ARG3$ 件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$：最終取得 $ARG2$、サイドバー $ARG3$ 件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

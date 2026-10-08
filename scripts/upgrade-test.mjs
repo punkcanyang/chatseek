@@ -70,7 +70,8 @@ const db = await import("../src/db.js");
 const { formatActivityLabel } = await import("../src/activity-time.js");
 
 const handle = await db.openDb();
-assert(handle.version === 2, `expected DB version 2, got ${handle.version}`);
+assert(handle.version === 3, `expected DB version 3, got ${handle.version}`);
+assert(handle.transaction("conversations").objectStore("conversations").indexNames.contains("archived"), "upgrade should add the archived index");
 assert(handle.objectStoreNames.contains("meta"), "upgrade should add the meta store");
 
 const hits = await db.searchConversations({ query: "legacyneedle" });

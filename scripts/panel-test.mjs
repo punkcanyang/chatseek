@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { openDb, upsertConversations, upsertMessages } from "../src/db.js";
+import { openDb, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
 import {
   activeTabUrl,
   eventInWindow,
@@ -154,6 +154,7 @@ const active = {
 };
 let lastFocused = 1;
 const listeners = { message: [], activated: [], updated: [] };
+const store = {};
 globalThis.chrome = {
   windows: { async getCurrent() { return { id: 1 }; } },
   tabs: {
@@ -172,6 +173,15 @@ globalThis.chrome = {
     sendMessage() {},
   },
   action: { setBadgeText() { return Promise.resolve(); } },
+  storage: {
+    local: {
+      async get(key) {
+        if (typeof key === "string") return { [key]: store[key] };
+        return { ...store };
+      },
+      async set(obj) { Object.assign(store, obj); },
+    },
+  },
 };
 
 const message = (msg, sender = {}) => listeners.message.forEach((fn) => fn(msg, sender));
@@ -289,6 +299,88 @@ q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(B.id), "cleared search");
 assert(currentIds()[0] === fresh.id, "frame survives search and clear");
 assert(scrolled.length === scrolledBeforeSearch, "searching for the same chat does not scroll");
+
+const chips = [...document.querySelectorAll(".chip")].map((el) =>
+  el.dataset.scope === "platform" ? el.dataset.platform : el.dataset.scope,
+);
+assert(
+  chips.join(",") === "active,chatgpt,claude,grok,gemini,archived,all",
+  `tab order ${chips.join(",")}`,
+);
+assert(document.querySelector(".chip.is-on")?.dataset.scope === "active", "active tab is the default");
+
+const archivedId = `chatgpt:${uuid(77)}`;
+await upsertConversations([{
+  ...chatgpt(77),
+  title: "Archived fern notes",
+  updatedAt: Date.now(),
+  updatedAtSource: "page-exact",
+  archived: true,
+  archiveSource: "chatgpt:banner",
+  archivedAt: Date.now(),
+}]);
+await upsertMessages(
+  {
+    ...chatgpt(77),
+    title: "Archived fern notes",
+    archived: true,
+    archiveSource: "chatgpt:banner",
+  },
+  [{ id: `${archivedId}:u`, role: "user", body: "fern archive needle" }],
+  { pageMessageIds: [`${archivedId}:u`], captureId: "arch" },
+);
+message({ type: "INDEX_UPDATED" });
+await sleep(400);
+assert(!rowFor(archivedId), "active tab hides archived chats");
+q.value = "fern";
+q.dispatchEvent(new window.Event("input"));
+await sleep(400);
+assert(!rowFor(archivedId), "search on the active tab stays inside that tab");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await sleep(300);
+
+document.querySelector('[data-scope="archived"]').click();
+await until(() => rowFor(archivedId), "archived tab lists the archived chat");
+assert(rowFor(archivedId).querySelector(".badge-archived")?.textContent === "已归档", "zh-CN grey label says 已归档");
+assert(!rowFor(A.id), "archived tab hides active chats");
+q.value = "fern";
+q.dispatchEvent(new window.Event("input"));
+await until(() => rowFor(archivedId) && !document.querySelector(".empty"), "archived tab search finds the row");
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => !rowFor(A.id) && document.querySelector(".empty"), "archived search does not return active chats");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => rowFor(archivedId), "cleared archived search");
+
+document.querySelector('[data-platform="chatgpt"]').click();
+await until(() => rowFor(A.id) && !rowFor(archivedId), "ChatGPT tab is unarchived ChatGPT only");
+assert(!rowFor(G.id), "ChatGPT tab hides Gemini");
+
+document.querySelector("#filterAll").click();
+await until(() => rowFor(archivedId) && rowFor(A.id), "all tab includes archived and active");
+
+const removeBtn = rowFor(archivedId).parentElement.querySelector(".remove");
+removeBtn.click();
+const dialog = document.getElementById("removeDialog");
+await until(() => !dialog.hidden, "remove dialog opens");
+assert(document.getElementById("removeBody").textContent.includes("Archived fern notes"), "confirm names the chat");
+document.getElementById("removeCancel").click();
+await until(() => dialog.hidden, "cancel closes the dialog");
+assert(rowFor(archivedId), "cancel keeps the row");
+removeBtn.click();
+await until(() => !dialog.hidden, "remove dialog opens again");
+document.getElementById("removeConfirm").click();
+await until(() => !rowFor(archivedId), "confirm drops the row");
+const gone = await searchConversations({ query: "fern", scope: "all" });
+assert(gone.length === 0, "removed chat is gone from search");
+
+document.getElementById("lang").value = "en";
+document.getElementById("lang").dispatchEvent(new window.Event("change"));
+await until(() => document.getElementById("counts").textContent.includes("messages"), "manual English");
+assert(document.getElementById("filterActive").textContent === "Active", "English active tab");
+assert(store.uiLocale === "en", "language preference is stored");
 
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

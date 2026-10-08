@@ -836,9 +836,13 @@ const Chatseek = {
    *   { pathKind, selector, selectorsTried }
    * pathKind "conversation" + 0 messages raises the side-panel warning.
    */
-  async runCapture(state, { platform, sidebar, conversation, messages, health }) {
+  async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health }) {
     let ok = true;
     const list = sidebar || [];
+    const activeIds = new Set(list.map((row) => row && row.id).filter(Boolean));
+    // Archive-list rows never override a chat that is also in the live sidebar.
+    const archivedOnly = (archivedRows || []).filter((row) => row && row.id && !activeIds.has(row.id));
+    const combined = list.concat(archivedOnly);
     const msgs = (messages || []).filter((m) => m && m.id && m.body);
     // A thread is empty for a moment after SPA navigation while it loads.
     // Report 0 messages only once it stays empty; returning false makes
@@ -891,12 +895,13 @@ const Chatseek = {
     }
 
     const listFp = Chatseek.fingerprint(
-      list.map((c) =>
-        c.id + ":" + c.title + ":" + (c.updatedAt || "") + ":" + (c.updatedAtSource || "")
+      combined.map((c) =>
+        c.id + ":" + c.title + ":" + (c.updatedAt || "") + ":" + (c.updatedAtSource || "") +
+        ":" + (c.archived === true ? "1" : c.archived === false ? "0" : "")
       ),
     );
     if (listFp && listFp !== state.lastListFp) {
-      if (await Chatseek.sendConversations(platform, list)) {
+      if (await Chatseek.sendConversations(platform, combined)) {
         state.lastListFp = listFp;
       } else {
         ok = false;
@@ -905,7 +910,7 @@ const Chatseek = {
 
     if (!conversation) return ok;
 
-    const inSidebar = list.some((c) => c.platformId === conversation.platformId);
+    const inSidebar = combined.some((c) => c.platformId === conversation.platformId);
     if (!msgs.length) {
       if (!inSidebar) {
         const res = await Chatseek.send({
@@ -938,6 +943,8 @@ const Chatseek = {
       conversation.id,
       conversation.title,
       conversation.updatedAt || "",
+      conversation.archived === true ? "1" : conversation.archived === false ? "0" : "",
+      conversation.archiveSource || "",
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
     if (msgFp === state.lastMsgFp) return ok;
@@ -972,10 +979,155 @@ const Chatseek = {
     // The sidebar was written before this anchor existed. Rewrite it now so
     // its neighbours are estimated from the new time, even if the order did not move.
     if (observed && inSidebar) {
-      if (await Chatseek.sendConversations(platform, list)) state.lastListFp = listFp;
+      if (await Chatseek.sendConversations(platform, combined)) state.lastListFp = listFp;
       else ok = false;
     }
     return ok;
+  },
+
+  /**
+   * Explicit archive evidence only. Disappearing from a sidebar is not a signal.
+   * ChatGPT: a dialog/region titled like "Archived chats" (localized), or a short
+   * banner / Unarchive control on the open /c/ page outside the transcript,
+   * nav, and menus. Claude chats, Grok, and Gemini have no such surface, so
+   * they return supported:false and the caller must not change archived.
+   */
+  readArchiveSignals(doc, _loc, platform) {
+    const empty = { supported: false, archiveRoot: null, banner: false };
+    if (platform !== "chatgpt" || !doc?.querySelectorAll) return empty;
+    const archiveRoot = Chatseek._archiveListRoot(doc);
+    const banner = Chatseek._archiveBanner(doc, archiveRoot);
+    return { supported: true, archiveRoot, banner };
+  },
+
+  _normText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  },
+
+  _matchesArchiveHeading(value) {
+    const text = Chatseek._normText(value).toLowerCase();
+    if (!text || text.length > 80) return false;
+    const phrases = [
+      "archived chats",
+      "archived conversations",
+      "已封存的聊天",
+      "已封存聊天",
+      "已封存的對話",
+      "已封存對話",
+      "已归档的聊天",
+      "已归档聊天",
+      "已歸檔的聊天",
+      "已歸檔聊天",
+      "アーカイブしたチャット",
+      "アーカイブ済みチャット",
+      "アーカイブ済みのチャット",
+      "보관된 채팅",
+      "보관된 대화",
+      "chats archivados",
+      "conversaciones archivadas",
+      "chats archivées",
+      "conversations archivées",
+      "archivierte chats",
+      "conversas arquivadas",
+    ];
+    return phrases.some((phrase) => {
+      if (text === phrase) return true;
+      return text.startsWith(phrase + " ") || text.startsWith(phrase + "(") || text.startsWith(phrase + "（");
+    });
+  },
+
+  _archiveListRoot(doc) {
+    const marked = doc.querySelector(
+      "[data-testid='archived-chats'], [data-testid='archived-conversations']",
+    );
+    if (marked) return marked;
+    const regions = doc.querySelectorAll("[role='dialog'], [role='region']");
+    for (const el of regions) {
+      const label = el.getAttribute("aria-label") || "";
+      if (Chatseek._matchesArchiveHeading(label)) return el;
+      const heading = el.querySelector("h1, h2, h3, h4, [role='heading']");
+      if (heading && Chatseek._matchesArchiveHeading(heading.textContent || "")) return el;
+    }
+    return null;
+  },
+
+  _inArchiveChrome(el, archiveRoot) {
+    if (!el || el.nodeType !== 1) return true;
+    if (archiveRoot && archiveRoot.contains(el)) return true;
+    if (el.closest("nav, [role='navigation'], [role='menu'], [role='menuitem']")) return true;
+    if (el.closest(
+      "[data-message-author-role], [data-turn], [data-message-id], article, " +
+      "[data-testid*='conversation-turn'], [data-testid='user-message'], " +
+      "[data-testid='human-message'], [data-testid='assistant-message'], [data-testid='ai-message']",
+    )) return true;
+    return false;
+  },
+
+  _archiveBanner(doc, archiveRoot) {
+    const phrases = [
+      "this conversation is archived",
+      "this chat is archived",
+      "this conversation has been archived",
+      "this chat has been archived",
+      "此對話已封存",
+      "此对话已归档",
+      "此對話已歸檔",
+      "此聊天已封存",
+      "此聊天已归档",
+      "本對話已封存",
+      "本对话已归档",
+      "この会話はアーカイブ",
+      "このチャットはアーカイブ",
+      "이 대화는 보관",
+      "이 채팅은 보관",
+      "esta conversación está archivada",
+      "este chat está archivado",
+      "cette conversation est archivée",
+      "cette discussion est archivée",
+      "diese unterhaltung ist archiviert",
+      "dieser chat ist archiviert",
+      "esta conversa está arquivada",
+    ];
+    const unarchive = new Set([
+      "unarchive",
+      "unarchive chat",
+      "unarchive conversation",
+      "取消封存",
+      "解除封存",
+      "取消归档",
+      "解除归档",
+      "取消封存聊天",
+      "アーカイブ解除",
+      "アーカイブを解除",
+      "보관 해제",
+      "보관 취소",
+      "desarchivar",
+      "desarchivar chat",
+      "désarchiver",
+      "archivierung aufheben",
+      "desarquivar",
+    ]);
+    let nodes = [];
+    try {
+      nodes = doc.querySelectorAll(
+        "[role='status'], [role='note'], [data-testid*='archive' i], [data-testid*='banner' i], button, a",
+      );
+    } catch {
+      nodes = [];
+    }
+    for (const el of nodes) {
+      if (Chatseek._inArchiveChrome(el, archiveRoot)) continue;
+      const raw = Chatseek._normText(el.innerText || el.textContent || "");
+      if (!raw || raw.length > 320) continue;
+      const lower = raw.toLowerCase();
+      if (phrases.some((phrase) => lower.includes(phrase))) return true;
+      const tag = (el.tagName || "").toUpperCase();
+      const role = (el.getAttribute("role") || "").toLowerCase();
+      if ((tag === "BUTTON" || tag === "A" || role === "button") && unarchive.has(lower)) {
+        return true;
+      }
+    }
+    return false;
   },
 
   /**

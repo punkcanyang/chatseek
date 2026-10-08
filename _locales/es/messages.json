@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "Busca chats de ChatGPT, Claude, Grok y Gemini en este equipo. Los datos no salen del navegador."
+  },
+  "tag": {
+    "message": "Se queda en este navegador"
+  },
+  "searchLabel": {
+    "message": "Buscar en títulos y en el texto completo"
+  },
+  "searchPlaceholder": {
+    "message": "Buscar conversaciones…"
+  },
+  "tabActive": {
+    "message": "Activas"
+  },
+  "tabArchived": {
+    "message": "Archivadas"
+  },
+  "tabAll": {
+    "message": "Todas"
+  },
+  "empty": {
+    "message": "Todavía no hay conversaciones. Abre una pestaña de ChatGPT, Claude, Grok o Gemini y recorre la lista o entra en un chat. Los títulos y los mensajes visibles se guardan en el índice local."
+  },
+  "none": {
+    "message": "No hay conversaciones que coincidan."
+  },
+  "loading": {
+    "message": "Buscando…"
+  },
+  "booting": {
+    "message": "Leyendo el índice local…"
+  },
+  "hint": {
+    "message": "Solo se guardan los chats que ya aparecen en una pestaña abierta de ChatGPT, Claude, Grok o Gemini. No se examina el disco ni se sube nada. Tras actualizar, recarga esas pestañas. Si una página de chat no aporta mensajes, el pie lo indica."
+  },
+  "counts": {
+    "message": "$ARG1$ chats · $ARG2$ mensajes",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "Solo el título, sin mensajes guardados"
+  },
+  "clear": {
+    "message": "Borrar el índice local"
+  },
+  "confirmClear": {
+    "message": "¿Borrar todas las conversaciones y mensajes del IndexedDB de este navegador? No se puede deshacer."
+  },
+  "error": {
+    "message": "No se pudo leer el índice local."
+  },
+  "archivedBadge": {
+    "message": "Archivada"
+  },
+  "remove": {
+    "message": "Quitar del índice"
+  },
+  "confirmRemoveTitle": {
+    "message": "¿Quitar del índice?"
+  },
+  "confirmRemoveBody": {
+    "message": "¿Quitar «$ARG1$» del índice de este equipo? El chat en el sitio web no se borra. Si lo abres de nuevo, volverá a entrar en el índice.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "Cancelar"
+  },
+  "confirmRemove": {
+    "message": "Quitar"
+  },
+  "langLabel": {
+    "message": "Idioma"
+  },
+  "langFollow": {
+    "message": "Seguir el navegador"
+  },
+  "langNative": {
+    "message": "Español"
+  },
+  "noDate": {
+    "message": "sin fecha"
+  },
+  "justNow": {
+    "message": "ahora mismo"
+  },
+  "minutes": {
+    "message": "hace $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "hace $ARG1$ h",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "hace $ARG1$ d",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "aprox. $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "antes de $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "Anterior a la hora exacta más cercana de arriba · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "Fecha desconocida"
+  },
+  "unknownSaved": {
+    "message": "Fecha desconocida (guardado $ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "Guardado $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "Estimado por el grupo de la barra lateral"
+  },
+  "temporary": {
+    "message": "$ARG1$: los chats temporales no se guardan",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "La página de $ARG1$ puede haber cambiado — avísanos (última captura $ARG2$, 0 mensajes)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$: última captura $ARG2$, $ARG3$ mensajes",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$: última captura $ARG2$, $ARG3$ chats en la barra",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

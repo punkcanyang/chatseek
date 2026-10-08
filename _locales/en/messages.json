@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "Search ChatGPT, Claude, Grok, and Gemini chats on this computer. Nothing leaves the browser."
+  },
+  "tag": {
+    "message": "Stays in this browser"
+  },
+  "searchLabel": {
+    "message": "Search titles and full message text"
+  },
+  "searchPlaceholder": {
+    "message": "Search conversations…"
+  },
+  "tabActive": {
+    "message": "Active"
+  },
+  "tabArchived": {
+    "message": "Archived"
+  },
+  "tabAll": {
+    "message": "All"
+  },
+  "empty": {
+    "message": "Nothing indexed yet. Open a ChatGPT, Claude, Grok, or Gemini tab and browse the sidebar or a thread. Titles and visible messages are stored locally."
+  },
+  "none": {
+    "message": "No matching conversations."
+  },
+  "loading": {
+    "message": "Searching…"
+  },
+  "booting": {
+    "message": "Reading the local index…"
+  },
+  "hint": {
+    "message": "Chats are captured only while a ChatGPT, Claude, Grok, or Gemini tab is open. This extension does not scan your disk or upload conversations. After an update, reload those tabs. A footer note appears if a thread page yields no messages."
+  },
+  "counts": {
+    "message": "$ARG1$ chats · $ARG2$ messages",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "Title only, no message saved"
+  },
+  "clear": {
+    "message": "Clear local index"
+  },
+  "confirmClear": {
+    "message": "Delete every conversation and message in this browser’s IndexedDB? This cannot be undone."
+  },
+  "error": {
+    "message": "Could not read the local index."
+  },
+  "archivedBadge": {
+    "message": "Archived"
+  },
+  "remove": {
+    "message": "Remove from index"
+  },
+  "confirmRemoveTitle": {
+    "message": "Remove from index?"
+  },
+  "confirmRemoveBody": {
+    "message": "Remove “$ARG1$” from the index on this computer? The chat on the website is not deleted. Opening that chat again will capture it once more.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "Cancel"
+  },
+  "confirmRemove": {
+    "message": "Remove"
+  },
+  "langLabel": {
+    "message": "Language"
+  },
+  "langFollow": {
+    "message": "Follow browser"
+  },
+  "langNative": {
+    "message": "English"
+  },
+  "noDate": {
+    "message": "no date"
+  },
+  "justNow": {
+    "message": "just now"
+  },
+  "minutes": {
+    "message": "$ARG1$m ago",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "$ARG1$h ago",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "$ARG1$d ago",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "~ $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "before $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "Older than the nearest exact time above · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "Unknown date"
+  },
+  "unknownSaved": {
+    "message": "Unknown date (saved $ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "Saved $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "Estimated from the sidebar group"
+  },
+  "temporary": {
+    "message": "$ARG1$: temporary chats are not saved",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "$ARG1$ page may have changed — please report (last capture $ARG2$, 0 messages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$: last capture $ARG2$, $ARG3$ messages",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$: last capture $ARG2$, $ARG3$ sidebar chats",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

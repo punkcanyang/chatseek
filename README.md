@@ -19,13 +19,15 @@
 
 你在网页上打开 ChatGPT、Claude、Grok 或 Gemini 时，Chatseek 把页面上**已经显示出来**的对话标题和消息写进本机索引。之后点工具栏图标打开侧栏，输入关键词，就能跨四家一起搜标题和正文，点结果会切回（或重新打开）原来那段对话。
 
-- **四家一个框**：可以选「全部」，也可以只看 ChatGPT、Claude、Grok 或 Gemini。
+- **页签从左到右**：默认停在「活跃中」（四家里还没封存的）。接着是 ChatGPT、Claude、Grok、Gemini（只看这一家、且未封存），然后是「已封存」，「全部」在最后。搜索只搜当前页签里的对话。
 - **搜正文，不只搜标题**：英文和数字按完整词匹配（`musicmap` 能中，`music` 不会误中 `musicmap`），中文按单字和相邻双字建索引；多个词要出现在同一段对话里。
 - **标题下有一两行预览**：没在搜索时显示你的第一条提问（没有提问就显示最后一条消息），方便认出是哪段对话。搜索时显示命中词附近的一小段，并把命中的词标出来。库里只有标题、没有正文时，会标明「仅有标题」。
 - **当前这段对话有绿框**：侧栏里正在打开的那一行用绿色边框标出，换标签或在页面里点进另一段会跟着走。
+- **封存仍可搜**：页面上明确标成已封存的对话留在索引里，带灰色「已封存」标签。目前只有 ChatGPT 有这种明确标记（封存列表，或打开后的封存横幅／取消封存按钮）。从侧栏消失不会改状态，也不会自动删。之后又在未封存的页面上看到，会恢复成活跃。
+- **从索引移除**：每一行都可以在确认后，从这台浏览器的索引里删掉这一段（对话、消息、倒排索引一起删）。网站上的聊天不动。以后再打开同一段，会重新收进来。
 - **按最后活动时间排**：日期尽量取对话的最后活动时间，不拿收录时间冒充，规则见下方「侧栏日期怎么读」。
 - **收不到会提示**：对话页连续约 8 秒一条消息都没读到时，侧栏底部会提示「页面可能改版」，工具栏图标出现「!」。
-- **界面语言**跟随浏览器：简体中文、繁体中文、English。
+- **界面语言**默认跟随浏览器，侧栏右上角也可以手动切换，选择会记在这台浏览器里。内置繁体中文、简体中文、English、日本語、한국어、español、français、Deutsch、português（巴西）。日期用该语言的 `Intl` 格式；「约」「早于」「日期未知」也会跟着翻。扩展在 `chrome://extensions` 上的名称和说明跟随浏览器语言。
 
 ## 原则：只读、不打接口、资料留本机
 
@@ -35,7 +37,7 @@
 
 - **只读页面**：内容脚本只读当前标签页里已经渲染出来的对话列表和消息，不挂 fetch / XHR，也不请求各家网站的内部接口（Gemini 的 `batchexecute` 也不碰）。
 - **资料留本机**：索引存在这个浏览器的 IndexedDB，扩展本身不发任何网络请求。`npm run verify` 会挡掉代码里的 `fetch(`、`sendBeacon`、`WebSocket`、`EventSource`。
-- **权限只到这几个网站**：`chatgpt.com`、`chat.openai.com`、`claude.ai`、`grok.com`、`www.grok.com`、`grok.x.com`、`x.ai`、`gemini.google.com`，外加 `sidePanel`。不要求 `<all_urls>`，不要求 API Key。
+- **权限只到这几个网站**：`chatgpt.com`、`chat.openai.com`、`claude.ai`、`grok.com`、`www.grok.com`、`grok.x.com`、`x.ai`、`gemini.google.com`，外加 `sidePanel` 和 `storage`。`storage` 只用来记住侧栏手动选的语言（Chrome 的 `chrome.i18n` 不能在运行中改语言）。不要求 `<all_urls>`，不要求 API Key。
 - **不收临时聊天**：ChatGPT 网址带 `temporary-chat=true` 的临时聊天不收录。
 - **随时清空**：侧栏底部「清除本地索引」会删掉这台浏览器里 Chatseek 的全部数据，网站上的聊天不受影响。
 
@@ -54,7 +56,7 @@
 
 1. 打开 chatgpt.com、claude.ai、grok.com 或 gemini.google.com，浏览对话列表，点进你想以后搜得到的对话。
 2. 点工具栏的 Chatseek 图标打开侧栏，输入关键词。
-3. 用上方的筛选只看某一家，点结果回到原对话。
+3. 用上方页签看活跃、某一家、已封存或全部。搜索框只搜当前页签。点结果回到原对话。每一行的「从索引移除」只删本机这一条，要先确认。
 
 很长的对话只会收已经画在页面上的消息；想多收，就在那段对话里往上滚。
 
@@ -89,6 +91,7 @@
 - **Gemini 页面上没有时间。** 没在开着的标签页里发过新消息的 Gemini 对话，大多会显示「日期未知」。
 - **网站改版会让收录失效。** 健康提示能发现「对话页一条消息都没读到」，但选择器要靠更新修。
 - **搜索是整词，不做词干。** `music` 不会命中 `musicmap`。
+- **封存标记目前只有 ChatGPT。** Claude 的普通对话、Grok、Gemini 页面上没有可靠的「这段已封存」横幅或封存列表，所以这三家不会被标成已封存。侧栏里消失不等于封存。ChatGPT 的措辞或 DOM 若改了，检测会停下来，不会凭猜测去标。
 
 ## 范围
 
@@ -105,7 +108,7 @@ npm run test:fixture  # ChatGPT / Gemini 离线样本
 npm run test:gemini   # Gemini 收录到 IndexedDB 全流程
 ```
 
-当前版本 1.3.0。版本记录在 [`notes/`](notes/)：[`CHANGELOG-1.1.0.md`](notes/CHANGELOG-1.1.0.md)（ChatGPT 收录与最后活动时间）、[`CHANGELOG-1.2.0.md`](notes/CHANGELOG-1.2.0.md)（Gemini）、[`CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)（日期显示）、[`CHANGELOG-1.3.0.md`](notes/CHANGELOG-1.3.0.md)（预览、当前对话绿框、简体「条消息」）。侧栏预览的示例截图：[`docs/panel-1.3.0-idle.png`](docs/panel-1.3.0-idle.png)、[`docs/panel-1.3.0-search.png`](docs/panel-1.3.0-search.png)。
+当前版本 1.4.0。版本记录在 [`notes/`](notes/)：[`CHANGELOG-1.1.0.md`](notes/CHANGELOG-1.1.0.md)（ChatGPT 收录与最后活动时间）、[`CHANGELOG-1.2.0.md`](notes/CHANGELOG-1.2.0.md)（Gemini）、[`CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)（日期显示）、[`CHANGELOG-1.3.0.md`](notes/CHANGELOG-1.3.0.md)（预览、当前对话绿框、简体「条消息」）、[`CHANGELOG-1.4.0.md`](notes/CHANGELOG-1.4.0.md)（封存、页签、九种语言）。侧栏预览的示例截图：[`docs/panel-1.3.0-idle.png`](docs/panel-1.3.0-idle.png)、[`docs/panel-1.3.0-search.png`](docs/panel-1.3.0-search.png)。1.4.0 页签、封存标签、移除确认和语言切换：[`docs/panel-1.4.0-active.png`](docs/panel-1.4.0-active.png)、[`docs/panel-1.4.0-archived.png`](docs/panel-1.4.0-archived.png)、[`docs/panel-1.4.0-remove.png`](docs/panel-1.4.0-remove.png)、[`docs/panel-1.4.0-en.png`](docs/panel-1.4.0-en.png)、[`docs/panel-1.4.0-ja.png`](docs/panel-1.4.0-ja.png)。画面里是示例数据；「封存的读书笔记」那一行是写进示例索引的，不是 Claude 被检测成已封存。
 
 ## License
 
