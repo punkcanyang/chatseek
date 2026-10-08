@@ -110,7 +110,7 @@ async function withDb(fn) {
 function isGenericTitle(title) {
   const t = (title || "").trim();
   if (!t) return true;
-  return /^(new chat|chatgpt|claude|grok|untitled|无标题)$/i.test(t);
+  return /^(new chat|chatgpt|claude|grok|gemini|google gemini|untitled|无标题|新对话|新對話|新聊天)$/i.test(t);
 }
 
 // 2020-01-01; must match Chatseek.MIN_MS in content/shared.js.
@@ -227,10 +227,14 @@ async function writeConversations(db, list) {
   await txDone(tx);
 }
 
+/** Resolves { observed } — true when this write saw a new tail on a stored thread. */
 export async function upsertMessages(conversation, messages, meta = {}) {
-  if (!conversation?.id || !messages?.length) return;
-  await upsertConversations([conversation]);
-  return withDb((db) => writeMessages(db, conversation, messages, meta));
+  if (!conversation?.id || !messages?.length) return { observed: false };
+  // A one-row batch has no neighbours. Interpolating it alone would rewrite an
+  // undated row's sidebar sort key as if it were the last row in the sidebar.
+  const { sidebarIndex: _ignored, ...row } = conversation;
+  await upsertConversations([row]);
+  return withDb((db) => writeMessages(db, row, messages, meta));
 }
 
 /**
@@ -269,6 +273,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
 
   let changed = 0;
   let tailBodyChanged = false;
+  let observedNow = false;
   for (const msg of messages) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
@@ -321,6 +326,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         }, now);
         conv.updatedAt = observed.updatedAt;
         conv.updatedAtSource = observed.updatedAtSource;
+        observedNow = observed.updatedAtSource === "observed";
       }
       if (pageIds.length) conv.tailMessageId = pageIds[pageIds.length - 1];
       conv.messageCount = await requestDone(
@@ -335,6 +341,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   await txDone(tx);
+  return { observed: observedNow };
 }
 
 function cursorEach(indexOrStore, { range, direction } = {}, visit) {

@@ -15,11 +15,11 @@ const t = locale === "zh-Hant"
       placeholder: "搜尋對話…",
       all: "全部",
       empty:
-        "還沒有收錄任何對話。打開 ChatGPT、Claude 或 Grok 分頁並瀏覽對話列表或進入對話後，標題和可見訊息會寫入本機索引。",
+        "還沒有收錄任何對話。打開 ChatGPT、Claude、Grok 或 Gemini 分頁並瀏覽對話列表或進入對話後，標題和可見訊息會寫入本機索引。",
       none: "沒有符合的對話。",
       loading: "正在搜尋…",
       booting: "正在讀取本機索引…",
-      hint: "只收錄你目前打開的 ChatGPT / Claude / Grok 分頁裡已經出現在頁面上的對話，不會掃描磁碟或上傳內容。剛更新擴充功能後請重新整理對話頁；某一頁收不到訊息時，底部會提示。",
+      hint: "只收錄你目前打開的 ChatGPT / Claude / Grok / Gemini 分頁裡已經出現在頁面上的對話，不會掃描磁碟或上傳內容。剛更新擴充功能後請重新整理對話頁；某一頁收不到訊息時，底部會提示。",
       counts: (c, m) => `${c} 則對話 · ${m} 則訊息`,
       clear: "清除本機索引",
       confirm: "刪除本機 IndexedDB 中的全部對話和訊息？此操作無法復原。",
@@ -27,6 +27,7 @@ const t = locale === "zh-Hant"
       chatgpt: "ChatGPT",
       claude: "Claude",
       grok: "Grok",
+      gemini: "Gemini",
     }
   : locale === "zh-Hans"
   ? {
@@ -35,11 +36,11 @@ const t = locale === "zh-Hant"
       placeholder: "搜索对话…",
       all: "全部",
       empty:
-        "还没有收录任何对话。打开 ChatGPT、Claude 或 Grok 标签页并浏览会话列表或进入对话后，标题和可见消息会写入本地索引。",
+        "还没有收录任何对话。打开 ChatGPT、Claude、Grok 或 Gemini 标签页并浏览会话列表或进入对话后，标题和可见消息会写入本地索引。",
       none: "没有匹配的对话。",
       loading: "正在搜索…",
       booting: "正在读取本地索引…",
-      hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请刷新对话页；某一页收不到消息时，底部会提示。",
+      hint: "只收录你当前打开的 ChatGPT / Claude / Grok / Gemini 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请刷新对话页；某一页收不到消息时，底部会提示。",
       counts: (c, m) => `${c} 条对话 · ${m} 条消息`,
       clear: "清除本地索引",
       confirm: "删除本机 IndexedDB 中的全部对话和消息？此操作不可恢复。",
@@ -47,6 +48,7 @@ const t = locale === "zh-Hant"
       chatgpt: "ChatGPT",
       claude: "Claude",
       grok: "Grok",
+      gemini: "Gemini",
     }
   : {
       tag: "Stays in this browser",
@@ -54,11 +56,11 @@ const t = locale === "zh-Hant"
       placeholder: "Search conversations…",
       all: "All",
       empty:
-        "Nothing indexed yet. Open a ChatGPT, Claude, or Grok tab and browse the sidebar or a thread. Titles and visible messages are stored locally.",
+        "Nothing indexed yet. Open a ChatGPT, Claude, Grok, or Gemini tab and browse the sidebar or a thread. Titles and visible messages are stored locally.",
       none: "No matching conversations.",
       loading: "Searching…",
       booting: "Reading the local index…",
-      hint: "Chats are captured only while a ChatGPT, Claude, or Grok tab is open. This extension does not scan your disk or upload conversations. After an update, reload those tabs. A footer note appears if a thread page yields no messages.",
+      hint: "Chats are captured only while a ChatGPT, Claude, Grok, or Gemini tab is open. This extension does not scan your disk or upload conversations. After an update, reload those tabs. A footer note appears if a thread page yields no messages.",
       counts: (c, m) => `${c} chats · ${m} messages`,
       clear: "Clear local index",
       confirm:
@@ -67,6 +69,7 @@ const t = locale === "zh-Hant"
       chatgpt: "ChatGPT",
       claude: "Claude",
       grok: "Grok",
+      gemini: "Gemini",
     };
 
 const qEl = document.getElementById("q");
@@ -104,6 +107,7 @@ function hasDate(ts) {
 function platformLabel(id) {
   if (id === "claude") return t.claude;
   if (id === "grok") return t.grok;
+  if (id === "gemini") return t.gemini;
   return t.chatgpt;
 }
 
@@ -165,7 +169,7 @@ async function openChat(url) {
       return;
     }
   } catch {
-    // host permissions cover ChatGPT/Claude/Grok URLs; fall through to create
+    // host permissions cover ChatGPT/Claude/Grok/Gemini URLs; fall through to create
   }
   await chrome.tabs.create({ url });
 }

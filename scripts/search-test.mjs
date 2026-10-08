@@ -57,7 +57,7 @@ await upsertMessages(
   },
   [
     { id: "chatgpt:m1", role: "user", body: longBody },
-    { id: "chatgpt:m2", role: "assistant", body: "Short reply about bananas." },
+    { id: "chatgpt:m2", role: "assistant", body: "Short reply about bananas. FOURSTACK" },
   ],
 );
 
@@ -74,7 +74,7 @@ await upsertMessages(
     {
       id: "claude:m1",
       role: "user",
-      body: "请帮我写一段关于京都红叶的介绍，包含哲学。",
+      body: "请帮我写一段关于京都红叶的介绍，包含哲学。 FOURSTACK",
     },
   ],
 );
@@ -98,13 +98,39 @@ await upsertMessages(
     {
       id: "grok:m2",
       role: "assistant",
-      body: "STARSHIP_NEEDLE stages stack for orbital insertion.",
+      body: "STARSHIP_NEEDLE stages stack for orbital insertion. FOURSTACK",
+    },
+  ],
+);
+
+const geminiUpdated = Date.UTC(2025, 8, 2, 15, 0, 0);
+await upsertMessages(
+  {
+    id: "gemini:a1b2c3d4e5f67890",
+    platform: "gemini",
+    platformId: "a1b2c3d4e5f67890",
+    title: "Gemini orchid notes",
+    url: "https://gemini.google.com/u/1/app/a1b2c3d4e5f67890",
+    updatedAt: geminiUpdated,
+    createdAt: geminiUpdated,
+    updatedAtSource: "page-exact",
+  },
+  [
+    {
+      id: "gemini:m1",
+      role: "user",
+      body: "Where is GEMINI_ORCHID_NEEDLE planted?",
+    },
+    {
+      id: "gemini:m2",
+      role: "assistant",
+      body: "GEMINI_ORCHID_NEEDLE grows beside FOURSTACK in the greenhouse.",
     },
   ],
 );
 
 const s = await stats();
-assert(s.messages === 5, `expected 5 messages, got ${s.messages}`);
+assert(s.messages === 7, `expected 7 messages, got ${s.messages}`);
 assert(longBody.length > 4000, "fixture must be a long message");
 
 // Page updatedAt must survive message upsert and title-only conversation refresh.
@@ -249,6 +275,33 @@ assert(
   byGrok.length === 1 && byGrok[0].platform === "grok",
   "platform filter should hit Grok conversation",
 );
+const byFour = await searchConversations({ query: "FOURSTACK" });
+const fourPlatforms = new Set(byFour.map((row) => row.platform));
+assert(
+  byFour.length === 4 &&
+    fourPlatforms.has("chatgpt") &&
+    fourPlatforms.has("claude") &&
+    fourPlatforms.has("grok") &&
+    fourPlatforms.has("gemini"),
+  `four platforms should match FOURSTACK, got ${byFour.map((row) => row.platform).join(",")}`,
+);
+const onlyGemini = await searchConversations({ query: "FOURSTACK", platform: "gemini" });
+assert(
+  onlyGemini.length === 1 &&
+    onlyGemini[0].platform === "gemini" &&
+    onlyGemini[0].url.includes("/u/1/app/"),
+  "Gemini filter should return only the Gemini chat",
+);
+const byOrchid = await searchConversations({ query: "GEMINI_ORCHID_NEEDLE" });
+assert(
+  byOrchid.length === 1 && byOrchid[0].platform === "gemini",
+  "Gemini-only needle should not hit the other platforms",
+);
+const orchidOnChatgpt = await searchConversations({
+  query: "GEMINI_ORCHID_NEEDLE",
+  platform: "chatgpt",
+});
+assert(orchidOnChatgpt.length === 0, "ChatGPT filter must not return the Gemini chat");
 assert(
   !openedDuringSearch.includes("messages"),
   `search opened messages store: ${openedDuringSearch.join(",")}`,
@@ -483,6 +536,14 @@ assert(
     healthHans.some((line) => line.platform === "claude" && line.text.includes("最后收录") && line.text.includes("3 则消息")),
   `Simplified health lines drifted: ${healthHans.map((line) => line.text).join(" | ")}`,
 );
+
+const geminiStored = await readConv("gemini:a1b2c3d4e5f67890");
+assert(geminiStored.updatedAt === geminiUpdated, "gemini page time should be stored");
+assert(
+  geminiStored.updatedAtSource === "page-exact",
+  `gemini time should stay page-exact, got ${geminiStored.updatedAtSource}`,
+);
+assert(geminiStored.timeSource == null && geminiStored.emptyCapture == null, "old gemini date fields should not be stored");
 
 console.log("search-test ok", {
   longBody: longBody.length,

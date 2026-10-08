@@ -389,6 +389,7 @@ const PLATFORM_LABEL = {
   chatgpt: "ChatGPT",
   claude: "Claude",
   grok: "Grok",
+  gemini: "Gemini",
 };
 
 export function healthHasWarning(byPlatform) {

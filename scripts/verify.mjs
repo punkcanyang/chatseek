@@ -16,10 +16,21 @@ const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
 if (manifest.manifest_version !== 3) fail("manifest_version must be 3");
 if (!manifest.side_panel?.default_path) fail("side_panel.default_path missing");
 
-const hosts = JSON.stringify(manifest.host_permissions || []);
-for (const banned of ["gemini", "perplexity", "deepseek", "google.com"]) {
-  if (hosts.toLowerCase().includes(banned)) fail(`banned host: ${banned}`);
+function hostOf(pattern) {
+  const match = String(pattern).match(/^https:\/\/([^/*]+)/i);
+  return match ? match[1].toLowerCase() : "";
 }
+
+function isBannedHost(pattern) {
+  const host = hostOf(pattern);
+  if (!host) return true;
+  if (/perplexity|deepseek/i.test(host) || /perplexity|deepseek/i.test(pattern)) return true;
+  if (host === "google.com" || host.endsWith(".google.com") || host.includes("google.com")) {
+    return host !== "gemini.google.com";
+  }
+  return false;
+}
+
 const allowed = [
   "https://chatgpt.com/*",
   "https://chat.openai.com/*",
@@ -28,16 +39,53 @@ const allowed = [
   "https://www.grok.com/*",
   "https://grok.x.com/*",
   "https://x.ai/*",
+  "https://gemini.google.com/*",
 ];
-const extra = (manifest.host_permissions || []).filter((h) => !allowed.includes(h));
-if (extra.length) fail(`unexpected host_permissions: ${extra.join(", ")}`);
+const forbiddenHosts = [
+  "https://www.google.com/*",
+  "https://google.com/*",
+  "https://*.google.com/*",
+  "*://*/*",
+  "<all_urls>",
+  "https://aistudio.google.com/*",
+  "https://bard.google.com/*",
+  "https://mail.google.com/*",
+  "https://accounts.google.com/*",
+  "https://notgemini.google.com/*",
+  "https://gemini.google.com.evil.example/*",
+  "https://www.perplexity.ai/*",
+  "https://perplexity.ai/*",
+  "https://chat.deepseek.com/*",
+  "https://deepseek.com/*",
+];
+if (!(manifest.host_permissions || []).includes("https://gemini.google.com/*")) {
+  fail("missing host permission https://gemini.google.com/*");
+}
+for (const pattern of manifest.host_permissions || []) {
+  if (!allowed.includes(pattern)) fail(`unexpected host_permissions: ${pattern}`);
+  if (isBannedHost(pattern)) fail(`banned host: ${pattern}`);
+}
+for (const pattern of forbiddenHosts) {
+  if (!isBannedHost(pattern)) fail(`should reject ${pattern}`);
+  if ((manifest.host_permissions || []).includes(pattern)) fail(`manifest has banned host ${pattern}`);
+}
 
+let geminiScript = false;
 for (const script of manifest.content_scripts || []) {
-  const joined = (script.matches || []).join(" ");
-  if (/gemini|perplexity|deepseek/i.test(joined)) {
-    fail(`content_scripts matches extra site: ${joined}`);
+  for (const match of script.matches || []) {
+    if (!allowed.includes(match)) fail(`content_scripts match not allowed: ${match}`);
+    if (isBannedHost(match)) fail(`banned content match: ${match}`);
+  }
+  if ((script.js || []).includes("content/gemini.js")) {
+    geminiScript = true;
+    const matches = script.matches || [];
+    if (matches.length !== 1 || matches[0] !== "https://gemini.google.com/*") {
+      fail(`gemini content script matches must be only https://gemini.google.com/*`);
+    }
   }
 }
+if (!geminiScript) fail("content/gemini.js is not a content script");
+if (manifest.version !== "1.2.0") fail(`version should be 1.2.0, got ${manifest.version}`);
 
 const referenced = new Set([
   manifest.background?.service_worker,
@@ -72,6 +120,7 @@ for (const rel of [
   "content/chatgpt.js",
   "content/claude.js",
   "content/grok.js",
+  "content/gemini.js",
   "content/shared.js",
 ]) {
   const src = read(rel);
@@ -79,6 +128,23 @@ for (const rel of [
     fail(`${rel} must not hook fetch/XHR`);
   }
   if (/MAIN/.test(src)) fail(`${rel} must not use MAIN world hooks`);
+}
+for (const rel of [
+  "background.js",
+  "content/chatgpt.js",
+  "content/claude.js",
+  "content/grok.js",
+  "content/gemini.js",
+  "content/shared.js",
+  "src/activity-time.js",
+  "src/db.js",
+  "sidepanel/panel.js",
+]) {
+  const src = read(rel);
+  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts/.test(src)) {
+    fail(`${rel} must not make network requests`);
+  }
+  if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
 }
 
 const dbSrc = read("src/db.js");
@@ -111,8 +177,8 @@ const readme = read("README.md");
 if (!/Load unpacked|加载/.test(readme)) fail("README should explain load unpacked");
 if (!/IndexedDB|倒排/.test(readme)) fail("README should explain search");
 if (!/标签页|tab is open/i.test(readme)) fail("README should state open-tab limitation");
-if (!/ChatGPT/i.test(readme) || !/Claude/i.test(readme) || !/Grok/i.test(readme)) {
-  fail("README should mention ChatGPT, Claude, and Grok");
+if (!/ChatGPT/i.test(readme) || !/Claude/i.test(readme) || !/Grok/i.test(readme) || !/Gemini/i.test(readme)) {
+  fail("README should mention ChatGPT, Claude, Grok, and Gemini");
 }
 
 
@@ -123,7 +189,7 @@ if (!/parsePageTime/.test(sharedSrc) || !/findTimeNear/.test(sharedSrc)) {
 if (!/pageTimesFromDocument/.test(sharedSrc)) {
   fail("shared.js should scan static page JSON for conversation times");
 }
-for (const rel of ["content/chatgpt.js", "content/claude.js", "content/grok.js"]) {
+for (const rel of ["content/chatgpt.js", "content/claude.js", "content/grok.js", "content/gemini.js"]) {
   const src = read(rel);
   if (!/attachPageTime|updatedAt/.test(src)) {
     fail(`${rel} should attach page updatedAt in extractSidebar`);
@@ -432,6 +498,26 @@ const claudeZero = pageTime.buildHealthReport({
 });
 if (!claudeZero.warn || !healthWarns.some((line) => line.includes("claude: 0 messages on conversation page"))) {
   fail("health check should cover Claude too");
+}
+const geminiSrc = read("content/gemini.js");
+if (/batchexecute|MaZiqc|hNvQHb/.test(geminiSrc)) {
+  fail("gemini.js must not call Gemini internal endpoints");
+}
+if (/timeSource|emptyCapture|extractedMessageCount/.test(geminiSrc)) {
+  fail("gemini.js should use shared activity time and health, not a local date copy");
+}
+for (const needle of ["attachPageTime", "sidebarSlots", "queryLayers", "pageKind", "runCapture"]) {
+  if (!geminiSrc.includes(needle)) fail(`gemini.js should call Chatseek.${needle}`);
+}
+if (!/gemini:\s*"Gemini"/.test(activitySrc)) fail("health labels should name Gemini");
+const panelHtml = read("sidepanel/index.html");
+const panelSrc = read("sidepanel/panel.js");
+if (!/data-platform="gemini"/.test(panelHtml)) fail("side panel needs a Gemini filter");
+if (!/gemini:\s*"Gemini"/.test(panelSrc)) fail("side panel should name Gemini");
+if (!/\.plat\.gemini/.test(read("sidepanel/panel.css"))) fail("missing .plat.gemini color");
+const backgroundSrc = read("background.js");
+if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc)) {
+  fail("background.js should accept gemini through HOSTS");
 }
 
 if (errors.length) {

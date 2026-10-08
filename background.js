@@ -10,6 +10,7 @@ const HOSTS = {
     /^https:\/\/grok\.x\.com\//,
     /^https:\/\/x\.ai\//,
   ],
+  gemini: [/^https:\/\/gemini\.google\.com\//],
 };
 
 function openSidePanelOnClick() {
@@ -56,6 +57,15 @@ function paintBadge(health) {
   if (warn && badge.setBadgeBackgroundColor) {
     badge.setBadgeBackgroundColor({ color: "#9a3b2f" }).catch(() => {});
   }
+}
+
+// Ids only, so the database can tell a new tail message from a first ingest.
+function captureMeta(msg) {
+  const ids = Array.isArray(msg.pageMessageIds)
+    ? msg.pageMessageIds.filter((id) => typeof id === "string" && id.length <= 300).slice(-5000)
+    : [];
+  const captureId = typeof msg.captureId === "string" ? msg.captureId.slice(0, 400) : "";
+  return { pageMessageIds: ids, captureId };
 }
 
 function validHealth(health) {
@@ -119,10 +129,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "invalid conversation" });
       return;
     }
-    upsertMessages(msg.conversation, msg.messages || [])
-      .then(() => {
+    upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
+      .then((result) => {
         notifyIndexUpdated();
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, observed: !!result?.observed });
       })
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;
