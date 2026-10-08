@@ -215,5 +215,101 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "읽기"
+  },
+  "openOriginal": {
+    "message": "원래 사이트에서 열기"
+  },
+  "prevHit": {
+    "message": "이전"
+  },
+  "nextHit": {
+    "message": "다음"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "일치 없음"
+  },
+  "roleUser": {
+    "message": "나"
+  },
+  "roleAssistant": {
+    "message": "어시스턴트"
+  },
+  "missingChat": {
+    "message": "이 대화는 로컬 색인에 없습니다."
+  },
+  "readerLoading": {
+    "message": "읽는 중…"
+  },
+  "sortBy": {
+    "message": "정렬"
+  },
+  "sortCurrent": {
+    "message": "정렬: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "정렬 방향 바꾸기, $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "마지막 대화 시간"
+  },
+  "sortTitle": {
+    "message": "제목"
+  },
+  "sortCaptured": {
+    "message": "수집 시간"
+  },
+  "sortCount": {
+    "message": "메시지 수"
+  },
+  "sortRelevance": {
+    "message": "관련도"
+  },
+  "sortDirNewest": {
+    "message": "최신순"
+  },
+  "sortDirOldest": {
+    "message": "오래된순"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "많은순"
+  },
+  "sortDirFewer": {
+    "message": "적은순"
+  },
+  "sortDirHigh": {
+    "message": "높은순"
+  },
+  "sortDirLow": {
+    "message": "낮은순"
   }
 }

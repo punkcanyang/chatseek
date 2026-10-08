@@ -215,5 +215,101 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "Leer"
+  },
+  "openOriginal": {
+    "message": "Abrir en el sitio original"
+  },
+  "prevHit": {
+    "message": "Anterior"
+  },
+  "nextHit": {
+    "message": "Siguiente"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "No hay coincidencias"
+  },
+  "roleUser": {
+    "message": "Tú"
+  },
+  "roleAssistant": {
+    "message": "Asistente"
+  },
+  "missingChat": {
+    "message": "Esta conversación ya no está en el índice local."
+  },
+  "readerLoading": {
+    "message": "Leyendo…"
+  },
+  "sortBy": {
+    "message": "Orden"
+  },
+  "sortCurrent": {
+    "message": "Orden: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "Invertir el orden, $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "Última actividad"
+  },
+  "sortTitle": {
+    "message": "Título"
+  },
+  "sortCaptured": {
+    "message": "Hora de captura"
+  },
+  "sortCount": {
+    "message": "Número de mensajes"
+  },
+  "sortRelevance": {
+    "message": "Relevancia"
+  },
+  "sortDirNewest": {
+    "message": "Más recientes primero"
+  },
+  "sortDirOldest": {
+    "message": "Más antiguas primero"
+  },
+  "sortDirAz": {
+    "message": "A a Z"
+  },
+  "sortDirZa": {
+    "message": "Z a A"
+  },
+  "sortDirMore": {
+    "message": "De más a menos"
+  },
+  "sortDirFewer": {
+    "message": "De menos a más"
+  },
+  "sortDirHigh": {
+    "message": "Más relevante primero"
+  },
+  "sortDirLow": {
+    "message": "Menos relevante primero"
   }
 }

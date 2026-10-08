@@ -215,5 +215,101 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "阅读"
+  },
+  "openOriginal": {
+    "message": "去原网站打开"
+  },
+  "prevHit": {
+    "message": "上一处"
+  },
+  "nextHit": {
+    "message": "下一处"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "没有匹配的内容"
+  },
+  "roleUser": {
+    "message": "你"
+  },
+  "roleAssistant": {
+    "message": "助手"
+  },
+  "missingChat": {
+    "message": "这段对话已不在本地索引里。"
+  },
+  "readerLoading": {
+    "message": "正在读取…"
+  },
+  "sortBy": {
+    "message": "排序"
+  },
+  "sortCurrent": {
+    "message": "排序：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "切换排序方向，$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "最后对话时间"
+  },
+  "sortTitle": {
+    "message": "标题"
+  },
+  "sortCaptured": {
+    "message": "收录时间"
+  },
+  "sortCount": {
+    "message": "消息数"
+  },
+  "sortRelevance": {
+    "message": "相关度"
+  },
+  "sortDirNewest": {
+    "message": "新→旧"
+  },
+  "sortDirOldest": {
+    "message": "旧→新"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "多→少"
+  },
+  "sortDirFewer": {
+    "message": "少→多"
+  },
+  "sortDirHigh": {
+    "message": "高→低"
+  },
+  "sortDirLow": {
+    "message": "低→高"
   }
 }

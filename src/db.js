@@ -1,4 +1,4 @@
-import { queryTokens, tokenize } from "./tokenize.js";
+import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokenize.js";
 import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
 import {
   buildPreview,
@@ -6,6 +6,8 @@ import {
   nextPreviewFields,
   snippetTokens,
 } from "./preview.js";
+import { mergeMessageOrder, orderMessages } from "./message-order.js";
+import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-list.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 3;
@@ -147,9 +149,20 @@ function pageMs(value) {
   return null;
 }
 
-function writeTokens(tokenStore, tokens, conversationId, source) {
-  for (const token of tokens) {
-    tokenStore.put({ token, conversationId, source });
+function writeTokens(tokenStore, text, conversationId, source, role) {
+  const grouped = new Map();
+  const cap = RELEVANCE_WEIGHT.POSITION_CAP;
+  for (const span of tokenSpans(text)) {
+    let positions = grouped.get(span.token);
+    if (!positions) {
+      positions = [];
+      grouped.set(span.token, positions);
+    }
+    if (positions.length < cap) positions.push(span.start);
+  }
+  const storedRole = role === "user" || role === "title" ? role : "assistant";
+  for (const [token, positions] of grouped) {
+    tokenStore.put({ token, conversationId, source, role: storedRole, positions });
   }
 }
 
@@ -200,6 +213,9 @@ export async function upsertConversations(list) {
 }
 
 const REMOVED_PREFIX = "removed:";
+// Page order of a conversation's message ids. Kept in meta, not on the
+// conversation row, so list and search cursors over conversations stay small.
+const ORDER_PREFIX = "order:";
 
 /**
  * reopened: the chat is open with messages on the page. Only that clears a
@@ -285,12 +301,11 @@ async function writeConversations(db, list, { reopened = false } = {}) {
     }
     applyArchiveState(next, old, incoming, Date.now());
     const oldTitleTokens = tokenize(old?.title || "");
-    const newTitleTokens = tokenize(next.title || "");
     if (old && old.title !== next.title) {
       deleteTokens(tokenStore, oldTitleTokens, next.id, "title");
     }
     if (!old || old.title !== next.title) {
-      writeTokens(tokenStore, newTitleTokens, next.id, "title");
+      writeTokens(tokenStore, next.title, next.id, "title", "title");
     }
     convStore.put(next);
   }
@@ -323,12 +338,13 @@ function sawNewTail(baselineCount, baselineTail, pageMessageIds, tailBodyChanged
 
 async function writeMessages(db, conversation, messages, meta = {}) {
   const tx = db.transaction(
-    ["conversations", "messages", "tokenMap"],
+    ["conversations", "messages", "tokenMap", "meta"],
     "readwrite",
   );
   const convStore = tx.objectStore("conversations");
   const msgStore = tx.objectStore("messages");
   const tokenStore = tx.objectStore("tokenMap");
+  const metaStore = tx.objectStore("meta");
 
   const conv = await requestDone(convStore.get(conversation.id));
   let baselineCount = conv?.messageCount || 0;
@@ -346,7 +362,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   let tailBodyChanged = false;
   let observedNow = false;
   const freshIds = new Set();
-  for (const msg of messages) {
+  for (const [captureIndex, msg] of messages.entries()) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
     if (!existing) freshIds.add(msg.id);
@@ -366,10 +382,19 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       conversationId: conversation.id,
       role: msg.role === "assistant" ? "assistant" : "user",
       body: msg.body,
-      capturedAt: Date.now(),
+      // First capture time and page position order turns that share a
+      // millisecond. A streamed body rewrite keeps both so the turn stays put.
+      capturedAt: typeof existing?.capturedAt === "number" ? existing.capturedAt : Date.now(),
+      captureIndex: Number.isInteger(existing?.captureIndex) ? existing.captureIndex : captureIndex,
     };
     msgStore.put(record);
-    writeTokens(tokenStore, tokenize(msg.body), conversation.id, msg.id);
+    writeTokens(
+      tokenStore,
+      msg.body,
+      conversation.id,
+      msg.id,
+      record.role,
+    );
     changed += 1;
   }
 
@@ -417,11 +442,22 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
     if (prevTitle !== conv.title) {
       deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
-      writeTokens(tokenStore, tokenize(conv.title), conv.id, "title");
+      writeTokens(tokenStore, conv.title, conv.id, "title", "title");
     }
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
     }
+    const orderIds = Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
+      ? meta.pageMessageIds
+      : messages.map((msg) => msg?.id).filter(Boolean);
+    const orderKey = ORDER_PREFIX + conv.id;
+    const storedOrder = await requestDone(metaStore.get(orderKey));
+    metaStore.put({
+      key: orderKey,
+      conversationId: conv.id,
+      ids: mergeMessageOrder(storedOrder?.ids || conv.messageOrder, orderIds),
+    });
+    delete conv.messageOrder;
     convStore.put(conv);
   }
 
@@ -443,27 +479,20 @@ function cursorEach(indexOrStore, { range, direction } = {}, visit) {
   });
 }
 
-function titleContainsQuery(title, needle) {
-  const hay = (title || "").toLowerCase().normalize("NFKC");
-  if (!needle || !hay.includes(needle)) return false;
-  // CJK phrases have no word boundaries; latin must match a whole token
-  // so "star" does not hit "starship" and "not" does not hit "notes".
-  if (/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(needle)) {
-    return true;
-  }
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(hay);
-}
-
-async function collectConvIdsForToken(tokenStore, token) {
+async function collectConvIdsForToken(tokenStore, token, keepPostings = false) {
   const ids = new Set();
+  const postings = [];
   // Compound key [token, conversationId, source]. Stay inside this token so
-  // a shorter word does not match a longer one.
+  // a shorter word does not match a longer one. Role and positions ride on
+  // the same row; this cursor does not open the messages store.
   const range = IDBKeyRange.bound([token], [token, "\uffff", "\uffff"]);
   await cursorEach(tokenStore, { range }, (row) => {
-    if (row.token === token) ids.add(row.conversationId);
+    if (row.token === token) {
+      ids.add(row.conversationId);
+      if (keepPostings) postings.push(row);
+    }
   });
-  return ids;
+  return { ids, postings };
 }
 
 function intersectSets(sets) {
@@ -490,7 +519,10 @@ function intersectSets(sets) {
  */
 export async function searchConversations(options = {}) {
   const q = (options.query || "").trim();
-  if (!q) return listRecent(options);
+  if (!q) {
+    if (options.sort) return withDb((db) => listSortedOn(db, options));
+    return listRecent(options);
+  }
   return withDb((db) => searchOn(db, options));
 }
 
@@ -499,6 +531,7 @@ async function searchOn(db, {
   platform = "",
   scope = "all",
   limit = 80,
+  sort,
 } = {}) {
   const q = query.trim();
   const tokens = queryTokens(q);
@@ -508,8 +541,18 @@ async function searchOn(db, {
   const tokenStore = tx.objectStore("tokenMap");
 
   const tokenSets = [];
+  const postingsByConv = new Map();
   for (const token of tokens) {
-    tokenSets.push(await collectConvIdsForToken(tokenStore, token));
+    const found = await collectConvIdsForToken(tokenStore, token, sort?.field === "relevance");
+    tokenSets.push(found.ids);
+    for (const row of found.postings) {
+      let list = postingsByConv.get(row.conversationId);
+      if (!list) {
+        list = [];
+        postingsByConv.set(row.conversationId, list);
+      }
+      list.push(row);
+    }
   }
   const fromIndex = tokens.length ? intersectSets(tokenSets) : new Set();
 
@@ -530,8 +573,29 @@ async function searchOn(db, {
     if (!passesScope(conv, { platform, scope })) continue;
     matches.push(conv);
   }
-  matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (sort?.field === "relevance") {
+    for (const conv of matches) {
+      conv.relevance = relevanceScore(conv, q, postingsByConv.get(conv.id) || []);
+    }
+  }
+  if (sort?.field) {
+    matches.sort((a, b) => compareConversations(a, b, sort));
+  } else {
+    matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
   return matches.slice(0, limit);
+}
+
+/** Every in-scope conversation record, sorted, then limited. Does not open messages. */
+async function listSortedOn(db, { platform = "", scope = "all", limit = 80, sort } = {}) {
+  const tx = db.transaction("conversations", "readonly");
+  const items = [];
+  await cursorEach(tx.objectStore("conversations"), {}, (conv) => {
+    if (!passesScope(conv, { platform, scope })) return;
+    items.push(conv);
+  });
+  items.sort((a, b) => compareConversations(a, b, sort));
+  return items.slice(0, limit);
 }
 
 export async function listRecent(options = {}) {
@@ -660,6 +724,29 @@ export async function attachPreviews(conversations, query = "") {
   }));
 }
 
+/**
+ * Read one conversation and its messages. Readonly: does not create rows,
+ * does not clear a removed:<id> tombstone, and does not bump the schema.
+ */
+export async function readConversation(id) {
+  if (typeof id !== "string" || !id) return null;
+  return withDb(async (db) => {
+    const tx = db.transaction(["conversations", "messages", "meta"], "readonly");
+    const conv = await requestDone(tx.objectStore("conversations").get(id));
+    if (!conv) return null;
+    const order = await requestDone(tx.objectStore("meta").get(ORDER_PREFIX + id));
+    const messages = [];
+    const index = tx.objectStore("messages").index("conversationId");
+    await cursorEach(index, { range: IDBKeyRange.only(id) }, (msg) => {
+      if (msg) messages.push(msg);
+    });
+    return {
+      conversation: conv,
+      messages: orderMessages(messages, order?.ids || conv.messageOrder),
+    };
+  });
+}
+
 export async function stats() {
   return withDb(async (db) => {
     const tx = db.transaction(["conversations", "messages"], "readonly");
@@ -692,7 +779,8 @@ export async function readCaptureHealth() {
     if (!db.objectStoreNames.contains("meta")) return {};
     const tx = db.transaction("meta", "readonly");
     const out = {};
-    await cursorEach(tx.objectStore("meta"), {}, (row) => {
+    const range = IDBKeyRange.bound("health:", "health:\uffff");
+    await cursorEach(tx.objectStore("meta"), { range }, (row) => {
       if (row?.key?.startsWith?.("health:") && row.platform) out[row.platform] = row;
     });
     return out;
@@ -710,6 +798,7 @@ export async function removeConversation(id) {
     const tx = db.transaction(["conversations", "messages", "tokenMap", "meta"], "readwrite");
     tx.objectStore("conversations").delete(id);
     tx.objectStore("meta").put({ key: REMOVED_PREFIX + id, removedAt: Date.now() });
+    tx.objectStore("meta").delete(ORDER_PREFIX + id);
     const messages = tx.objectStore("messages").index("conversationId");
     await cursorEach(messages, { range: IDBKeyRange.only(id) }, (_row, cursor) => {
       cursor.delete();

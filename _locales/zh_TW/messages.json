@@ -215,5 +215,101 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "閱讀"
+  },
+  "openOriginal": {
+    "message": "前往原網站開啟"
+  },
+  "prevHit": {
+    "message": "上一處"
+  },
+  "nextHit": {
+    "message": "下一處"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "沒有符合的內容"
+  },
+  "roleUser": {
+    "message": "你"
+  },
+  "roleAssistant": {
+    "message": "助理"
+  },
+  "missingChat": {
+    "message": "這段對話已不在本機索引裡。"
+  },
+  "readerLoading": {
+    "message": "正在讀取…"
+  },
+  "sortBy": {
+    "message": "排序"
+  },
+  "sortCurrent": {
+    "message": "排序：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "切換排序方向，$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "最後對話時間"
+  },
+  "sortTitle": {
+    "message": "標題"
+  },
+  "sortCaptured": {
+    "message": "收錄時間"
+  },
+  "sortCount": {
+    "message": "訊息數"
+  },
+  "sortRelevance": {
+    "message": "相關度"
+  },
+  "sortDirNewest": {
+    "message": "新→舊"
+  },
+  "sortDirOldest": {
+    "message": "舊→新"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "多→少"
+  },
+  "sortDirFewer": {
+    "message": "少→多"
+  },
+  "sortDirHigh": {
+    "message": "高→低"
+  },
+  "sortDirLow": {
+    "message": "低→高"
   }
 }

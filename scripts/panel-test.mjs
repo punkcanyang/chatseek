@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { openDb, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
+import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import {
   activeTabUrl,
   eventInWindow,
@@ -177,10 +178,15 @@ globalThis.chrome = {
   runtime: {
     onMessage: { addListener(fn) { listeners.message.push(fn); } },
     sendMessage() {},
+    getURL(path) {
+      return `chrome-extension://chatseek-test/${String(path).replace(/^\//, "")}`;
+    },
   },
   action: { setBadgeText() { return Promise.resolve(); } },
 };
 
+const openedTabs = [];
+chrome.tabs.create = async (opts) => { openedTabs.push(opts); };
 const message = (msg, sender = {}) => listeners.message.forEach((fn) => fn(msg, sender));
 const activate = (windowId) => listeners.activated.forEach((fn) => fn({ tabId: active[windowId]?.id, windowId }));
 const updated = (windowId, info) => listeners.updated.forEach((fn) => fn(active[windowId]?.id, info, active[windowId]));
@@ -205,6 +211,44 @@ const list = document.getElementById("list");
 assert(!list.querySelector("img, script"), "chat text and titles never become elements");
 assert(rowFor(X.id).querySelector(".item-title").textContent.startsWith("<img"), "markup title shows as text");
 assert(globalThis.pwned === undefined, "no chat text ran");
+assert(
+  document.querySelectorAll(".item").length === document.querySelectorAll(".read").length &&
+    document.querySelectorAll(".read").length > 0,
+  "every row has a read button",
+);
+assert([...document.querySelectorAll(".read")].every((btn) => btn.textContent === "阅读"), "zh-CN read label");
+{
+  const css = readFileSync(join(root, "sidepanel/panel.css"), "utf8");
+  assert(css.includes(".remove:focus-visible"), "remove button has a focus ring");
+  assert(css.includes(".row:focus-within > .remove"), "keyboard focus inside the row reveals the X");
+  assert(css.includes(".row:hover > .remove"), "hover reveals the X");
+  assert(css.includes("#3DDC97"), "current-conversation frame stays green");
+  const sample = rowFor(A.id).parentElement.querySelector(":scope > .remove");
+  assert(sample && !rowFor(A.id).contains(sample), "the X is a sibling of the card, not nested in it");
+  assert(sample.type === "button" && sample.tabIndex >= 0, "the X stays in tab order");
+  assert(sample.textContent.trim() === "" && sample.querySelector("svg[aria-hidden='true']"), "the X is an icon");
+  assert(sample.getAttribute("aria-label") === "从索引移除" && sample.title === "从索引移除", "zh-CN name and tooltip");
+  assert(
+    [...document.querySelectorAll(".remove")].every(
+      (btn) => btn.getAttribute("aria-label") === CATALOG["zh-CN"].remove && btn.title === CATALOG["zh-CN"].remove,
+    ),
+    "every zh-CN row reuses the remove message",
+  );
+}
+openedTabs.length = 0;
+rowFor(A.id).parentElement.querySelector(".read").click();
+await until(() => openedTabs.length === 1, "read opens a tab");
+assert(openedTabs[0].url.includes("reader/index.html"), `read url ${openedTabs[0].url}`);
+assert(openedTabs[0].url.includes(encodeURIComponent(A.id)), "read url carries the conversation id");
+assert(!openedTabs[0].url.includes("chatgpt.com"), "read does not open the website");
+openedTabs.length = 0;
+rowFor(A.id).querySelector(".item-preview").click();
+await until(() => openedTabs.length === 1, "preview opens the reader");
+assert(openedTabs[0].url.includes("reader/index.html"), `preview url ${openedTabs[0].url}`);
+openedTabs.length = 0;
+rowFor(A.id).querySelector(".item-title").click();
+await until(() => openedTabs.length === 1, "title still opens the original chat");
+assert(openedTabs[0].url.startsWith("https://chatgpt.com/"), `title url ${openedTabs[0].url}`);
 
 // Index updates for the same chat must not pull the list back.
 message({ type: "INDEX_UPDATED" });
@@ -291,6 +335,10 @@ assert(rowFor(legacyId).querySelector(".item-title mark")?.textContent.toLowerCa
 q.value = "Alpha";
 q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(A.id) && !rowFor(B.id), "search for Alpha");
+openedTabs.length = 0;
+rowFor(A.id).parentElement.querySelector(".read").click();
+await until(() => openedTabs.length === 1, "search read passes the query");
+assert(decodeURIComponent(openedTabs[0].url).includes("q=Alpha"), `search reader url ${openedTabs[0].url}`);
 q.value = "";
 q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(B.id), "cleared search");
@@ -359,8 +407,25 @@ document.querySelector("#filterAll").click();
 await until(() => rowFor(archivedId) && rowFor(A.id), "all tab includes archived and active");
 
 const removeBtn = rowFor(archivedId).parentElement.querySelector(".remove");
-removeBtn.click();
 const dialog = document.getElementById("removeDialog");
+const pressRemove = (key) => {
+  const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  removeBtn.dispatchEvent(event);
+  assert(event.defaultPrevented, `${JSON.stringify(key)} is handled on the button`);
+};
+pressRemove("Enter");
+await until(() => !dialog.hidden, "Enter opens confirm");
+assert(rowFor(archivedId), "Enter does not delete before confirm");
+document.getElementById("removeCancel").click();
+await until(() => dialog.hidden, "cancel after Enter");
+assert(rowFor(archivedId), "cancel after Enter keeps the row");
+pressRemove(" ");
+await until(() => !dialog.hidden, "Space opens confirm");
+assert(rowFor(archivedId), "Space does not delete before confirm");
+document.getElementById("removeCancel").click();
+await until(() => dialog.hidden, "cancel after Space");
+assert(rowFor(archivedId), "cancel after Space keeps the row");
+removeBtn.click();
 await until(() => !dialog.hidden, "remove dialog opens");
 assert(document.getElementById("removeBody").textContent.includes("Archived fern notes"), "confirm names the chat");
 document.getElementById("removeCancel").click();
@@ -404,11 +469,85 @@ document.getElementById("lang").value = "auto";
 document.getElementById("lang").dispatchEvent(new window.Event("change"));
 await until(() => document.getElementById("filterActive").textContent === "活跃中", "follow browser returns to zh-CN");
 assert(!store.has("chatseek.uiLocale"), "follow browser clears the stored choice");
+assert(CATALOG["zh-TW"].remove === "從索引移除", "zh-TW remove copy");
+for (const code of LOCALE_ORDER) {
+  document.getElementById("lang").value = code;
+  document.getElementById("lang").dispatchEvent(new window.Event("change"));
+  const expected = CATALOG[code].remove;
+  await until(() => {
+    const btn = document.querySelector(".remove");
+    return btn && btn.getAttribute("aria-label") === expected && btn.title === expected;
+  }, `${code} remove label`);
+  const buttons = [...document.querySelectorAll(".remove")];
+  assert(buttons.length > 0, `${code} still renders a remove control`);
+  assert(
+    buttons.every(
+      (btn) => btn.getAttribute("aria-label") === expected
+        && btn.title === expected
+        && btn.textContent.trim() === ""
+        && btn.querySelector("svg"),
+    ),
+    `${code} aria-label and title reuse the remove message`,
+  );
+}
+document.getElementById("lang").value = "auto";
+document.getElementById("lang").dispatchEvent(new window.Event("change"));
+await until(() => document.getElementById("filterActive").textContent === "活跃中", "follow browser restored");
 assert(
   document.querySelector(".chip.is-on")?.getAttribute("aria-selected") === "true" &&
     document.querySelectorAll('.chip[aria-selected="true"]').length === 1,
   "exactly one tab is selected",
 );
+
+const sortField = document.getElementById("sortField");
+const sortDir = document.getElementById("sortDir");
+const sortMenu = document.getElementById("sortMenu");
+assert(sortField.textContent === "最后对话时间" && sortDir.textContent === "新→旧", "default sort is newest activity");
+assert(sortMenu.hidden && sortField.getAttribute("aria-expanded") === "false", "sort menu starts closed");
+sortField.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+await until(() => !sortMenu.hidden, "ArrowDown opens the sort menu");
+assert(sortField.getAttribute("aria-expanded") === "true", "sort button exposes the open menu");
+assert(!sortMenu.querySelector('[data-field="relevance"]'), "relevance is absent until there is a query");
+assert(sortMenu.querySelector('[data-field="title"]')?.getAttribute("role") === "menuitemradio", "sort choices are radio menu items");
+sortMenu.querySelector('[data-field="title"]').dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+await until(() => sortMenu.hidden && sortField.textContent === "标题", "Enter selects title sort");
+assert(sortDir.textContent === "A→Z", "title starts at A to Z");
+const titleIds = () => [...document.querySelectorAll(".item")].map((el) => el.dataset.id);
+assert(titleIds().indexOf(A.id) < titleIds().indexOf(B.id), "A to Z puts Alpha before Bravo");
+const saved = JSON.parse(store.get("chatseek.listSort"));
+assert(saved.field === "title" && saved.dirs.title === "asc" && saved.searchField === "relevance", "browse sort is stored apart from the search default");
+sortDir.dispatchEvent(new window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+await until(() => sortDir.textContent === "Z→A", "Space reverses the direction");
+await until(() => document.querySelector(".item-title")?.textContent.startsWith("Legacyzeta"), "Z to A brings the last title to the top");
+document.getElementById("filterArchived").click();
+await until(() => document.getElementById("sortField").textContent === "标题", "archived tab keeps the sort");
+document.getElementById("filterAll").click();
+await until(() => document.getElementById("sortField").textContent === "标题" && sortDir.textContent === "Z→A", "all tab keeps the same sort");
+store.set("chatseek.listSort", JSON.stringify({
+  field: "count",
+  dirs: { activity: "desc", title: "asc", captured: "desc", count: "asc" },
+  searchField: "relevance",
+  searchDirs: { relevance: "desc", activity: "desc", title: "asc", captured: "desc", count: "desc" },
+}));
+window.dispatchEvent(new window.StorageEvent("storage", { key: "chatseek.listSort" }));
+await until(() => sortField.textContent === "消息数" && sortDir.textContent === "少→多", "another panel's sort arrives");
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "相关度" && sortDir.textContent === "高→低", "search switches to relevance");
+sortField.click();
+await until(() => !sortMenu.hidden && sortMenu.querySelector('[data-field="relevance"][aria-checked="true"]'), "relevance is checked in the menu");
+sortField.click();
+sortDir.click();
+await until(() => sortDir.textContent === "低→高", "search direction is its own toggle");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "消息数" && sortDir.textContent === "少→多", "clearing search restores the saved non-search sort");
+q.value = "Alpha";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "相关度" && sortDir.textContent === "低→高", "the search direction is remembered");
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await until(() => sortField.textContent === "消息数", "search cleared again");
 
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

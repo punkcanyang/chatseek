@@ -215,5 +215,101 @@
         "content": "$3"
       }
     }
+  },
+  "read": {
+    "message": "読む"
+  },
+  "openOriginal": {
+    "message": "元のサイトで開く"
+  },
+  "prevHit": {
+    "message": "前へ"
+  },
+  "nextHit": {
+    "message": "次へ"
+  },
+  "hitCount": {
+    "message": "$ARG1$ / $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "noHits": {
+    "message": "一致なし"
+  },
+  "roleUser": {
+    "message": "あなた"
+  },
+  "roleAssistant": {
+    "message": "アシスタント"
+  },
+  "missingChat": {
+    "message": "この会話はローカルのインデックスにありません。"
+  },
+  "readerLoading": {
+    "message": "読み込んでいます…"
+  },
+  "sortBy": {
+    "message": "並べ替え"
+  },
+  "sortCurrent": {
+    "message": "並べ替え：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortDirHint": {
+    "message": "向きを切り替える（$ARG1$）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "sortActivity": {
+    "message": "最後の会話日時"
+  },
+  "sortTitle": {
+    "message": "タイトル"
+  },
+  "sortCaptured": {
+    "message": "取得日時"
+  },
+  "sortCount": {
+    "message": "メッセージ数"
+  },
+  "sortRelevance": {
+    "message": "関連度"
+  },
+  "sortDirNewest": {
+    "message": "新しい順"
+  },
+  "sortDirOldest": {
+    "message": "古い順"
+  },
+  "sortDirAz": {
+    "message": "A→Z"
+  },
+  "sortDirZa": {
+    "message": "Z→A"
+  },
+  "sortDirMore": {
+    "message": "多い順"
+  },
+  "sortDirFewer": {
+    "message": "少ない順"
+  },
+  "sortDirHigh": {
+    "message": "高い順"
+  },
+  "sortDirLow": {
+    "message": "低い順"
   }
 }
