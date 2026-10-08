@@ -12,10 +12,45 @@ import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-ur
 import { activeTabUrl, eventInWindow, locationFromMessage } from "../src/current-tab.js";
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 
-const STORAGE_KEY = "uiLocale";
+// The panel is an extension page, so its own localStorage keeps the choice
+// without the "storage" permission. Only the panel reads it.
+const STORAGE_KEY = "chatseek.uiLocale";
 
-let localePref = "auto";
-let localeCode = resolveLocale(navigator.language);
+function browserLocale() {
+  try {
+    const ui = chrome.i18n?.getUILanguage?.();
+    if (ui) return ui;
+  } catch {
+    // Fall back to the page language below.
+  }
+  return navigator.language;
+}
+
+function localeFor(pref) {
+  return resolveLocale(pref === "auto" ? browserLocale() : pref);
+}
+
+function readLocalePref() {
+  try {
+    const pref = globalThis.localStorage?.getItem(STORAGE_KEY);
+    if (pref && CATALOG[pref]) return pref;
+  } catch {
+    // Storage blocked: follow the browser.
+  }
+  return "auto";
+}
+
+function writeLocalePref(pref) {
+  try {
+    if (pref === "auto") globalThis.localStorage?.removeItem(STORAGE_KEY);
+    else globalThis.localStorage?.setItem(STORAGE_KEY, pref);
+  } catch {
+    // The panel still switches for this view if storage is unavailable.
+  }
+}
+
+let localePref = readLocalePref();
+let localeCode = localeFor(localePref);
 
 function bundle(code) {
   const say = (key, ...args) => fill(text(code, key), ...args);
@@ -321,8 +356,10 @@ qEl.addEventListener("input", () => {
 
 document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
-    document.querySelectorAll(".chip").forEach((c) => c.classList.remove("is-on"));
-    chip.classList.add("is-on");
+    document.querySelectorAll(".chip").forEach((c) => {
+      c.classList.toggle("is-on", c === chip);
+      c.setAttribute("aria-selected", c === chip ? "true" : "false");
+    });
     scope = chip.dataset.scope || "all";
     platform = scope === "platform" ? (chip.dataset.platform || "") : "";
     refresh();
@@ -352,16 +389,24 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && removeDialog && !removeDialog.hidden) closeRemove(false);
 });
 
-langEl?.addEventListener("change", async () => {
-  localePref = langEl.value || "auto";
-  localeCode = localePref === "auto" ? resolveLocale(navigator.language) : resolveLocale(localePref);
-  try {
-    await chrome.storage?.local?.set?.({ [STORAGE_KEY]: localePref });
-  } catch {
-    // The panel still switches for this view if storage is unavailable.
-  }
+function setLocalePref(pref) {
+  localePref = pref === "auto" || CATALOG[pref] ? pref : "auto";
+  localeCode = localeFor(localePref);
   applyStatic();
   refresh();
+}
+
+langEl?.addEventListener("change", () => {
+  const pref = langEl.value || "auto";
+  writeLocalePref(pref);
+  setLocalePref(pref);
+});
+
+// A side panel open in another window follows the change.
+window.addEventListener("storage", (event) => {
+  if (event.key !== STORAGE_KEY && event.key !== null) return;
+  const pref = readLocalePref();
+  if (pref !== localePref) setLocalePref(pref);
 });
 
 document.addEventListener("visibilitychange", () => {
@@ -438,18 +483,6 @@ function onActiveLocation(url) {
   setCurrentFromUrl(url);
 }
 
-async function loadLocalePref() {
-  try {
-    const stored = await chrome.storage?.local?.get?.(STORAGE_KEY);
-    const pref = stored?.[STORAGE_KEY];
-    if (pref === "auto" || (typeof pref === "string" && CATALOG[pref])) localePref = pref;
-  } catch {
-    localePref = "auto";
-  }
-  localeCode = localePref === "auto" ? resolveLocale(navigator.language) : resolveLocale(localePref);
-  applyStatic();
-}
-
 if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
     if (msg?.type === "INDEX_UPDATED") scheduleRefresh();
@@ -475,6 +508,6 @@ if (chrome.tabs?.onUpdated) {
   });
 }
 
-await loadLocalePref();
+applyStatic();
 resolvePanelWindow().then(syncActiveTab);
 refresh();

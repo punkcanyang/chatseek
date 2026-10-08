@@ -30,7 +30,7 @@
     "message": "Aucune discussion correspondante."
   },
   "loading": {
-    "message": "Recherche…"
+    "message": "Recherche en cours…"
   },
   "booting": {
     "message": "Lecture de l’index local…"
@@ -88,7 +88,7 @@
     "message": "Langue"
   },
   "langFollow": {
-    "message": "Suivre le navigateur"
+    "message": "Langue du navigateur"
   },
   "langNative": {
     "message": "Français"
@@ -151,7 +151,7 @@
     "message": "Date inconnue"
   },
   "unknownSaved": {
-    "message": "Date inconnue (enregistré $ARG1$)",
+    "message": "Date inconnue (enregistrée le $ARG1$)",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -159,7 +159,7 @@
     }
   },
   "saved": {
-    "message": "Enregistré $ARG1$",
+    "message": "Enregistrée le $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

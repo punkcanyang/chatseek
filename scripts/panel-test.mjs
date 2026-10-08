@@ -154,8 +154,14 @@ const active = {
 };
 let lastFocused = 1;
 const listeners = { message: [], activated: [], updated: [] };
-const store = {};
+const store = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (store.has(key) ? store.get(key) : null),
+  setItem: (key, value) => store.set(key, String(value)),
+  removeItem: (key) => store.delete(key),
+};
 globalThis.chrome = {
+  i18n: { getUILanguage: () => "zh-CN" },
   windows: { async getCurrent() { return { id: 1 }; } },
   tabs: {
     async query(q) {
@@ -173,15 +179,6 @@ globalThis.chrome = {
     sendMessage() {},
   },
   action: { setBadgeText() { return Promise.resolve(); } },
-  storage: {
-    local: {
-      async get(key) {
-        if (typeof key === "string") return { [key]: store[key] };
-        return { ...store };
-      },
-      async set(obj) { Object.assign(store, obj); },
-    },
-  },
 };
 
 const message = (msg, sender = {}) => listeners.message.forEach((fn) => fn(msg, sender));
@@ -376,11 +373,42 @@ await until(() => !rowFor(archivedId), "confirm drops the row");
 const gone = await searchConversations({ query: "fern", scope: "all" });
 assert(gone.length === 0, "removed chat is gone from search");
 
+assert(currentIds()[0] === fresh.id, "the open chat is framed before it is removed");
+rowFor(fresh.id).parentElement.querySelector(".remove").click();
+await until(() => !dialog.hidden, "remove dialog for the open chat");
+document.getElementById("removeConfirm").click();
+await until(() => !rowFor(fresh.id), "the framed row is removed");
+assert(currentIds().length === 0, "no frame is left on another row");
+await upsertConversations([{ ...fresh, archived: false, archiveSource: "chatgpt:sidebar" }]);
+message({ type: "INDEX_UPDATED" });
+await sleep(400);
+assert(!rowFor(fresh.id), "a sidebar rescan does not bring the removed chat back");
+await upsertMessages(fresh, freshMsgs, { pageMessageIds: [freshMsgs[0].id], captureId: "fresh-again" });
+message({ type: "INDEX_UPDATED" });
+await until(() => currentIds()[0] === fresh.id, "reopening the chat brings the row and its frame back");
+assert(rowFor(fresh.id).querySelector(".item-preview").textContent === "brand new question", "preview is rebuilt");
+
 document.getElementById("lang").value = "en";
 document.getElementById("lang").dispatchEvent(new window.Event("change"));
 await until(() => document.getElementById("counts").textContent.includes("messages"), "manual English");
 assert(document.getElementById("filterActive").textContent === "Active", "English active tab");
-assert(store.uiLocale === "en", "language preference is stored");
+assert(store.get("chatseek.uiLocale") === "en", "language preference is stored");
+assert(!("storage" in globalThis.chrome), "the panel needs no chrome.storage");
+
+store.set("chatseek.uiLocale", "ja");
+window.dispatchEvent(new window.StorageEvent("storage", { key: "chatseek.uiLocale" }));
+await until(() => document.getElementById("filterActive").textContent === "アクティブ", "another window switched to Japanese");
+assert(document.getElementById("lang").value === "ja", "the select follows the other window");
+
+document.getElementById("lang").value = "auto";
+document.getElementById("lang").dispatchEvent(new window.Event("change"));
+await until(() => document.getElementById("filterActive").textContent === "活跃中", "follow browser returns to zh-CN");
+assert(!store.has("chatseek.uiLocale"), "follow browser clears the stored choice");
+assert(
+  document.querySelector(".chip.is-on")?.getAttribute("aria-selected") === "true" &&
+    document.querySelectorAll('.chip[aria-selected="true"]').length === 1,
+  "exactly one tab is selected",
+);
 
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

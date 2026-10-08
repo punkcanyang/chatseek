@@ -88,7 +88,7 @@
     "message": "Sprache"
   },
   "langFollow": {
-    "message": "Browser folgen"
+    "message": "Browsersprache"
   },
   "langNative": {
     "message": "Deutsch"
@@ -151,7 +151,7 @@
     "message": "Datum unbekannt"
   },
   "unknownSaved": {
-    "message": "Datum unbekannt (gespeichert $ARG1$)",
+    "message": "Datum unbekannt (gespeichert am $ARG1$)",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -159,7 +159,7 @@
     }
   },
   "saved": {
-    "message": "Gespeichert $ARG1$",
+    "message": "Gespeichert am $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

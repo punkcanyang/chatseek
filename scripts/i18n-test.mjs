@@ -41,13 +41,22 @@ assert(!CATALOG["zh-CN"].beforeTitle.includes("一则"), "zh-CN tooltip should n
 assert(CATALOG["zh-TW"].beforeTitle.includes("一則確切時間"), CATALOG["zh-TW"].beforeTitle);
 assert(CATALOG["zh-TW"].archivedBadge === "已封存" && CATALOG["zh-CN"].archivedBadge === "已归档", "archive badge wording");
 
+for (const [key, value] of Object.entries(CATALOG.ja)) {
+  assert(!value.includes("索引"), `ja.${key} should say インデックス, not 索引`);
+}
+for (const [key, value] of Object.entries(CATALOG.ko)) {
+  assert(!/[「」]/.test(value), `ko.${key} should not use Japanese corner quotes`);
+}
+
 const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
 assert(manifest.default_locale === "en", "default locale");
 assert(manifest.name === "__MSG_extName__" && manifest.description === "__MSG_extDescription__", "manifest i18n");
 
 const panel = readFileSync(join(root, "sidepanel/panel.js"), "utf8");
 assert(!/["'`][^"'`\n]*[\u4e00-\u9fff]/.test(panel), "panel.js still has hardcoded UI copy");
-assert(panel.includes("chrome.storage"), "manual language uses chrome.storage");
+assert(!panel.includes("chrome.storage") && panel.includes("localStorage"), "manual language stays in the panel's localStorage");
+assert(panel.includes("getUILanguage"), "follow-browser reads chrome.i18n");
+assert(!(manifest.permissions || []).includes("storage"), "no storage permission");
 assert(panel.includes("resolveLocale"), "follow-browser is the resolver");
 
 assert(resolveLocale("zh-HK") === "zh-TW", "zh-HK");

@@ -91,9 +91,8 @@ if (manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDe
   fail("manifest name and description should use chrome.i18n messages");
 }
 const perms = manifest.permissions || [];
-const permSet = new Set(perms);
-if (perms.length !== 2 || !permSet.has("sidePanel") || !permSet.has("storage")) {
-  fail(`permissions should be sidePanel + storage (locale preference), got ${JSON.stringify(perms)}`);
+if (perms.length !== 1 || perms[0] !== "sidePanel") {
+  fail(`permissions should stay ["sidePanel"], got ${JSON.stringify(perms)}`);
 }
 const localeFolders = ["zh_TW", "zh_CN", "en", "ja", "ko", "es", "fr", "de", "pt_BR"];
 for (const folder of localeFolders) {

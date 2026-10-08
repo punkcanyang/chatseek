@@ -240,7 +240,9 @@ async function main() {
         Object.defineProperty(navigator, "language", { get: () => "zh-CN" });
         Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh"] });
       } catch { /* --lang=zh-CN covers this when the property is locked */ }
-      const pref = { uiLocale: "zh-TW" };
+      try {
+        if (!localStorage.getItem("chatseek.uiLocale")) localStorage.setItem("chatseek.uiLocale", "zh-TW");
+      } catch { /* the panel falls back to the browser language */ }
       window.chrome = {
         tabs: {
           async query() {
@@ -257,15 +259,6 @@ async function main() {
           lastError: null,
         },
         action: { setBadgeText() { return Promise.resolve(); } },
-        storage: {
-          local: {
-            async get(key) {
-              if (key === "uiLocale") return { uiLocale: pref.uiLocale };
-              return { ...pref };
-            },
-            async set(obj) { Object.assign(pref, obj); },
-          },
-        },
       };
     }, currentUrl);
 
@@ -309,7 +302,7 @@ async function main() {
       const follow = document.querySelector("#lang option[value='auto']")?.textContent || "";
       return document.getElementById("filterActive")?.textContent === "Active"
         && counts.includes("messages")
-        && follow === "Follow browser";
+        && follow === "Browser language";
     }, { timeout: 10000 });
     await page.screenshot({ path: shots.en, fullPage: true });
 

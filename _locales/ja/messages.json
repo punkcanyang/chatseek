@@ -6,7 +6,7 @@
     "message": "このパソコンで ChatGPT、Claude、Grok、Gemini の会話を検索。データはブラウザの外に出ません。"
   },
   "tag": {
-    "message": "このブラウザの中だけ"
+    "message": "このブラウザ内にだけ保存"
   },
   "searchLabel": {
     "message": "タイトルとメッセージ全文を検索"
@@ -24,7 +24,7 @@
     "message": "すべて"
   },
   "empty": {
-    "message": "まだ会話がありません。ChatGPT、Claude、Grok、Gemini のタブを開き、一覧か会話を表示すると、タイトルと画面上のメッセージがこの端末の索引に保存されます。"
+    "message": "まだ会話がありません。ChatGPT、Claude、Grok、Gemini のタブを開き、一覧か会話を表示すると、タイトルと画面上のメッセージがこの端末のインデックスに保存されます。"
   },
   "none": {
     "message": "一致する会話がありません。"
@@ -33,7 +33,7 @@
     "message": "検索しています…"
   },
   "booting": {
-    "message": "ローカルの索引を読み込んでいます…"
+    "message": "ローカルのインデックスを読み込んでいます…"
   },
   "hint": {
     "message": "開いている ChatGPT / Claude / Grok / Gemini のタブに表示された会話だけを保存します。ディスクの走査やアップロードはしません。拡張機能の更新後は会話のページを再読み込みしてください。メッセージを読めないページでは下に注意が出ます。"
@@ -53,25 +53,25 @@
     "message": "タイトルのみ（メッセージ未保存）"
   },
   "clear": {
-    "message": "ローカル索引を消去"
+    "message": "ローカルのインデックスを消去"
   },
   "confirmClear": {
     "message": "このブラウザの IndexedDB にある会話とメッセージをすべて削除しますか？元に戻せません。"
   },
   "error": {
-    "message": "ローカル索引を読み取れませんでした。"
+    "message": "ローカルのインデックスを読み込めませんでした。"
   },
   "archivedBadge": {
     "message": "アーカイブ済み"
   },
   "remove": {
-    "message": "索引から外す"
+    "message": "インデックスから外す"
   },
   "confirmRemoveTitle": {
-    "message": "索引から外しますか？"
+    "message": "インデックスから外しますか？"
   },
   "confirmRemoveBody": {
-    "message": "「$ARG1$」をこの端末の索引から外しますか？サイト上の会話は削除されません。あとでその会話を開くと、もう一度索引に入ります。",
+    "message": "「$ARG1$」をこの端末のインデックスから外しますか？サイト上の会話は削除されません。あとでその会話を開くと、もう一度インデックスに追加されます。",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -151,7 +151,7 @@
     "message": "日付不明"
   },
   "unknownSaved": {
-    "message": "日付不明（保存 $ARG1$）",
+    "message": "日付不明（$ARG1$ に保存）",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -159,7 +159,7 @@
     }
   },
   "saved": {
-    "message": "保存 $ARG1$",
+    "message": "$ARG1$ に保存",
     "placeholders": {
       "arg1": {
         "content": "$1"

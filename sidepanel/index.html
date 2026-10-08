@@ -29,13 +29,13 @@
     </div>
 
     <div class="filters" role="tablist">
-      <button type="button" class="chip is-on" data-scope="active" id="filterActive"></button>
-      <button type="button" class="chip" data-scope="platform" data-platform="chatgpt">ChatGPT</button>
-      <button type="button" class="chip" data-scope="platform" data-platform="claude">Claude</button>
-      <button type="button" class="chip" data-scope="platform" data-platform="grok">Grok</button>
-      <button type="button" class="chip" data-scope="platform" data-platform="gemini">Gemini</button>
-      <button type="button" class="chip" data-scope="archived" id="filterArchived"></button>
-      <button type="button" class="chip" data-scope="all" id="filterAll"></button>
+      <button type="button" role="tab" aria-selected="true" class="chip is-on" data-scope="active" id="filterActive"></button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="platform" data-platform="chatgpt">ChatGPT</button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="platform" data-platform="claude">Claude</button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="platform" data-platform="grok">Grok</button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="platform" data-platform="gemini">Gemini</button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="archived" id="filterArchived"></button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="all" id="filterAll"></button>
     </div>
 
     <p class="status" id="status" hidden></p>

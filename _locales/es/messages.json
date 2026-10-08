@@ -88,7 +88,7 @@
     "message": "Idioma"
   },
   "langFollow": {
-    "message": "Seguir el navegador"
+    "message": "Idioma del navegador"
   },
   "langNative": {
     "message": "Español"
@@ -151,7 +151,7 @@
     "message": "Fecha desconocida"
   },
   "unknownSaved": {
-    "message": "Fecha desconocida (guardado $ARG1$)",
+    "message": "Fecha desconocida (guardado el $ARG1$)",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -159,7 +159,7 @@
     }
   },
   "saved": {
-    "message": "Guardado $ARG1$",
+    "message": "Guardado el $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"
