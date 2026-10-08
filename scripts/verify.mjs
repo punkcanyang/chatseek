@@ -85,10 +85,19 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.3.0") fail(`version should be 1.3.0, got ${manifest.version}`);
+if (manifest.version !== "1.4.0") fail(`version should be 1.4.0, got ${manifest.version}`);
+if (manifest.default_locale !== "en") fail("default_locale should be en");
+if (manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") {
+  fail("manifest name and description should use chrome.i18n messages");
+}
 const perms = manifest.permissions || [];
 if (perms.length !== 1 || perms[0] !== "sidePanel") {
   fail(`permissions should stay ["sidePanel"], got ${JSON.stringify(perms)}`);
+}
+const localeFolders = ["zh_TW", "zh_CN", "en", "ja", "ko", "es", "fr", "de", "pt_BR"];
+for (const folder of localeFolders) {
+  const rel = `_locales/${folder}/messages.json`;
+  if (!existsSync(join(root, rel))) fail(`missing ${rel}`);
 }
 
 const referenced = new Set([
@@ -102,6 +111,7 @@ const referenced = new Set([
   "src/preview.js",
   "src/conversation-url.js",
   "src/current-tab.js",
+  "src/i18n.js",
   "LICENSE",
   ...Object.values(manifest.icons || {}),
   ...Object.values(manifest.action?.default_icon || {}),
@@ -150,6 +160,7 @@ for (const rel of [
   "src/preview.js",
   "src/conversation-url.js",
   "src/current-tab.js",
+  "src/i18n.js",
   "sidepanel/panel.js",
 ]) {
   const src = read(rel);
@@ -470,9 +481,24 @@ for (const line of [
     fail(`time source rank drifted: ${line}`);
   }
 }
-for (const piece of ["早於 ${stamp}", "早于 ${stamp}", "before ${stamp}"]) {
-  if (!activitySrc.includes(piece)) fail(`missing before-anchor label: ${piece}`);
+const beforeCopy = {
+  zh_TW: "早於",
+  zh_CN: "早于",
+  en: "before ",
+};
+for (const [folder, piece] of Object.entries(beforeCopy)) {
+  const messages = JSON.parse(read(`_locales/${folder}/messages.json`));
+  const before = messages.before?.message || "";
+  const approx = messages.approx?.message || "";
+  const unknown = messages.unknown?.message || "";
+  if (!before.includes(piece)) fail(`missing before-anchor label in ${folder}: ${before}`);
+  if (!approx || !unknown) fail(`${folder} is missing approx/unknown date labels`);
 }
+if (!/formatAbsoluteStamp|Intl\.DateTimeFormat/.test(activitySrc)) {
+  fail("activity labels should format dates with Intl");
+}
+if (!/readArchiveSignals/.test(sharedSrc)) fail("shared.js should expose archive signal reading");
+if (!/supported: false/.test(sharedSrc)) fail("platforms without an archive surface must be able to decline");
 
 pageTime._healthWarned = "";
 const zero = pageTime.buildHealthReport({
@@ -528,7 +554,18 @@ if (!/gemini:\s*"Gemini"/.test(activitySrc)) fail("health labels should name Gem
 const panelHtml = read("sidepanel/index.html");
 const panelSrc = read("sidepanel/panel.js");
 if (!/data-platform="gemini"/.test(panelHtml)) fail("side panel needs a Gemini filter");
+if (!/data-scope="active"/.test(panelHtml) || !/data-scope="archived"/.test(panelHtml) || !/id="filterAll"/.test(panelHtml)) {
+  fail("side panel tabs should be active, platforms, archived, then all");
+}
+const tabOrder = panelHtml.indexOf('data-scope="active"');
+const gptOrder = panelHtml.indexOf('data-platform="chatgpt"');
+const archivedOrder = panelHtml.indexOf('data-scope="archived"');
+const allOrder = panelHtml.indexOf('id="filterAll"');
+if (!(tabOrder < gptOrder && gptOrder < archivedOrder && archivedOrder < allOrder)) {
+  fail("tab order should be active, platforms, archived, all");
+}
 if (!/gemini:\s*"Gemini"/.test(panelSrc)) fail("side panel should name Gemini");
+if (!/removeConversation/.test(panelSrc)) fail("side panel should remove a row from the local index");
 if (/innerHTML|insertAdjacentHTML|outerHTML/.test(panelSrc)) {
   fail("side panel must not assign HTML from chat text");
 }

@@ -8,7 +8,14 @@ import {
   saveCaptureHealth,
   readCaptureHealth,
 } from "../src/db.js";
-import { applySidebarEstimates, formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
+import {
+  applySidebarEstimates,
+  calendarDay,
+  formatAbsoluteStamp,
+  formatActivityLabel,
+  formatDayStamp,
+  formatHealthEntries,
+} from "../src/activity-time.js";
 
 const longBody =
   "UNIQUE_NEEDLE_" + "padding".repeat(800) + "_END_MARKER_payload";
@@ -324,10 +331,8 @@ async function readConv(id) {
   return requestDone(handle.transaction("conversations").objectStore("conversations").get(id));
 }
 
-function absoluteStamp(ts) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function absoluteStamp(ts, locale = "en") {
+  return formatAbsoluteStamp(ts, locale);
 }
 
 const exactId = "chatgpt:55555555-5555-4555-8555-555555555555";
@@ -455,7 +460,7 @@ assert(bot.olderThanAt === anchorAt, "the row below stores the anchor time, not 
 const aboveLabel = formatActivityLabel(top, Date.now(), "zh-TW");
 const belowLabel = formatActivityLabel(bot, Date.now(), "zh-TW");
 const exactLabel = formatActivityLabel(mid, Date.now(), "zh-TW");
-const anchorStamp = absoluteStamp(anchorAt);
+const anchorStamp = absoluteStamp(anchorAt, "zh-TW");
 assert(
   aboveLabel.unknown && aboveLabel.text.startsWith("日期未知（收錄於 "),
   `no clock above should stay unknown, got ${aboveLabel.text}`,
@@ -487,8 +492,8 @@ assert(!unknownLabel.text.includes("約"), "unknown date must not look estimated
 const belowHans = formatActivityLabel(bot, Date.now(), "zh-CN");
 const belowEn = formatActivityLabel(bot, Date.now(), "en");
 const unknownHans = formatActivityLabel(unknownA, Date.now(), "zh-CN");
-assert(belowHans.text === `早于 ${anchorStamp}`, `Simplified before-label drifted: ${belowHans.text}`);
-assert(belowEn.text === `before ${anchorStamp}`, `English before-label drifted: ${belowEn.text}`);
+assert(belowHans.text === `早于 ${absoluteStamp(anchorAt, "zh-CN")}`, `Simplified before-label drifted: ${belowHans.text}`);
+assert(belowEn.text === `before ${absoluteStamp(anchorAt, "en")}`, `English before-label drifted: ${belowEn.text}`);
 assert(!belowHans.text.includes("约") && !belowEn.text.includes("~"), belowHans.text);
 assert(unknownHans.text.startsWith("日期未知（收录于 "), `Simplified unknown label drifted: ${unknownHans.text}`);
 for (const [label, foreign] of [
@@ -507,11 +512,14 @@ for (const [locale, prefix] of [
   ["zh", "早于 "],
   ["en", "before "],
   ["en-GB", "before "],
-  ["fr", "before "],
 ]) {
   const label = formatActivityLabel(bot, Date.now(), locale);
-  assert(label.text === `${prefix}${anchorStamp}`, `${locale} → ${label.text}`);
+  assert(label.text === `${prefix}${absoluteStamp(anchorAt, locale)}`, `${locale} → ${label.text}`);
 }
+assert(
+  formatActivityLabel(bot, Date.now(), "fr").text === `avant ${absoluteStamp(anchorAt, "fr")}`,
+  "French before-label should follow the fr catalog",
+);
 const later = formatActivityLabel(bot, Date.now() + 40 * 86400000, "zh-TW");
 assert(later.text === belowLabel.text, "an absolute before-bound must not drift as time passes");
 const bucketLabel = formatActivityLabel(
@@ -539,12 +547,13 @@ assert(bucketLabel.approx && bucketLabel.text.startsWith("約 ") && !bucketLabel
     const hant = formatActivityLabel(conv, viewAt, "zh-TW");
     const hans = formatActivityLabel(conv, viewAt, "zh-CN");
     const en = formatActivityLabel(conv, viewAt, "en");
-    assert(hant.text === `約 ${day}` && hant.approx && !hant.before && !hant.unknown, hant.text);
-    assert(hans.text === `约 ${day}`, hans.text);
-    assert(en.text === `~ ${day}`, en.text);
-    assert(hant.title === `推估：依側欄分組 · ${day}`, hant.title);
-    assert(hans.title === `推估：按侧栏分组 · ${day}`, hans.title);
-    assert(en.title === `Estimated from the sidebar group · ${day}`, en.title);
+    assert(calendarDay(point) === day, `${calendarDay(point)} !== ${day}`);
+    assert(hant.text === `約 ${formatDayStamp(point, "zh-TW")}` && hant.approx && !hant.before && !hant.unknown, hant.text);
+    assert(hans.text === `约 ${formatDayStamp(point, "zh-CN")}`, hans.text);
+    assert(en.text === `~ ${formatDayStamp(point, "en")}`, en.text);
+    assert(hant.title === `推估：依側欄分組 · ${formatDayStamp(point, "zh-TW")}`, hant.title);
+    assert(hans.title === `推估：按侧栏分组 · ${formatDayStamp(point, "zh-CN")}`, hans.title);
+    assert(en.title === `Estimated from the sidebar group · ${formatDayStamp(point, "en")}`, en.title);
     for (const label of [hant, hans, en]) {
       assert(!/\d{2}:\d{2}|小時|小时|分鐘|分钟|剛剛|刚刚|ago|just now/.test(label.text + label.title), label.text + label.title);
     }
@@ -571,13 +580,13 @@ assert(byBound.above.updatedAt > byBound.clockNew.updatedAt, "row above still so
 assert(formatActivityLabel(byBound.above, boundNow, "en").text.startsWith("Unknown date"), formatActivityLabel(byBound.above, boundNow, "en").text);
 assert(byBound.between.olderThanAt === tNew, "nearest clock above wins over the older clock");
 assert(byBound.between.updatedAt < tNew && byBound.between.updatedAt > tOld, "between-anchor sort key stays interpolated");
-assert(formatActivityLabel(byBound.between, boundNow, "zh-TW").text === `早於 ${absoluteStamp(tNew)}`);
+assert(formatActivityLabel(byBound.between, boundNow, "zh-TW").text === `早於 ${absoluteStamp(tNew, "zh-TW")}`);
 assert(
-  formatActivityLabel(byBound.between, boundNow + 40 * 86400000, "en").text === `before ${absoluteStamp(tNew)}`,
+  formatActivityLabel(byBound.between, boundNow + 40 * 86400000, "en").text === `before ${absoluteStamp(tNew, "en")}`,
   "before-label ignores the passage of time",
 );
 assert(byBound.underOld.olderThanAt === tOld && byBound.underOld.updatedAt < tOld, "the lower clock is the bound once it is the nearest above");
-assert(formatActivityLabel(byBound.underOld, boundNow, "zh-CN").text === `早于 ${absoluteStamp(tOld)}`);
+assert(formatActivityLabel(byBound.underOld, boundNow, "zh-CN").text === `早于 ${absoluteStamp(tOld, "zh-CN")}`);
 assert(byBound.bucket.updatedAtSource === "page-bucket" && byBound.bucket.olderThanAt == null, "a bucket is not given a before-bound");
 assert(byBound.underBucket.olderThanAt === tOld, "a page-bucket above is not the before-anchor");
 assert(
@@ -664,8 +673,8 @@ const storedBetween = await readConv(betweenId);
 const storedLow = await readConv(lowId);
 assert(storedBetween.olderThanAt === farAt, `IndexedDB kept the farther clock: ${storedBetween.olderThanAt}`);
 assert(storedLow.olderThanAt === nearAt, `IndexedDB kept the farther clock for the bottom row: ${storedLow.olderThanAt}`);
-assert(formatActivityLabel(storedBetween, Date.now(), "en").text === `before ${absoluteStamp(farAt)}`);
-assert(formatActivityLabel(storedLow, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(nearAt)}`);
+assert(formatActivityLabel(storedBetween, Date.now(), "en").text === `before ${absoluteStamp(farAt, "en")}`);
+assert(formatActivityLabel(storedLow, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(nearAt, "zh-TW")}`);
 assert(storedBetween.updatedAt < farAt && storedBetween.updatedAt > nearAt, "stored sort key stays between the two clocks");
 await upsertConversations([
   convOf(lowId, {
@@ -744,8 +753,8 @@ await upsertConversations([
 const rescanned = await readConv(legacyRankId);
 assert(rescanned.updatedAtSource === "sidebar-rank" && rescanned.olderThanAt === freshAt, "rescan stores the new clock above");
 assert(rescanned.updatedAt < freshAt, "rescan keeps the row sorted older than the clock");
-assert(formatActivityLabel(rescanned, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(freshAt)}`);
-assert(formatActivityLabel(await readConv(legacyExactId), Date.now(), "en").text !== `before ${absoluteStamp(freshAt)}`);
+assert(formatActivityLabel(rescanned, Date.now(), "zh-TW").text === `早於 ${absoluteStamp(freshAt, "zh-TW")}`);
+assert(formatActivityLabel(await readConv(legacyExactId), Date.now(), "en").text !== `before ${absoluteStamp(freshAt, "en")}`);
 
 const lastYear = new Date(new Date().getFullYear() - 1, 5, 10, 9, 30).getTime();
 const oldUnknown = formatActivityLabel(

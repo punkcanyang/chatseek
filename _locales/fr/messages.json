@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "Cherchez vos discussions ChatGPT, Claude, Grok et Gemini sur cet ordinateur. Rien ne quitte le navigateur."
+  },
+  "tag": {
+    "message": "Reste dans ce navigateur"
+  },
+  "searchLabel": {
+    "message": "Chercher dans les titres et le texte complet"
+  },
+  "searchPlaceholder": {
+    "message": "Rechercher une discussion…"
+  },
+  "tabActive": {
+    "message": "Actives"
+  },
+  "tabArchived": {
+    "message": "Archivées"
+  },
+  "tabAll": {
+    "message": "Toutes"
+  },
+  "empty": {
+    "message": "Aucune discussion pour l’instant. Ouvrez un onglet ChatGPT, Claude, Grok ou Gemini et parcourez la liste ou une discussion. Les titres et les messages visibles sont enregistrés dans l’index local."
+  },
+  "none": {
+    "message": "Aucune discussion correspondante."
+  },
+  "loading": {
+    "message": "Recherche en cours…"
+  },
+  "booting": {
+    "message": "Lecture de l’index local…"
+  },
+  "hint": {
+    "message": "Seules les discussions déjà affichées dans un onglet ChatGPT, Claude, Grok ou Gemini ouvert sont enregistrées. Pas d’analyse du disque, pas d’envoi. Après une mise à jour, rechargez ces onglets. Une note en bas apparaît si une page de discussion ne donne aucun message."
+  },
+  "counts": {
+    "message": "$ARG1$ discussions · $ARG2$ messages",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "Titre seul, aucun message enregistré"
+  },
+  "clear": {
+    "message": "Effacer l’index local"
+  },
+  "confirmClear": {
+    "message": "Supprimer toutes les discussions et tous les messages de l’IndexedDB de ce navigateur ? Cette action est définitive."
+  },
+  "error": {
+    "message": "Impossible de lire l’index local."
+  },
+  "archivedBadge": {
+    "message": "Archivée"
+  },
+  "remove": {
+    "message": "Retirer de l’index"
+  },
+  "confirmRemoveTitle": {
+    "message": "Retirer de l’index ?"
+  },
+  "confirmRemoveBody": {
+    "message": "Retirer « $ARG1$ » de l’index de cet ordinateur ? La discussion sur le site n’est pas supprimée. Si vous l’ouvrez à nouveau, elle sera de nouveau capturée.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "Annuler"
+  },
+  "confirmRemove": {
+    "message": "Retirer"
+  },
+  "langLabel": {
+    "message": "Langue"
+  },
+  "langFollow": {
+    "message": "Langue du navigateur"
+  },
+  "langNative": {
+    "message": "Français"
+  },
+  "noDate": {
+    "message": "sans date"
+  },
+  "justNow": {
+    "message": "à l’instant"
+  },
+  "minutes": {
+    "message": "il y a $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "il y a $ARG1$ h",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "il y a $ARG1$ j",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "env. $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "avant $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "Plus ancien que l’heure exacte la plus proche au-dessus · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "Date inconnue"
+  },
+  "unknownSaved": {
+    "message": "Date inconnue (enregistrée le $ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "Enregistrée le $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "Estimé d’après le groupe de la barre latérale"
+  },
+  "temporary": {
+    "message": "$ARG1$ : les discussions temporaires ne sont pas enregistrées",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "La page $ARG1$ a peut-être changé — signalez-le (dernière capture $ARG2$, 0 message)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$ : dernière capture $ARG2$, $ARG3$ messages",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$ : dernière capture $ARG2$, $ARG3$ discussions dans la barre",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

@@ -16,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const currentUrl = "https://chatgpt.com/c/11111111-1111-4111-8111-111111111111";
 const hour = 3600000;
 
-function conv(platform, platformId, title, url, updatedAt) {
+function conv(platform, platformId, title, url, updatedAt, extra = {}) {
   return {
     id: `${platform}:${platformId}`,
     platform,
@@ -25,6 +25,7 @@ function conv(platform, platformId, title, url, updatedAt) {
     url,
     updatedAt,
     updatedAtSource: "page-exact",
+    ...extra,
   };
 }
 
@@ -92,6 +93,41 @@ function rows(now) {
         now - 72 * hour,
       ),
       messages: null,
+    },
+    {
+      conv: conv(
+        "chatgpt",
+        "44444444-4444-4444-8444-444444444444",
+        "舊相機維修",
+        "https://chatgpt.com/c/44444444-4444-4444-8444-444444444444",
+        now - 10 * hour,
+        { archived: true, archiveSource: "chatgpt:banner", archivedAt: now - 2 * hour },
+      ),
+      messages: [
+        user(
+          "chatgpt:44444444-4444-4444-8444-444444444444:u",
+          "這台底片相機快門有時不釋放。請告訴我清潔和潤滑的順序，以及什麼情況該停手送修。",
+        ),
+        bot("chatgpt:44444444-4444-4444-8444-444444444444:a", "先不要上油。"),
+      ],
+    },
+    {
+      conv: conv(
+        "claude",
+        "55555555-5555-4555-8555-555555555555",
+        "封存的讀書筆記",
+        "https://claude.ai/chat/55555555-5555-4555-8555-555555555555",
+        now - 30 * hour,
+        // Seeded so the Archived tab shows a second platform. Claude has no
+        // archive detector; this source is example data, not a capture claim.
+        { archived: true, archiveSource: "example:seed", archivedAt: now - 5 * hour },
+      ),
+      messages: [
+        user(
+          "claude:55555555-5555-4555-8555-555555555555:u",
+          "把這本小說的時間線整理成一頁，不要劇透結局。",
+        ),
+      ],
     },
   ];
 }
@@ -161,7 +197,8 @@ async function prepare(page, origin) {
   await page.waitForFunction(() => {
     const badge = document.querySelector(".item-preview.is-title-only");
     const counts = document.getElementById("counts")?.textContent || "";
-    return badge?.textContent?.includes("仅有标题") && counts.includes("条消息") && !counts.includes("则消息");
+    const active = document.getElementById("filterActive")?.textContent || "";
+    return badge?.textContent?.includes("僅有標題") && counts.includes("則訊息") && active === "活躍中";
   }, { timeout: 10000 });
   const border = await page.$eval(".item.is-current", (el) => getComputedStyle(el).borderTopColor);
   if (border !== "rgb(61, 220, 151)") {
@@ -203,6 +240,9 @@ async function main() {
         Object.defineProperty(navigator, "language", { get: () => "zh-CN" });
         Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh"] });
       } catch { /* --lang=zh-CN covers this when the property is locked */ }
+      try {
+        if (!localStorage.getItem("chatseek.uiLocale")) localStorage.setItem("chatseek.uiLocale", "zh-TW");
+      } catch { /* the panel falls back to the browser language */ }
       window.chrome = {
         tabs: {
           async query() {
@@ -227,23 +267,56 @@ async function main() {
     const artifacts = "/opt/cursor/artifacts";
     await mkdir(docs, { recursive: true });
     await mkdir(artifacts, { recursive: true });
-    const idleDoc = join(docs, "panel-1.3.0-idle.png");
-    const searchDoc = join(docs, "panel-1.3.0-search.png");
-    await page.screenshot({ path: idleDoc, fullPage: true });
+    const shots = {
+      active: join(docs, "panel-1.4.0-active.png"),
+      archived: join(docs, "panel-1.4.0-archived.png"),
+      remove: join(docs, "panel-1.4.0-remove.png"),
+      en: join(docs, "panel-1.4.0-en.png"),
+      ja: join(docs, "panel-1.4.0-ja.png"),
+    };
+    const order = await page.$$eval(".chip", (els) => els.map((el) => el.textContent));
+    if (order.join("|") !== "活躍中|ChatGPT|Claude|Grok|Gemini|已封存|全部") {
+      throw new Error(`tab order ${order.join("|")}`);
+    }
+    await page.screenshot({ path: shots.active, fullPage: true });
 
-    await page.click("#q");
-    await page.type("#q", "红叶");
+    await page.click("#filterArchived");
     await page.waitForFunction(() => {
-      const marks = [...document.querySelectorAll(".item-preview mark")];
-      return marks.length >= 2 && marks.every((mark) => mark.textContent === "红叶" && mark.childElementCount === 0);
+      const badges = [...document.querySelectorAll(".badge-archived")];
+      return badges.length >= 2 && badges.every((badge) => badge.textContent === "已封存");
     }, { timeout: 10000 });
-    const shown = await page.$$eval(".item", (els) => els.length);
-    if (shown < 2) throw new Error(`search showed ${shown} rows`);
-    await page.screenshot({ path: searchDoc, fullPage: true });
+    await page.screenshot({ path: shots.archived, fullPage: true });
 
-    await copyFile(idleDoc, join(artifacts, "panel-1.3.0-idle.png"));
-    await copyFile(searchDoc, join(artifacts, "panel-1.3.0-search.png"));
-    console.log("screenshots", idleDoc, searchDoc);
+    await page.click(".remove");
+    await page.waitForFunction(() => {
+      const dialog = document.getElementById("removeDialog");
+      const body = document.getElementById("removeBody")?.textContent || "";
+      return dialog && !dialog.hidden && body.includes("從本機索引移除");
+    }, { timeout: 10000 });
+    await page.screenshot({ path: shots.remove, fullPage: true });
+    await page.click("#removeCancel");
+
+    await page.select("#lang", "en");
+    await page.waitForFunction(() => {
+      const counts = document.getElementById("counts")?.textContent || "";
+      const follow = document.querySelector("#lang option[value='auto']")?.textContent || "";
+      return document.getElementById("filterActive")?.textContent === "Active"
+        && counts.includes("messages")
+        && follow === "Browser language";
+    }, { timeout: 10000 });
+    await page.screenshot({ path: shots.en, fullPage: true });
+
+    await page.select("#lang", "ja");
+    await page.waitForFunction(() => {
+      return document.getElementById("filterActive")?.textContent === "アクティブ"
+        && (document.getElementById("counts")?.textContent || "").includes("メッセージ");
+    }, { timeout: 10000 });
+    await page.screenshot({ path: shots.ja, fullPage: true });
+
+    for (const file of Object.values(shots)) {
+      await copyFile(file, join(artifacts, file.split("/").pop()));
+    }
+    console.log("screenshots", Object.values(shots).join(" "));
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

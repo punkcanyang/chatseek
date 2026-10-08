@@ -257,15 +257,18 @@ assert(hantThread[0].text.includes("3 則訊息"), `zh-TW thread: ${hantThread[0
 assert(hantWarn[0].text.includes("0 則訊息"), `zh-TW warn: ${hantWarn[0].text}`);
 assert(!hantThread[0].text.includes("条") && !hantWarn[0].text.includes("消息"), "Traditional copy keeps 則訊息");
 
-const activity = read("src/activity-time.js");
-const hansBlock = activity.split('"zh-Hans"')[1].split(/\n  \},/)[0];
-const hantBlock = activity.split('"zh-Hant"')[1].split('"zh-Hans"')[0];
+const hansJson = JSON.parse(read("_locales/zh_CN/messages.json"));
+const hantJson = JSON.parse(read("_locales/zh_TW/messages.json"));
+const hansBlock = JSON.stringify(hansJson);
+const hantBlock = JSON.stringify(hantJson);
 assert(!/则消息|則消息|則訊息/.test(hansBlock) && /条消息/.test(hansBlock), "zh-Hans strings must say 条消息");
 assert(!/条消息|则消息|條消息/.test(hantBlock) && /則訊息/.test(hantBlock), "zh-Hant strings must say 則訊息");
+assert(hansJson.titleOnly.message === "仅有标题，未收录消息", "zh-CN title-only label");
+assert(hantJson.titleOnly.message === "僅有標題，未收錄訊息", "zh-TW title-only label");
+assert(hansJson.beforeTitle.message.includes("一个确切时间"), "zh-CN tooltip should say 一个确切时间");
 const panel = read("sidepanel/panel.js");
-assert(panel.includes("条消息") && panel.includes("則訊息"), "panel counts diverged");
-assert(panel.includes("仅有标题，未收录消息") && panel.includes("僅有標題，未收錄訊息"), "title-only labels missing");
 assert(!panel.includes("则消息"), "panel still has 则消息");
+assert(!/["'`][^"'`]*[\u4e00-\u9fff]/.test(panel), "panel.js should not hardcode UI copy");
 const readme = read("README.md");
 assert(!readme.includes("则消息") && readme.includes("一条消息"), "README measure word drifted");
 assert(readme.includes("真实会话时间") && readme.includes("采集时间"), "README date wording drifted");

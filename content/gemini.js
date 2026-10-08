@@ -1,6 +1,7 @@
 /* Gemini (gemini.google.com). Read the DOM only. No network calls and no internal RPC. */
 (() => {
   const PLATFORM = "gemini";
+  // Gemini has no first-party archive banner or archived-chat page. Do not guess.
   const state = { lastListFp: "", lastMsgFp: "" };
 
   // Selectors most likely to break when Gemini ships a new UI:

@@ -19,6 +19,8 @@
  * the sidebar estimate, and the side-panel label. Do not invent a per-platform copy.
  */
 
+import { fill, intlTag, resolveLocale, text } from "./i18n.js";
+
 export const MIN_PAGE_MS = 1577836800000;
 
 export const TIME_SOURCE_RANK = {
@@ -295,110 +297,82 @@ export function applySidebarEstimates(items, now = Date.now()) {
   return list;
 }
 
-function pad(n) {
-  return String(n).padStart(2, "0");
+function intlFormat(ts, locale, options) {
+  return new Intl.DateTimeFormat(intlTag(locale), options).format(new Date(ts));
 }
 
-function formatClock(ts, now) {
-  const d = new Date(ts);
-  const day = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return d.getFullYear() === new Date(now).getFullYear() ? day : `${d.getFullYear()}/${day}`;
-}
+const TIME_OPTS = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const DAY_OPTS = { year: "numeric", month: "2-digit", day: "2-digit" };
 
-function formatDate(ts) {
+/** Calendar day in the local timezone, for tests that check which day a group is. */
+export function calendarDay(ts) {
   const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function formatAbsolute(ts) {
-  const d = new Date(ts);
-  return `${formatDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** Locale date, via Intl. Group labels use this and never a clock time. */
+export function formatDayStamp(ts, locale = "en") {
+  return intlFormat(ts, locale, DAY_OPTS);
 }
 
-function formatHm(ts) {
-  const d = new Date(ts);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** Locale date and time, via Intl. The before-bound uses this absolute form. */
+export function formatAbsoluteStamp(ts, locale = "en") {
+  return intlFormat(ts, locale, { ...DAY_OPTS, ...TIME_OPTS });
+}
+
+function formatClock(ts, now, locale) {
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear();
+  const options = sameYear ? { month: "2-digit", day: "2-digit", ...TIME_OPTS } : { ...DAY_OPTS, ...TIME_OPTS };
+  return intlFormat(ts, locale, options);
+}
+
+function formatHm(ts, locale) {
+  return intlFormat(ts, locale, TIME_OPTS);
 }
 
 /**
- * zh-Hant carries the owner's strings verbatim.
- * A sidebar-rank row under a page-exact or observed anchor says 「早於 <absolute>」.
- * A page-bucket group says 「約 YYYY-MM-DD」: its stored instant is a made-up point
- * inside the group (Today is the midpoint of the day so far), so no clock time or
- * hours-ago is shown. No clock above → 「日期未知（收錄於 …）」.
- * zh-Hans matches the rest of the Simplified side panel so one label never mixes scripts.
- * The anchor stamp is YYYY-MM-DD HH:mm (the same absolute form as the tooltip),
- * so the words do not drift into another relative guess as time passes.
+ * Words live in src/i18n.js (and _locales). A sidebar-rank row under a
+ * page-exact or observed anchor says 「早於 <absolute>」. A page-bucket group
+ * says 「約 <day>」: its stored instant is a made-up point inside the group
+ * (Today is the midpoint of the day so far), so no clock time is shown.
+ * No clock above → 「日期未知（收錄於 …）」. The anchor stamp is an Intl
+ * absolute time for that locale, so the words do not drift into another
+ * relative guess as time passes.
+ *
+ * labelLocale stays the old three-way tag for callers that only branched
+ * on script. formatActivityLabel resolves the full catalog (ja, fr, …).
  */
-const STRINGS = {
-  en: {
-    noDate: "no date",
-    justNow: "just now",
-    minutes: (n) => `${n}m ago`,
-    hours: (n) => `${n}h ago`,
-    days: (n) => `${n}d ago`,
-    approx: (when) => `~ ${when}`,
-    before: (stamp) => `before ${stamp}`,
-    beforeTitle: (stamp) => `Older than the nearest exact time above · ${stamp}`,
-    unknown: "Unknown date",
-    unknownSaved: (stamp) => `Unknown date (saved ${stamp})`,
-    saved: (stamp) => `Saved ${stamp}`,
-    fromGroup: "Estimated from the sidebar group",
-    temporary: (name) => `${name}: temporary chats are not saved`,
-    warn: (name, hhmm) => `${name} page may have changed — please report (last capture ${hhmm}, 0 messages)`,
-    thread: (name, hhmm, n) => `${name}: last capture ${hhmm}, ${n} messages`,
-    sidebar: (name, hhmm, n) => `${name}: last capture ${hhmm}, ${n} sidebar chats`,
-  },
-  "zh-Hant": {
-    noDate: "無日期",
-    justNow: "剛剛",
-    minutes: (n) => `${n} 分鐘前`,
-    hours: (n) => `${n} 小時前`,
-    days: (n) => `${n} 天前`,
-    approx: (when) => `約 ${when}`,
-    before: (stamp) => `早於 ${stamp}`,
-    beforeTitle: (stamp) => `比上方最近一則確切時間更早 · ${stamp}`,
-    unknown: "日期未知",
-    unknownSaved: (stamp) => `日期未知（收錄於 ${stamp}）`,
-    saved: (stamp) => `收錄於 ${stamp}`,
-    fromGroup: "推估：依側欄分組",
-    temporary: (name) => `${name} 臨時聊天不會收錄`,
-    warn: (name, hhmm) => `${name} 頁面可能改版，請回報（最後收錄 ${hhmm}，0 則訊息）`,
-    thread: (name, hhmm, n) => `${name}：最後收錄 ${hhmm}，${n} 則訊息`,
-    sidebar: (name, hhmm, n) => `${name}：最後收錄 ${hhmm}，側欄 ${n} 條`,
-  },
-  "zh-Hans": {
-    noDate: "无日期",
-    justNow: "刚刚",
-    minutes: (n) => `${n} 分钟前`,
-    hours: (n) => `${n} 小时前`,
-    days: (n) => `${n} 天前`,
-    approx: (when) => `约 ${when}`,
-    before: (stamp) => `早于 ${stamp}`,
-    beforeTitle: (stamp) => `比上方最近一则确切时间更早 · ${stamp}`,
-    unknown: "日期未知",
-    unknownSaved: (stamp) => `日期未知（收录于 ${stamp}）`,
-    saved: (stamp) => `收录于 ${stamp}`,
-    fromGroup: "推估：按侧栏分组",
-    temporary: (name) => `${name} 临时聊天不会收录`,
-    warn: (name, hhmm) => `${name} 页面可能改版，请回报（最后收录 ${hhmm}，0 条消息）`,
-    thread: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，${n} 条消息`,
-    sidebar: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，侧栏 ${n} 条`,
-  },
-};
-
-/** "zh-TW" / "zh-HK" / "zh-MO" / "zh-Hant-*" → zh-Hant; any other zh → zh-Hans. */
 export function labelLocale(locale) {
-  const tag = String(locale || "").toLowerCase();
-  if (!tag.startsWith("zh")) return "en";
-  return /^zh(?:-hant|-tw|-hk|-mo)(?:-|$)/.test(tag) ? "zh-Hant" : "zh-Hans";
+  const code = resolveLocale(locale);
+  if (code === "zh-TW") return "zh-Hant";
+  if (code === "zh-CN") return "zh-Hans";
+  return "en";
 }
 
 function stringsFor(locale) {
-  return STRINGS[labelLocale(locale)];
+  const say = (key, ...args) => fill(text(locale, key), ...args);
+  return {
+    noDate: say("noDate"),
+    justNow: say("justNow"),
+    minutes: (n) => say("minutes", n),
+    hours: (n) => say("hours", n),
+    days: (n) => say("days", n),
+    approx: (when) => say("approx", when),
+    before: (stamp) => say("before", stamp),
+    beforeTitle: (stamp) => say("beforeTitle", stamp),
+    unknown: say("unknown"),
+    unknownSaved: (stamp) => say("unknownSaved", stamp),
+    saved: (stamp) => say("saved", stamp),
+    fromGroup: say("fromGroup"),
+    temporary: (name) => say("temporary", name),
+    warn: (name, hhmm) => say("warn", name, hhmm),
+    thread: (name, hhmm, n) => say("thread", name, hhmm, n),
+    sidebar: (name, hhmm, n) => say("sidebarHealth", name, hhmm, n),
+  };
 }
 
-function relativeLabel(ts, now, s) {
+function relativeLabel(ts, now, s, locale) {
   if (!isValidPageMs(ts)) return s.noDate;
   const delta = now - ts;
   const m = Math.floor(delta / 60000);
@@ -407,7 +381,7 @@ function relativeLabel(ts, now, s) {
   const h = Math.floor(m / 60);
   if (h < 48) return s.hours(h);
   const days = Math.floor(h / 24);
-  if (days >= 7) return formatDate(ts);
+  if (days >= 7) return formatDayStamp(ts, locale);
   return s.days(days);
 }
 
@@ -424,7 +398,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
         : null;
 
   if (source === "first-seen" || source === "legacy" || !conv?.updatedAtSource) {
-    const stamp = saved ? formatClock(saved, now) : "";
+    const stamp = saved ? formatClock(saved, now, locale) : "";
     return {
       text: stamp ? s.unknownSaved(stamp) : s.unknown,
       title: stamp ? s.saved(stamp) : s.unknown,
@@ -436,7 +410,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
 
   if (source === "sidebar-rank") {
     if (isValidPageMs(conv.olderThanAt)) {
-      const stamp = formatAbsolute(conv.olderThanAt);
+      const stamp = formatAbsoluteStamp(conv.olderThanAt, locale);
       return {
         text: s.before(stamp),
         title: s.beforeTitle(stamp),
@@ -446,7 +420,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
         before: true,
       };
     }
-    const stamp = saved ? formatClock(saved, now) : "";
+    const stamp = saved ? formatClock(saved, now, locale) : "";
     return {
       text: stamp ? s.unknownSaved(stamp) : s.unknown,
       title: stamp ? s.saved(stamp) : s.unknown,
@@ -457,9 +431,9 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
     };
   }
 
-  const when = relativeLabel(conv.updatedAt, now, s);
+  const when = relativeLabel(conv.updatedAt, now, s, locale);
   if (source === "page-bucket") {
-    const day = isValidPageMs(conv.updatedAt) ? formatDate(conv.updatedAt) : "";
+    const day = isValidPageMs(conv.updatedAt) ? formatDayStamp(conv.updatedAt, locale) : "";
     return {
       text: s.approx(day || when),
       title: day ? `${s.fromGroup} · ${day}` : s.fromGroup,
@@ -472,7 +446,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
 
   return {
     text: when,
-    title: isValidPageMs(conv.updatedAt) ? formatAbsolute(conv.updatedAt) : when,
+    title: isValidPageMs(conv.updatedAt) ? formatAbsoluteStamp(conv.updatedAt, locale) : when,
     source,
     approx: false,
     unknown: false,
@@ -498,7 +472,7 @@ export function formatHealthEntries(byPlatform, now = Date.now(), locale = "en")
   for (const [platform, row] of Object.entries(byPlatform || {})) {
     if (!row || typeof row !== "object") continue;
     const name = PLATFORM_LABEL[platform] || platform;
-    const hhmm = formatHm(row.at || now);
+    const hhmm = formatHm(row.at || now, locale);
     const count = Number(row.messageCount) || 0;
     const sidebarCount = Number(row.sidebarCount) || 0;
     let text;

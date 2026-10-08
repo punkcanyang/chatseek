@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "在這台電腦搜尋 ChatGPT、Claude、Grok、Gemini 對話。資料只留在瀏覽器。"
+  },
+  "tag": {
+    "message": "只留在這台瀏覽器裡"
+  },
+  "searchLabel": {
+    "message": "搜尋標題和訊息全文"
+  },
+  "searchPlaceholder": {
+    "message": "搜尋對話…"
+  },
+  "tabActive": {
+    "message": "活躍中"
+  },
+  "tabArchived": {
+    "message": "已封存"
+  },
+  "tabAll": {
+    "message": "全部"
+  },
+  "empty": {
+    "message": "還沒有收錄任何對話。打開 ChatGPT、Claude、Grok 或 Gemini 分頁並瀏覽對話列表或進入對話後，標題和可見訊息會寫入本機索引。"
+  },
+  "none": {
+    "message": "沒有符合的對話。"
+  },
+  "loading": {
+    "message": "正在搜尋…"
+  },
+  "booting": {
+    "message": "正在讀取本機索引…"
+  },
+  "hint": {
+    "message": "只收錄你目前打開的 ChatGPT / Claude / Grok / Gemini 分頁裡已經出現在頁面上的對話，不會掃描磁碟或上傳內容。剛更新擴充功能後請重新整理對話頁；某一頁收不到訊息時，底部會提示。"
+  },
+  "counts": {
+    "message": "$ARG1$ 則對話 · $ARG2$ 則訊息",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "僅有標題，未收錄訊息"
+  },
+  "clear": {
+    "message": "清除本機索引"
+  },
+  "confirmClear": {
+    "message": "刪除本機 IndexedDB 中的全部對話和訊息？此操作無法復原。"
+  },
+  "error": {
+    "message": "無法讀取本機索引。"
+  },
+  "archivedBadge": {
+    "message": "已封存"
+  },
+  "remove": {
+    "message": "從索引移除"
+  },
+  "confirmRemoveTitle": {
+    "message": "從索引移除？"
+  },
+  "confirmRemoveBody": {
+    "message": "從本機索引移除「$ARG1$」？網站上的對話不會被刪除。之後再打開這段對話，會重新收進索引。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "confirmRemove": {
+    "message": "移除"
+  },
+  "langLabel": {
+    "message": "語言"
+  },
+  "langFollow": {
+    "message": "跟隨瀏覽器"
+  },
+  "langNative": {
+    "message": "繁體中文"
+  },
+  "noDate": {
+    "message": "無日期"
+  },
+  "justNow": {
+    "message": "剛剛"
+  },
+  "minutes": {
+    "message": "$ARG1$ 分鐘前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "$ARG1$ 小時前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "$ARG1$ 天前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "約 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "早於 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "比上方最近一則確切時間更早 · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "日期未知"
+  },
+  "unknownSaved": {
+    "message": "日期未知（收錄於 $ARG1$）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "收錄於 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "推估：依側欄分組"
+  },
+  "temporary": {
+    "message": "$ARG1$ 臨時聊天不會收錄",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "$ARG1$ 頁面可能改版，請回報（最後收錄 $ARG2$，0 則訊息）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$：最後收錄 $ARG2$，$ARG3$ 則訊息",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$：最後收錄 $ARG2$，側欄 $ARG3$ 條",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

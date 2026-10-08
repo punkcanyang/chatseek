@@ -1,5 +1,6 @@
 (() => {
   const PLATFORM = "grok";
+  // grok.com history is the normal list, not an archive. No banner to read.
   const state = { lastListFp: "", lastMsgFp: "" };
   const MESSAGE_SELECTORS = [
     "[data-message-author-role]",

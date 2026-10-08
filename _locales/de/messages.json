@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "Durchsucht ChatGPT-, Claude-, Grok- und Gemini-Chats auf diesem Computer. Nichts verlässt den Browser."
+  },
+  "tag": {
+    "message": "Bleibt in diesem Browser"
+  },
+  "searchLabel": {
+    "message": "Titel und vollständigen Text durchsuchen"
+  },
+  "searchPlaceholder": {
+    "message": "Unterhaltungen suchen…"
+  },
+  "tabActive": {
+    "message": "Aktiv"
+  },
+  "tabArchived": {
+    "message": "Archiviert"
+  },
+  "tabAll": {
+    "message": "Alle"
+  },
+  "empty": {
+    "message": "Noch nichts im Index. Öffnen Sie einen ChatGPT-, Claude-, Grok- oder Gemini-Tab und sehen Sie die Liste oder einen Chat an. Titel und sichtbare Nachrichten bleiben lokal gespeichert."
+  },
+  "none": {
+    "message": "Keine passenden Unterhaltungen."
+  },
+  "loading": {
+    "message": "Suche läuft…"
+  },
+  "booting": {
+    "message": "Lokaler Index wird gelesen…"
+  },
+  "hint": {
+    "message": "Gespeichert wird nur, was in einem offenen ChatGPT-, Claude-, Grok- oder Gemini-Tab schon auf der Seite steht. Keine Datenträgersuche, kein Upload. Nach einem Update diese Tabs neu laden. Unten erscheint ein Hinweis, wenn eine Chat-Seite keine Nachrichten liefert."
+  },
+  "counts": {
+    "message": "$ARG1$ Chats · $ARG2$ Nachrichten",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "Nur Titel, keine Nachricht gespeichert"
+  },
+  "clear": {
+    "message": "Lokalen Index löschen"
+  },
+  "confirmClear": {
+    "message": "Alle Unterhaltungen und Nachrichten in der IndexedDB dieses Browsers löschen? Das lässt sich nicht rückgängig machen."
+  },
+  "error": {
+    "message": "Der lokale Index konnte nicht gelesen werden."
+  },
+  "archivedBadge": {
+    "message": "Archiviert"
+  },
+  "remove": {
+    "message": "Aus dem Index entfernen"
+  },
+  "confirmRemoveTitle": {
+    "message": "Aus dem Index entfernen?"
+  },
+  "confirmRemoveBody": {
+    "message": "„$ARG1$“ aus dem Index auf diesem Computer entfernen? Der Chat auf der Website wird nicht gelöscht. Wenn Sie ihn später wieder öffnen, wird er erneut erfasst.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "Abbrechen"
+  },
+  "confirmRemove": {
+    "message": "Entfernen"
+  },
+  "langLabel": {
+    "message": "Sprache"
+  },
+  "langFollow": {
+    "message": "Browsersprache"
+  },
+  "langNative": {
+    "message": "Deutsch"
+  },
+  "noDate": {
+    "message": "kein Datum"
+  },
+  "justNow": {
+    "message": "gerade eben"
+  },
+  "minutes": {
+    "message": "vor $ARG1$ Min.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "vor $ARG1$ Std.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "vor $ARG1$ Tg.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "ca. $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "älter als $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "Älter als die nächste genaue Zeit darüber · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "Datum unbekannt"
+  },
+  "unknownSaved": {
+    "message": "Datum unbekannt (gespeichert am $ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "Gespeichert am $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "Geschätzt aus der Seitenleisten-Gruppe"
+  },
+  "temporary": {
+    "message": "$ARG1$: temporäre Chats werden nicht gespeichert",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "Die Seite von $ARG1$ hat sich vielleicht geändert — bitte melden (letzte Erfassung $ARG2$, 0 Nachrichten)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$: letzte Erfassung $ARG2$, $ARG3$ Nachrichten",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$: letzte Erfassung $ARG2$, $ARG3$ Chats in der Seitenleiste",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

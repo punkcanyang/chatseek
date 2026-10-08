@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "在这台电脑搜索 ChatGPT、Claude、Grok、Gemini 对话。数据只留在浏览器。"
+  },
+  "tag": {
+    "message": "只留在这台浏览器里"
+  },
+  "searchLabel": {
+    "message": "搜索标题和消息全文"
+  },
+  "searchPlaceholder": {
+    "message": "搜索对话…"
+  },
+  "tabActive": {
+    "message": "活跃中"
+  },
+  "tabArchived": {
+    "message": "已归档"
+  },
+  "tabAll": {
+    "message": "全部"
+  },
+  "empty": {
+    "message": "还没有收录任何对话。打开 ChatGPT、Claude、Grok 或 Gemini 标签页并浏览会话列表或进入对话后，标题和可见消息会写入本地索引。"
+  },
+  "none": {
+    "message": "没有匹配的对话。"
+  },
+  "loading": {
+    "message": "正在搜索…"
+  },
+  "booting": {
+    "message": "正在读取本地索引…"
+  },
+  "hint": {
+    "message": "只收录你当前打开的 ChatGPT / Claude / Grok / Gemini 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请刷新对话页；某一页收不到消息时，底部会提示。"
+  },
+  "counts": {
+    "message": "$ARG1$ 条对话 · $ARG2$ 条消息",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "仅有标题，未收录消息"
+  },
+  "clear": {
+    "message": "清除本地索引"
+  },
+  "confirmClear": {
+    "message": "删除本机 IndexedDB 中的全部对话和消息？此操作不可恢复。"
+  },
+  "error": {
+    "message": "无法读取本地索引。"
+  },
+  "archivedBadge": {
+    "message": "已归档"
+  },
+  "remove": {
+    "message": "从索引移除"
+  },
+  "confirmRemoveTitle": {
+    "message": "从索引移除？"
+  },
+  "confirmRemoveBody": {
+    "message": "从本地索引移除「$ARG1$」？网站上的对话不会删除。之后再打开这段对话，会重新收进索引。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "confirmRemove": {
+    "message": "移除"
+  },
+  "langLabel": {
+    "message": "语言"
+  },
+  "langFollow": {
+    "message": "跟随浏览器"
+  },
+  "langNative": {
+    "message": "简体中文"
+  },
+  "noDate": {
+    "message": "无日期"
+  },
+  "justNow": {
+    "message": "刚刚"
+  },
+  "minutes": {
+    "message": "$ARG1$ 分钟前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "$ARG1$ 小时前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "$ARG1$ 天前",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "约 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "早于 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "比上方最近一个确切时间更早 · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "日期未知"
+  },
+  "unknownSaved": {
+    "message": "日期未知（收录于 $ARG1$）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "收录于 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "推估：按侧栏分组"
+  },
+  "temporary": {
+    "message": "$ARG1$ 临时聊天不会收录",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "$ARG1$ 页面可能改版，请回报（最后收录 $ARG2$，0 条消息）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$：最后收录 $ARG2$，$ARG3$ 条消息",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$：最后收录 $ARG2$，侧栏 $ARG3$ 条",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}

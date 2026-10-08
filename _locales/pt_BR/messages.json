@@ -1,0 +1,219 @@
+{
+  "extName": {
+    "message": "Chatseek"
+  },
+  "extDescription": {
+    "message": "Pesquise conversas do ChatGPT, Claude, Grok e Gemini neste computador. Nada sai do navegador."
+  },
+  "tag": {
+    "message": "Fica neste navegador"
+  },
+  "searchLabel": {
+    "message": "Pesquisar títulos e o texto completo"
+  },
+  "searchPlaceholder": {
+    "message": "Pesquisar conversas…"
+  },
+  "tabActive": {
+    "message": "Ativas"
+  },
+  "tabArchived": {
+    "message": "Arquivadas"
+  },
+  "tabAll": {
+    "message": "Todas"
+  },
+  "empty": {
+    "message": "Ainda não há conversas no índice. Abra uma aba do ChatGPT, Claude, Grok ou Gemini e veja a lista ou uma conversa. Títulos e mensagens visíveis ficam no índice local."
+  },
+  "none": {
+    "message": "Nenhuma conversa encontrada."
+  },
+  "loading": {
+    "message": "Pesquisando…"
+  },
+  "booting": {
+    "message": "Lendo o índice local…"
+  },
+  "hint": {
+    "message": "Só entram conversas que já aparecem numa aba aberta do ChatGPT, Claude, Grok ou Gemini. Não vasculhamos o disco nem enviamos conteúdo. Depois de atualizar, recarregue essas abas. O rodapé avisa se uma página de conversa não trouxer mensagens."
+  },
+  "counts": {
+    "message": "$ARG1$ conversas · $ARG2$ mensagens",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "titleOnly": {
+    "message": "Só o título, nenhuma mensagem salva"
+  },
+  "clear": {
+    "message": "Limpar o índice local"
+  },
+  "confirmClear": {
+    "message": "Apagar todas as conversas e mensagens do IndexedDB deste navegador? Não dá para desfazer."
+  },
+  "error": {
+    "message": "Não foi possível ler o índice local."
+  },
+  "archivedBadge": {
+    "message": "Arquivada"
+  },
+  "remove": {
+    "message": "Remover do índice"
+  },
+  "confirmRemoveTitle": {
+    "message": "Remover do índice?"
+  },
+  "confirmRemoveBody": {
+    "message": "Remover “$ARG1$” do índice neste computador? A conversa no site não é apagada. Se você abri-la de novo, ela volta a ser capturada.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "cancel": {
+    "message": "Cancelar"
+  },
+  "confirmRemove": {
+    "message": "Remover"
+  },
+  "langLabel": {
+    "message": "Idioma"
+  },
+  "langFollow": {
+    "message": "Idioma do navegador"
+  },
+  "langNative": {
+    "message": "Português (Brasil)"
+  },
+  "noDate": {
+    "message": "sem data"
+  },
+  "justNow": {
+    "message": "agora"
+  },
+  "minutes": {
+    "message": "há $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "hours": {
+    "message": "há $ARG1$ h",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "days": {
+    "message": "há $ARG1$ d",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "approx": {
+    "message": "aprox. $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "before": {
+    "message": "antes de $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "beforeTitle": {
+    "message": "Antes do horário exato mais próximo acima · $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknown": {
+    "message": "Data desconhecida"
+  },
+  "unknownSaved": {
+    "message": "Data desconhecida (salvo em $ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "saved": {
+    "message": "Salvo em $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "fromGroup": {
+    "message": "Estimado pelo grupo da barra lateral"
+  },
+  "temporary": {
+    "message": "$ARG1$: conversas temporárias não são salvas",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "warn": {
+    "message": "A página do $ARG1$ pode ter mudado — avise (última captura $ARG2$, 0 mensagens)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "thread": {
+    "message": "$ARG1$: última captura $ARG2$, $ARG3$ mensagens",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "sidebarHealth": {
+    "message": "$ARG1$: última captura $ARG2$, $ARG3$ conversas na barra",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  }
+}
