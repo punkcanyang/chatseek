@@ -1,7 +1,8 @@
 /**
  * Page order for messages already stored on a conversation.
- * No schema change: messageOrder is a plain array of message ids.
- * The reader only reads it. Capture merges a newly visible window into it.
+ * No schema change: the order is a plain array of message ids in the meta
+ * row "order:<conversation id>". The reader only reads it. Capture merges a
+ * newly visible window into it.
  */
 
 export function mergeMessageOrder(stored, pageIds) {

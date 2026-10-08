@@ -213,6 +213,9 @@ export async function upsertConversations(list) {
 }
 
 const REMOVED_PREFIX = "removed:";
+// Page order of a conversation's message ids. Kept in meta, not on the
+// conversation row, so list and search cursors over conversations stay small.
+const ORDER_PREFIX = "order:";
 
 /**
  * reopened: the chat is open with messages on the page. Only that clears a
@@ -335,12 +338,13 @@ function sawNewTail(baselineCount, baselineTail, pageMessageIds, tailBodyChanged
 
 async function writeMessages(db, conversation, messages, meta = {}) {
   const tx = db.transaction(
-    ["conversations", "messages", "tokenMap"],
+    ["conversations", "messages", "tokenMap", "meta"],
     "readwrite",
   );
   const convStore = tx.objectStore("conversations");
   const msgStore = tx.objectStore("messages");
   const tokenStore = tx.objectStore("tokenMap");
+  const metaStore = tx.objectStore("meta");
 
   const conv = await requestDone(convStore.get(conversation.id));
   let baselineCount = conv?.messageCount || 0;
@@ -443,10 +447,17 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
     }
-    const pageIds = Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
+    const orderIds = Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
       ? meta.pageMessageIds
       : messages.map((msg) => msg?.id).filter(Boolean);
-    conv.messageOrder = mergeMessageOrder(conv.messageOrder, pageIds);
+    const orderKey = ORDER_PREFIX + conv.id;
+    const storedOrder = await requestDone(metaStore.get(orderKey));
+    metaStore.put({
+      key: orderKey,
+      conversationId: conv.id,
+      ids: mergeMessageOrder(storedOrder?.ids || conv.messageOrder, orderIds),
+    });
+    delete conv.messageOrder;
     convStore.put(conv);
   }
 
@@ -468,7 +479,7 @@ function cursorEach(indexOrStore, { range, direction } = {}, visit) {
   });
 }
 
-async function collectConvIdsForToken(tokenStore, token) {
+async function collectConvIdsForToken(tokenStore, token, keepPostings = false) {
   const ids = new Set();
   const postings = [];
   // Compound key [token, conversationId, source]. Stay inside this token so
@@ -478,7 +489,7 @@ async function collectConvIdsForToken(tokenStore, token) {
   await cursorEach(tokenStore, { range }, (row) => {
     if (row.token === token) {
       ids.add(row.conversationId);
-      postings.push(row);
+      if (keepPostings) postings.push(row);
     }
   });
   return { ids, postings };
@@ -532,7 +543,7 @@ async function searchOn(db, {
   const tokenSets = [];
   const postingsByConv = new Map();
   for (const token of tokens) {
-    const found = await collectConvIdsForToken(tokenStore, token);
+    const found = await collectConvIdsForToken(tokenStore, token, sort?.field === "relevance");
     tokenSets.push(found.ids);
     for (const row of found.postings) {
       let list = postingsByConv.get(row.conversationId);
@@ -720,9 +731,10 @@ export async function attachPreviews(conversations, query = "") {
 export async function readConversation(id) {
   if (typeof id !== "string" || !id) return null;
   return withDb(async (db) => {
-    const tx = db.transaction(["conversations", "messages"], "readonly");
+    const tx = db.transaction(["conversations", "messages", "meta"], "readonly");
     const conv = await requestDone(tx.objectStore("conversations").get(id));
     if (!conv) return null;
+    const order = await requestDone(tx.objectStore("meta").get(ORDER_PREFIX + id));
     const messages = [];
     const index = tx.objectStore("messages").index("conversationId");
     await cursorEach(index, { range: IDBKeyRange.only(id) }, (msg) => {
@@ -730,7 +742,7 @@ export async function readConversation(id) {
     });
     return {
       conversation: conv,
-      messages: orderMessages(messages, conv.messageOrder),
+      messages: orderMessages(messages, order?.ids || conv.messageOrder),
     };
   });
 }
@@ -767,7 +779,8 @@ export async function readCaptureHealth() {
     if (!db.objectStoreNames.contains("meta")) return {};
     const tx = db.transaction("meta", "readonly");
     const out = {};
-    await cursorEach(tx.objectStore("meta"), {}, (row) => {
+    const range = IDBKeyRange.bound("health:", "health:\uffff");
+    await cursorEach(tx.objectStore("meta"), { range }, (row) => {
       if (row?.key?.startsWith?.("health:") && row.platform) out[row.platform] = row;
     });
     return out;
@@ -785,6 +798,7 @@ export async function removeConversation(id) {
     const tx = db.transaction(["conversations", "messages", "tokenMap", "meta"], "readwrite");
     tx.objectStore("conversations").delete(id);
     tx.objectStore("meta").put({ key: REMOVED_PREFIX + id, removedAt: Date.now() });
+    tx.objectStore("meta").delete(ORDER_PREFIX + id);
     const messages = tx.objectStore("messages").index("conversationId");
     await cursorEach(messages, { range: IDBKeyRange.only(id) }, (_row, cursor) => {
       cursor.delete();

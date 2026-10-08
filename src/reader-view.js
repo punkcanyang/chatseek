@@ -9,7 +9,6 @@
 import { fill, text } from "./i18n.js";
 import { formatActivityLabel } from "./activity-time.js";
 import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
-import { orderMessages } from "./message-order.js";
 import { safeOriginalUrl } from "./reader-url.js";
 
 export const MAX_NODES = 60;
@@ -176,7 +175,8 @@ export function mountReader(root, options = {}) {
   const query = String(options.query || "");
   const searching = highlightTerms(query).length > 0;
   const conversation = options.conversation || null;
-  const messages = orderMessages(options.messages || [], conversation?.messageOrder);
+  // Already in page order (readConversation). The view does not reorder.
+  const messages = (options.messages || []).filter((msg) => msg && msg.id);
   const hits = options.missing || options.error || !conversation
     ? []
     : collectHits(conversation.title || conversation.platformId || "", messages, query);

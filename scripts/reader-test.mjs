@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { openDb, readConversation, removeConversation, upsertMessages } from "../src/db.js";
+import {
+  openDb,
+  readCaptureHealth,
+  readConversation,
+  removeConversation,
+  saveCaptureHealth,
+  upsertMessages,
+} from "../src/db.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import { mergeMessageOrder, orderMessages } from "../src/message-order.js";
 import { ORIGINAL_HOSTS, parseReaderSearch, readerPageUrl, safeOriginalUrl } from "../src/reader-url.js";
@@ -407,7 +414,46 @@ assert(m2After.capturedAt === m2Before.capturedAt && m2After.captureIndex === 1,
 const reread = await readConversation(id);
 assert(reread.messages.map((msg) => msg.id.split(":").pop()).join() === "m1,m2,m3,m4", "order holds after a rewrite");
 
+const convRow = await requestDone(db.transaction("conversations").objectStore("conversations").get(id));
+assert(!("messageOrder" in convRow), "page order is not carried on the conversation row that list and search scan");
+const orderRow = await requestDone(db.transaction("meta").objectStore("meta").get(`order:${id}`));
+assert(orderRow?.ids?.length === 4, `page order lives in meta ${JSON.stringify(orderRow)}`);
+await saveCaptureHealth("chatgpt", { at: Date.now(), pathKind: "conversation", messageCount: 4 });
+const health = await readCaptureHealth();
+assert(Object.keys(health).join() === "chatgpt" && health.chatgpt.messageCount === 4, `health ignores order rows ${JSON.stringify(health)}`);
+
+const legacyId = "chatgpt:legacy-order";
+await requestDone(db.transaction("conversations", "readwrite").objectStore("conversations").put({
+  id: legacyId,
+  platform: "chatgpt",
+  platformId: "legacy-order",
+  title: "legacy",
+  url: "https://chatgpt.com/c/legacy-order",
+  updatedAt: Date.now(),
+  updatedAtSource: "page-exact",
+  messageOrder: ["l2", "l1"],
+}));
+const legacyTx = db.transaction("messages", "readwrite");
+legacyTx.objectStore("messages").put({ id: "l1", conversationId: legacyId, role: "user", body: "one", capturedAt: 1 });
+legacyTx.objectStore("messages").put({ id: "l2", conversationId: legacyId, role: "user", body: "two", capturedAt: 2 });
+await new Promise((resolve) => { legacyTx.oncomplete = resolve; });
+assert((await readConversation(legacyId)).messages.map((msg) => msg.id).join() === "l2,l1", "an order left on the row still reads");
+
+const asGiven = mount({
+  conversation: { id: "chatgpt:given", platform: "chatgpt", title: "given", url: "https://chatgpt.com/c/given", updatedAt: Date.now(), updatedAtSource: "page-exact" },
+  messages: [
+    { id: "z-first", role: "user", body: "first on the page", capturedAt: 9 },
+    { id: "a-second", role: "assistant", body: "second on the page", capturedAt: 1 },
+  ],
+});
+assert(
+  [...asGiven.host.querySelectorAll(".msg")].map((el) => el.textContent.includes("first") ? "1" : "2").join() === "1,2",
+  "the view shows messages in the order readConversation gave",
+);
+
 await removeConversation(id);
+const orderGone = await requestDone(db.transaction("meta").objectStore("meta").get(`order:${id}`));
+assert(orderGone == null, "removing a chat drops its page order");
 const tomb = await requestDone(db.transaction("meta").objectStore("meta").get(`removed:${id}`));
 assert(tomb?.removedAt, "tombstone exists");
 assert(await readConversation(id) === null, "removed id reads as missing");
