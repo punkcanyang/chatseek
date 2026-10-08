@@ -10,7 +10,7 @@
 
 import { isValidPageMs } from "./activity-time.js";
 import { intlTag } from "./i18n.js";
-import { querySpans, queryTokens, titleContainsQuery } from "./tokenize.js";
+import { STOP, querySpans, queryTokens, titleContainsQuery } from "./tokenize.js";
 
 export const SORT_KEY = "chatseek.listSort";
 
@@ -203,10 +203,27 @@ function positionsAlign(spans, positionsByToken) {
 }
 
 /**
+ * Every space-separated term of the query is in the title (latin as whole
+ * words, CJK as a substring). One CJK character or one word out of several
+ * is not a title hit. Stopword terms are skipped unless nothing else is left.
+ */
+export function titleHasQuery(title, query) {
+  const q = String(query || "").trim();
+  if (!q) return false;
+  if (titleContainsQuery(title, q)) return true;
+  const terms = q.split(/\s+/).filter(Boolean);
+  const kept = terms.filter((term) => !STOP.has(term.toLowerCase().normalize("NFKC")));
+  const need = kept.length ? kept : terms;
+  return need.every((term) => titleContainsQuery(title, term));
+}
+
+/**
  * Score one conversation from its title and the token-index rows search
  * already read. Postings are { token, source, role, positions }. Title
  * rows are not body hits. A missing role counts as an assistant reply.
- * A missing positions list cannot prove a phrase.
+ * A missing positions list cannot prove a phrase. A message that holds only
+ * part of the query (one of two words, or 咖 and 啡 of 咖啡馆) earns that
+ * share of its role weight.
  */
 export function relevanceScore(conv, query, postings = []) {
   const { TITLE, PHRASE, USER, ASSISTANT, HIT_CAP } = RELEVANCE_WEIGHT;
@@ -215,9 +232,7 @@ export function relevanceScore(conv, query, postings = []) {
   const tokenSet = new Set(tokens);
   const title = String(conv?.title || "");
   let score = 0;
-  const titleHit = tokens.some((token) => titleContainsQuery(title, token))
-    || titleContainsQuery(title, q);
-  if (titleHit) score += TITLE;
+  if (titleHasQuery(title, q)) score += TITLE;
 
   const spans = querySpans(q);
   let phrase = titleContainsQuery(title, q);
@@ -227,9 +242,10 @@ export function relevanceScore(conv, query, postings = []) {
     if (!tokenSet.has(row.token)) continue;
     let source = sources.get(row.source);
     if (!source) {
-      source = { role: "assistant", positions: new Map() };
+      source = { role: "assistant", positions: new Map(), tokens: new Set() };
       sources.set(row.source, source);
     }
+    source.tokens.add(row.token);
     if (row.role === "user") source.role = "user";
     if (Array.isArray(row.positions) && row.positions.length) {
       source.positions.set(row.token, row.positions);
@@ -245,14 +261,12 @@ export function relevanceScore(conv, query, postings = []) {
   }
   if (phrase) score += PHRASE;
 
-  const ranked = [...sources.values()].sort((a, b) => {
-    if (a.role === b.role) return 0;
-    return a.role === "user" ? -1 : 1;
-  });
-  for (const source of ranked.slice(0, HIT_CAP)) {
-    score += source.role === "user" ? USER : ASSISTANT;
-  }
-  return score;
+  const total = tokenSet.size || 1;
+  const hitScores = [...sources.values()]
+    .map((source) => (source.role === "user" ? USER : ASSISTANT) * (source.tokens.size / total))
+    .sort((a, b) => b - a);
+  for (const value of hitScores.slice(0, HIT_CAP)) score += value;
+  return Math.round(score * 100) / 100;
 }
 
 export function activeSort(pref, { searching = false, locale = "en" } = {}) {
@@ -276,8 +290,7 @@ export function sortLabelKey(field) {
 
 export function directionLabelKey(field, dir) {
   if (field === "title") return dir === "asc" ? "sortDirAz" : "sortDirZa";
-  if (field === "count" || field === "relevance") {
-    return dir === "desc" ? "sortDirMore" : "sortDirFewer";
-  }
+  if (field === "relevance") return dir === "desc" ? "sortDirHigh" : "sortDirLow";
+  if (field === "count") return dir === "desc" ? "sortDirMore" : "sortDirFewer";
   return dir === "desc" ? "sortDirNewest" : "sortDirOldest";
 }

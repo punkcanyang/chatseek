@@ -97,6 +97,10 @@ await putMessages(
 await putMessages("tie-new", "shelf new", BASE + 9500, ["quartz sample"]);
 await putMessages("tie-old", "shelf old", BASE + 1500, ["quartz sample"]);
 
+await putMessages("leaf-title", "落叶整理", BASE + 2500, ["秋天的红叶很美"]);
+await putMessages("leaf-plain", "周末散步", BASE + 2400, ["秋天的红叶很美"]);
+await putMessages("orchid-half", "blue notes", BASE + 2600, ["an orchid on the desk"], "assistant");
+
 function watchMessages() {
   const storeProto = IDBObjectStore.prototype;
   const indexProto = IDBIndex.prototype;
@@ -136,8 +140,21 @@ const watch = watchMessages();
 try {
   const titleVsBody = await ranked("blue orchid");
   assert(
-    titleVsBody.map((row) => row.id).join() === "chatgpt:title-hit,chatgpt:body-strong",
+    titleVsBody.map((row) => row.id).join() === "chatgpt:title-hit,chatgpt:body-strong,chatgpt:orchid-half",
     `title hit should beat a strong body hit, got ${describe(titleVsBody)}`,
+  );
+  const half = titleVsBody.find((row) => row.id === "chatgpt:orchid-half");
+  assert(half.relevance < TITLE, `one word of two in the title is not a title hit (${half.relevance})`);
+
+  const leaves = await ranked("红叶");
+  const leafTitle = leaves.find((row) => row.id === "chatgpt:leaf-title");
+  const leafPlain = leaves.find((row) => row.id === "chatgpt:leaf-plain");
+  assert(leafTitle && leafPlain, `both 红叶 rows found ${describe(leaves)}`);
+  assert(leafTitle.relevance < TITLE, `叶 alone in the title is not a title hit (${leafTitle.relevance})`);
+  assert(leafTitle.relevance === leafPlain.relevance, `same body, same score ${describe(leaves)}`);
+  assert(
+    leaves.findIndex((row) => row.id === "chatgpt:leaf-title") < leaves.findIndex((row) => row.id === "chatgpt:leaf-plain"),
+    "equal 红叶 scores keep the newer row first",
   );
 
   const cjk = await ranked("咖啡馆");
