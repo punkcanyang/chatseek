@@ -10,6 +10,7 @@
 
 import { isValidPageMs } from "./activity-time.js";
 import { intlTag } from "./i18n.js";
+import { querySpans, queryTokens, titleContainsQuery } from "./tokenize.js";
 
 export const SORT_KEY = "chatseek.listSort";
 
@@ -151,6 +152,12 @@ export function compareConversations(a, b, sort = {}) {
   }
   if (dir !== "asc") cmp = -cmp;
   if (cmp) return cmp;
+  // Equal relevance stays newer-first in both directions. Direction only
+  // reverses rows whose scores differ.
+  if (field === "relevance") {
+    const newer = num(b?.updatedAt) - num(a?.updatedAt);
+    if (newer) return newer;
+  }
   return byId(a, b);
 }
 
@@ -159,18 +166,91 @@ export function sortConversations(items, sort) {
 }
 
 /**
- * Title hit outweighs a body-index hit. tokenSets are the inverted-index id
- * sets already collected for the query; message bodies are not loaded.
+ * Local additive relevance. No model and no embeddings.
+ * Tune these together. The five sort rules stay true while:
+ * TITLE > PHRASE + USER * HIT_CAP
+ * PHRASE > USER * HIT_CAP
+ * USER > ASSISTANT * HIT_CAP
+ * POSITION_CAP is how many offsets one source keeps so a phrase can still
+ * be recognized. It is not added to the score.
  */
-export function relevanceScore(conv, { tokenSets = [], titleHit = false, tokens = [] } = {}) {
-  let score = titleHit ? 100 : 0;
-  const title = String(conv?.title || "").toLowerCase().normalize("NFKC");
-  for (const token of tokens) {
-    const needle = String(token || "").toLowerCase();
-    if (needle && title.includes(needle)) score += 10;
+export const RELEVANCE_WEIGHT = {
+  TITLE: 10000,
+  PHRASE: 1000,
+  USER: 100,
+  ASSISTANT: 10,
+  HIT_CAP: 8,
+  POSITION_CAP: 32,
+};
+
+function positionsAlign(spans, positionsByToken) {
+  if (!spans.length) return false;
+  const anchors = positionsByToken.get(spans[0].token);
+  if (!anchors?.length) return false;
+  for (const pos of anchors) {
+    const delta = pos - spans[0].start;
+    let ok = true;
+    for (let i = 1; i < spans.length; i++) {
+      const list = positionsByToken.get(spans[i].token);
+      if (!list?.includes(spans[i].start + delta)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
   }
-  for (const set of tokenSets) {
-    if (set?.has?.(conv?.id)) score += 1;
+  return false;
+}
+
+/**
+ * Score one conversation from its title and the token-index rows search
+ * already read. Postings are { token, source, role, positions }. Title
+ * rows are not body hits. A missing role counts as an assistant reply.
+ * A missing positions list cannot prove a phrase.
+ */
+export function relevanceScore(conv, query, postings = []) {
+  const { TITLE, PHRASE, USER, ASSISTANT, HIT_CAP } = RELEVANCE_WEIGHT;
+  const q = String(query || "").trim();
+  const tokens = queryTokens(q);
+  const tokenSet = new Set(tokens);
+  const title = String(conv?.title || "");
+  let score = 0;
+  const titleHit = tokens.some((token) => titleContainsQuery(title, token))
+    || titleContainsQuery(title, q);
+  if (titleHit) score += TITLE;
+
+  const spans = querySpans(q);
+  let phrase = titleContainsQuery(title, q);
+  const sources = new Map();
+  for (const row of postings) {
+    if (!row || row.source == null || row.source === "title") continue;
+    if (!tokenSet.has(row.token)) continue;
+    let source = sources.get(row.source);
+    if (!source) {
+      source = { role: "assistant", positions: new Map() };
+      sources.set(row.source, source);
+    }
+    if (row.role === "user") source.role = "user";
+    if (Array.isArray(row.positions) && row.positions.length) {
+      source.positions.set(row.token, row.positions);
+    }
+  }
+  if (!phrase) {
+    for (const source of sources.values()) {
+      if (positionsAlign(spans, source.positions)) {
+        phrase = true;
+        break;
+      }
+    }
+  }
+  if (phrase) score += PHRASE;
+
+  const ranked = [...sources.values()].sort((a, b) => {
+    if (a.role === b.role) return 0;
+    return a.role === "user" ? -1 : 1;
+  });
+  for (const source of ranked.slice(0, HIT_CAP)) {
+    score += source.role === "user" ? USER : ASSISTANT;
   }
   return score;
 }

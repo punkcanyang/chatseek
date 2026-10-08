@@ -1,4 +1,4 @@
-import { queryTokens, tokenize } from "./tokenize.js";
+import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokenize.js";
 import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
 import {
   buildPreview,
@@ -7,7 +7,7 @@ import {
   snippetTokens,
 } from "./preview.js";
 import { mergeMessageOrder, orderMessages } from "./message-order.js";
-import { compareConversations, relevanceScore } from "./sort-list.js";
+import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-list.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 3;
@@ -149,9 +149,20 @@ function pageMs(value) {
   return null;
 }
 
-function writeTokens(tokenStore, tokens, conversationId, source) {
-  for (const token of tokens) {
-    tokenStore.put({ token, conversationId, source });
+function writeTokens(tokenStore, text, conversationId, source, role) {
+  const grouped = new Map();
+  const cap = RELEVANCE_WEIGHT.POSITION_CAP;
+  for (const span of tokenSpans(text)) {
+    let positions = grouped.get(span.token);
+    if (!positions) {
+      positions = [];
+      grouped.set(span.token, positions);
+    }
+    if (positions.length < cap) positions.push(span.start);
+  }
+  const storedRole = role === "user" || role === "title" ? role : "assistant";
+  for (const [token, positions] of grouped) {
+    tokenStore.put({ token, conversationId, source, role: storedRole, positions });
   }
 }
 
@@ -287,12 +298,11 @@ async function writeConversations(db, list, { reopened = false } = {}) {
     }
     applyArchiveState(next, old, incoming, Date.now());
     const oldTitleTokens = tokenize(old?.title || "");
-    const newTitleTokens = tokenize(next.title || "");
     if (old && old.title !== next.title) {
       deleteTokens(tokenStore, oldTitleTokens, next.id, "title");
     }
     if (!old || old.title !== next.title) {
-      writeTokens(tokenStore, newTitleTokens, next.id, "title");
+      writeTokens(tokenStore, next.title, next.id, "title", "title");
     }
     convStore.put(next);
   }
@@ -371,7 +381,13 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       capturedAt: Date.now(),
     };
     msgStore.put(record);
-    writeTokens(tokenStore, tokenize(msg.body), conversation.id, msg.id);
+    writeTokens(
+      tokenStore,
+      msg.body,
+      conversation.id,
+      msg.id,
+      record.role,
+    );
     changed += 1;
   }
 
@@ -419,7 +435,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
     if (prevTitle !== conv.title) {
       deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
-      writeTokens(tokenStore, tokenize(conv.title), conv.id, "title");
+      writeTokens(tokenStore, conv.title, conv.id, "title", "title");
     }
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
@@ -449,27 +465,20 @@ function cursorEach(indexOrStore, { range, direction } = {}, visit) {
   });
 }
 
-function titleContainsQuery(title, needle) {
-  const hay = (title || "").toLowerCase().normalize("NFKC");
-  if (!needle || !hay.includes(needle)) return false;
-  // CJK phrases have no word boundaries; latin must match a whole token
-  // so "star" does not hit "starship" and "not" does not hit "notes".
-  if (/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(needle)) {
-    return true;
-  }
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(hay);
-}
-
 async function collectConvIdsForToken(tokenStore, token) {
   const ids = new Set();
+  const postings = [];
   // Compound key [token, conversationId, source]. Stay inside this token so
-  // a shorter word does not match a longer one.
+  // a shorter word does not match a longer one. Role and positions ride on
+  // the same row; this cursor does not open the messages store.
   const range = IDBKeyRange.bound([token], [token, "\uffff", "\uffff"]);
   await cursorEach(tokenStore, { range }, (row) => {
-    if (row.token === token) ids.add(row.conversationId);
+    if (row.token === token) {
+      ids.add(row.conversationId);
+      postings.push(row);
+    }
   });
-  return ids;
+  return { ids, postings };
 }
 
 function intersectSets(sets) {
@@ -518,8 +527,18 @@ async function searchOn(db, {
   const tokenStore = tx.objectStore("tokenMap");
 
   const tokenSets = [];
+  const postingsByConv = new Map();
   for (const token of tokens) {
-    tokenSets.push(await collectConvIdsForToken(tokenStore, token));
+    const found = await collectConvIdsForToken(tokenStore, token);
+    tokenSets.push(found.ids);
+    for (const row of found.postings) {
+      let list = postingsByConv.get(row.conversationId);
+      if (!list) {
+        list = [];
+        postingsByConv.set(row.conversationId, list);
+      }
+      list.push(row);
+    }
   }
   const fromIndex = tokens.length ? intersectSets(tokenSets) : new Set();
 
@@ -540,14 +559,12 @@ async function searchOn(db, {
     if (!passesScope(conv, { platform, scope })) continue;
     matches.push(conv);
   }
-  if (sort?.field) {
+  if (sort?.field === "relevance") {
     for (const conv of matches) {
-      conv.relevance = relevanceScore(conv, {
-        tokenSets,
-        titleHit: fromTitle.has(conv.id),
-        tokens,
-      });
+      conv.relevance = relevanceScore(conv, q, postingsByConv.get(conv.id) || []);
     }
+  }
+  if (sort?.field) {
     matches.sort((a, b) => compareConversations(a, b, sort));
   } else {
     matches.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));

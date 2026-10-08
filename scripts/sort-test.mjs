@@ -108,9 +108,10 @@ assert(titleOrder("de", "asc", ["Zucker", "Ärger"])[0] === "Ärger", "German so
 
 const titleHit = { id: "title", title: "orchid notes" };
 const bodyHit = { id: "body", title: "plain notes" };
-const tokenSets = [new Set(["body"])];
-titleHit.relevance = relevanceScore(titleHit, { tokenSets, titleHit: true, tokens: ["orchid"] });
-bodyHit.relevance = relevanceScore(bodyHit, { tokenSets, titleHit: false, tokens: ["orchid"] });
+titleHit.relevance = relevanceScore(titleHit, "orchid");
+bodyHit.relevance = relevanceScore(bodyHit, "orchid", [
+  { token: "orchid", source: "body" },
+]);
 assert(titleHit.relevance > bodyHit.relevance, "a title hit outranks a body hit");
 assert(
   sortConversations([bodyHit, titleHit], { field: "relevance", dir: "desc" }).map((row) => row.id).join() === "title,body",
