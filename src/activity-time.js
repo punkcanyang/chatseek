@@ -381,8 +381,8 @@ const STRINGS = {
     saved: (stamp) => `收录于 ${stamp}`,
     fromGroup: "推估：按侧栏分组",
     temporary: (name) => `${name} 临时聊天不会收录`,
-    warn: (name, hhmm) => `${name} 页面可能改版，请回报（最后收录 ${hhmm}，0 则消息）`,
-    thread: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，${n} 则消息`,
+    warn: (name, hhmm) => `${name} 页面可能改版，请回报（最后收录 ${hhmm}，0 条消息）`,
+    thread: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，${n} 条消息`,
     sidebar: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，侧栏 ${n} 条`,
   },
 };

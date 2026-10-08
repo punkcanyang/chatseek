@@ -807,7 +807,7 @@ assert(
 const healthHans = formatHealthEntries(health, Date.now(), "zh-CN");
 assert(
   healthHans.some((line) => line.platform === "chatgpt" && line.text.includes("页面可能改版，请回报")) &&
-    healthHans.some((line) => line.platform === "claude" && line.text.includes("最后收录") && line.text.includes("3 则消息")),
+    healthHans.some((line) => line.platform === "claude" && line.text.includes("最后收录") && line.text.includes("3 条消息")),
   `Simplified health lines drifted: ${healthHans.map((line) => line.text).join(" | ")}`,
 );
 

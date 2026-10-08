@@ -4,13 +4,15 @@
   "type": "module",
   "scripts": {
     "verify": "node scripts/verify.mjs && node scripts/chatgpt-fixture-test.mjs",
-    "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs",
+    "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs && node scripts/preview-test.mjs",
     "test:upgrade": "node scripts/upgrade-test.mjs",
     "test:fixture": "node scripts/chatgpt-fixture-test.mjs && node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs",
-    "test:gemini": "node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs"
+    "test:gemini": "node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs",
+    "screenshot": "node scripts/screenshot-panel.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "puppeteer-core": "^25.12.0"
   }
 }

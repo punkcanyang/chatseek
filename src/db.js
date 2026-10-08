@@ -1,5 +1,11 @@
 import { queryTokens, tokenize } from "./tokenize.js";
 import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
+import {
+  buildPreview,
+  clipPreviewText,
+  nextPreviewFields,
+  snippetTokens,
+} from "./preview.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 2;
@@ -306,6 +312,15 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
+    const fields = nextPreviewFields(conv, messages, meta.pageMessageIds);
+    if (fields.firstUserPreview) {
+      conv.firstUserPreview = fields.firstUserPreview;
+      conv.firstUserMessageId = fields.firstUserMessageId;
+    }
+    if (fields.lastPreview) {
+      conv.lastPreview = fields.lastPreview;
+      conv.lastPreviewRole = fields.lastPreviewRole;
+    }
     const prevTitle = conv.title;
     if (!isGenericTitle(conversation.title)) conv.title = conversation.title;
     if (conversation.url) conv.url = conversation.url;
@@ -470,6 +485,115 @@ async function listRecentOn(db, { platform = "", limit = 80 } = {}) {
     return items.length >= limit;
   });
   return items;
+}
+
+function needsPreviewBackfill(conv) {
+  if (!conv || !(Number(conv.messageCount) > 0)) return false;
+  return !conv.firstUserPreview && !conv.lastPreview;
+}
+
+/**
+ * Legacy rows (saved before preview fields existed) get one bounded pass.
+ * Index order is not page order; opening the thread again stores the real
+ * first prompt. The cap keeps a large library off the messages table.
+ */
+async function backfillPreviews(convs) {
+  if (!convs.length) return;
+  await withDb(async (db) => {
+    const tx = db.transaction(["conversations", "messages"], "readwrite");
+    const convStore = tx.objectStore("conversations");
+    const msgStore = tx.objectStore("messages");
+    const index = msgStore.index("conversationId");
+    for (const conv of convs) {
+      if (!conv?.id) continue;
+      const stored = await requestDone(convStore.get(conv.id));
+      if (!stored || stored.firstUserPreview || stored.lastPreview) {
+        if (stored?.firstUserPreview) conv.firstUserPreview = stored.firstUserPreview;
+        if (stored?.lastPreview) conv.lastPreview = stored.lastPreview;
+        continue;
+      }
+      let firstUser = "";
+      let any = "";
+      let seen = 0;
+      await cursorEach(index, { range: IDBKeyRange.only(conv.id) }, (msg) => {
+        seen += 1;
+        if (!any && msg?.body) any = msg.body;
+        if (msg?.role === "user" && msg.body) {
+          firstUser = msg.body;
+          return true;
+        }
+        return seen >= 40;
+      });
+      let last = "";
+      if (stored.tailMessageId) {
+        const tail = await requestDone(msgStore.get(stored.tailMessageId));
+        if (tail?.body) last = tail.body;
+      }
+      if (!last) last = any;
+      if (firstUser) {
+        stored.firstUserPreview = clipPreviewText(firstUser);
+        conv.firstUserPreview = stored.firstUserPreview;
+      }
+      if (last) {
+        stored.lastPreview = clipPreviewText(last);
+        conv.lastPreview = stored.lastPreview;
+      }
+      if (firstUser || last) convStore.put(stored);
+    }
+    await txDone(tx);
+  });
+}
+
+async function loadSnippetBodies(list, query) {
+  const tokens = snippetTokens(query);
+  const bodies = new Map();
+  if (!tokens.length || !list.length) return bodies;
+  const capped = list.slice(0, 80);
+  await withDb(async (db) => {
+    const tx = db.transaction(["tokenMap", "messages"], "readonly");
+    const tokenStore = tx.objectStore("tokenMap");
+    const msgStore = tx.objectStore("messages");
+    for (const conv of capped) {
+      if (!conv?.id) continue;
+      const ids = new Set();
+      for (const token of tokens) {
+        const range = IDBKeyRange.bound(
+          [token, conv.id, ""],
+          [token, conv.id, "\uffff"],
+        );
+        await cursorEach(tokenStore, { range }, (row) => {
+          if (row?.token !== token || !row.source || row.source === "title") return;
+          ids.add(row.source);
+          return ids.size >= 3;
+        });
+        if (ids.size >= 3) break;
+      }
+      const found = [];
+      for (const id of ids) {
+        if (found.length >= 2) break;
+        const msg = await requestDone(msgStore.get(id));
+        if (msg?.body) found.push(msg.body);
+      }
+      if (found.length) bodies.set(conv.id, found);
+    }
+  });
+  return bodies;
+}
+
+/**
+ * Idle path uses preview fields already on the conversation.
+ * Search fetches at most two matching message bodies per result via tokenMap,
+ * never a messages getAll().
+ */
+export async function attachPreviews(conversations, query = "") {
+  const list = Array.isArray(conversations) ? conversations : [];
+  const q = String(query || "").trim();
+  if (!q) await backfillPreviews(list.filter(needsPreviewBackfill));
+  const bodies = q ? await loadSnippetBodies(list, q) : new Map();
+  return list.map((conv) => ({
+    ...conv,
+    preview: buildPreview(conv, q, bodies.get(conv?.id) || []),
+  }));
 }
 
 export async function stats() {

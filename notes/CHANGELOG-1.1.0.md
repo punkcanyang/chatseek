@@ -6,7 +6,7 @@
 
 - ChatGPT 消息选择器改成分层：`data-message-author-role` → `data-turn` → `conversation-turn` → `data-message-id` → `main article`。角色先读 author，再读 `data-turn`，避免助手被标成用户。
 - 包住整段对话的 `<form>` 不再把消息滤光。浅层 open shadow 里的回合也会读。
-- 对话页抓到 0 则消息、并且约 8 秒后仍是 0 时，侧栏底部写「页面可能改版，请回报」，工具栏角标显示 `!`。控制台只打选择器名字和数量，不打正文。Claude / Grok 走同一套健康检查。
+- 对话页抓到 0 条消息、并且约 8 秒后仍是 0 时，侧栏底部写「页面可能改版，请回报」，工具栏角标显示 `!`。控制台只打选择器名字和数量，不打正文。Claude / Grok 走同一套健康检查。
 - 临时聊天（`temporary-chat=true`）不收录，也不当成改版失败。
 
 ## 日期

@@ -83,7 +83,7 @@ function validHealth(health) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
-  if (msg.type === "INDEX_UPDATED") return;
+  if (msg.type === "INDEX_UPDATED" || msg.type === "ACTIVE_LOCATION") return;
 
   const platform = msg.conversation?.platform || msg.platform ||
     msg.conversations?.[0]?.platform;
