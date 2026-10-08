@@ -89,6 +89,10 @@ function bundle(code) {
     imageCache: (size) => say("imageCache", size),
     clearImages: say("clearImages"),
     confirmClearImages: say("confirmClearImages"),
+    copyDiag: say("copyDiag"),
+    copyDiagDone: say("copyDiagDone"),
+    copyDiagManual: say("copyDiagManual"),
+    copyDiagEmpty: say("copyDiagEmpty"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
     remove: say("remove"),
@@ -134,6 +138,8 @@ const tagEl = document.getElementById("tag");
 const clearBtn = document.getElementById("clearBtn");
 const imageCacheEl = document.getElementById("imageCache");
 const clearImagesBtn = document.getElementById("clearImagesBtn");
+const copyDiagBtn = document.getElementById("copyDiagBtn");
+const diagBox = document.getElementById("diagBox");
 const healthEl = document.getElementById("health");
 const searchLabel = document.getElementById("searchLabel");
 const filterActive = document.getElementById("filterActive");
@@ -187,6 +193,7 @@ function applyStatic() {
   hintEl.textContent = t.hint;
   clearBtn.textContent = t.clear;
   if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
+  if (copyDiagBtn) copyDiagBtn.textContent = t.copyDiag;
   if (imageCacheEl && imageCacheEl.dataset.bytes) {
     imageCacheEl.textContent = t.imageCache(formatByteSize(Number(imageCacheEl.dataset.bytes)));
   }
@@ -432,6 +439,45 @@ async function openChat(url) {
   window.open(url, "_blank", "noopener");
 }
 
+function diagText(health) {
+  const lines = [];
+  for (const row of Object.values(health || {})) {
+    if (typeof row?.diag === "string" && row.diag.startsWith("[Chatseek] diag ")) lines.push(row.diag);
+  }
+  return lines.join("\n");
+}
+
+function showDiagBox(text) {
+  if (!diagBox) return;
+  diagBox.hidden = false;
+  diagBox.value = text;
+  diagBox.focus();
+  diagBox.select();
+}
+
+async function copyDiagnostics() {
+  const health = await readCaptureHealth();
+  const text = diagText(health) || t.copyDiagEmpty;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = t.copyDiagDone;
+      }
+      if (diagBox) diagBox.hidden = true;
+      return;
+    }
+  } catch {
+    // No clipboardWrite permission. The text stays selectable below.
+  }
+  showDiagBox(text);
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent = t.copyDiagManual;
+  }
+}
+
 async function renderHealth() {
   if (!healthEl) return;
   const health = await readCaptureHealth();
@@ -621,6 +667,10 @@ async function refreshImageCache() {
     imageCacheEl.textContent = t.error;
   }
 }
+
+copyDiagBtn?.addEventListener("click", () => {
+  copyDiagnostics();
+});
 
 clearImagesBtn?.addEventListener("click", async () => {
   if (!confirm(t.confirmClearImages)) return;

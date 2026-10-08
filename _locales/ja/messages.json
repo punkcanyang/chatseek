@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "画像はキャッシュされていません（ファイルが大きすぎます）"
+  },
+  "copyDiag": {
+    "message": "診断をコピー"
+  },
+  "copyDiagDone": {
+    "message": "診断をコピーしました"
+  },
+  "copyDiagManual": {
+    "message": "クリップボードに書けません。下のテキストを選んでコピーしてください。"
+  },
+  "copyDiagEmpty": {
+    "message": "診断はまだありません。会話を開いてページを再読み込みしてください。"
   }
 }

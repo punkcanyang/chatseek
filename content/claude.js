@@ -114,8 +114,9 @@
         if (other.el !== item.el && other.el.contains(item.el)) return;
       }
       seen.add(item.el);
-      const body = Chatseek.cleanClone(item.el);
-      if (!body) return;
+      const rendered = Chatseek.safeDomText(item.el, item.role === "user");
+      const body = rendered.text;
+      if (!Chatseek.isSubstantive(body)) return;
       const domId = item.el.getAttribute("data-message-id") ||
         item.el.id ||
         Chatseek.hash(item.role + ":" + body.slice(0, 180));
@@ -125,7 +126,7 @@
         role: item.role,
         body,
       });
-      imageHosts.push({ el: item.el, messageId: id, role: item.role, body });
+      imageHosts.push({ el: item.el, messageId: id, role: item.role, body, offsets: rendered.offsets });
     });
     return messages;
   }
@@ -147,31 +148,48 @@
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
       messages = extractMessages(platformId);
-      if (typeof Chatseek.scheduleMessageImages === "function") {
-        Chatseek.scheduleMessageImages({
-          conversationId: conversation.id,
-          items: imageHosts,
-        });
-      }
     }
+    const selectorHits = {};
     let selector = null;
     for (const sel of MESSAGE_SELECTORS) {
-      if (document.querySelector(sel)) {
-        selector = sel;
-        break;
-      }
+      let n = 0;
+      try { n = document.querySelectorAll(sel).length; } catch { n = 0; }
+      selectorHits[sel] = n;
+      if (!selector && n) selector = sel;
     }
-    return Chatseek.runCapture(state, {
-      platform: PLATFORM,
-      sidebar,
-      conversation,
-      messages,
-      health: {
-        pathKind: Chatseek.pageKind(location, !!platformId),
-        selector,
-        selectorsTried: MESSAGE_SELECTORS,
-      },
-    });
+    const stats = Chatseek.messageStats(messages);
+    let result = false;
+    try {
+      result = await Chatseek.runCapture(state, {
+        platform: PLATFORM,
+        sidebar,
+        conversation,
+        messages,
+        health: {
+          pathKind: Chatseek.pageKind(location, !!platformId),
+          selector,
+          selectorsTried: MESSAGE_SELECTORS,
+          selectorHits,
+          ...stats,
+        },
+      });
+    } catch (err) {
+      Chatseek.rememberError(err);
+      Chatseek.publishDiag(Chatseek.diagFields({
+        platform: PLATFORM,
+        pathKind: "error",
+        healthState: "error",
+        at: Date.now(),
+      }));
+      return false;
+    }
+    if (conversation) {
+      Chatseek.safeScheduleImages({
+        conversationId: conversation.id,
+        items: imageHosts,
+      });
+    }
+    return result;
   }
 
   Chatseek.observe(capture);

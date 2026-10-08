@@ -1,3 +1,4 @@
+import { indexPlain } from "./markdown.js";
 import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokenize.js";
 import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
 import {
@@ -160,6 +161,13 @@ function pageMs(value) {
     return isValidPageMs(ms) ? ms : null;
   }
   return null;
+}
+
+function tokensForDelete(body) {
+  const raw = tokenize(body);
+  const plain = indexPlain(body);
+  if (plain === body) return raw;
+  return [...new Set([...raw, ...tokenize(plain)])];
 }
 
 function writeTokens(tokenStore, text, conversationId, source, role) {
@@ -384,7 +392,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (existing) {
       deleteTokens(
         tokenStore,
-        tokenize(existing.body),
+        tokensForDelete(existing.body),
         conversation.id,
         msg.id,
       );
@@ -403,7 +411,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     msgStore.put(record);
     writeTokens(
       tokenStore,
-      msg.body,
+      indexPlain(msg.body),
       conversation.id,
       msg.id,
       record.role,
@@ -769,6 +777,14 @@ export async function stats() {
   });
 }
 
+function cleanStoredDiag(line) {
+  const text = String(line || "");
+  if (!text.startsWith("[Chatseek] diag ")) return "";
+  if (text.length > 700) return "";
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return "";
+  return text;
+}
+
 export async function saveCaptureHealth(platform, health) {
   if (!platform || !health || typeof health !== "object") return;
   return withDb(async (db) => {
@@ -782,6 +798,7 @@ export async function saveCaptureHealth(platform, health) {
       messageCount: Number(health.messageCount) || 0,
       selector: String(health.selector || "none").slice(0, 120),
       warn: !!health.warn,
+      diag: cleanStoredDiag(health.diag),
     });
     await txDone(tx);
   });

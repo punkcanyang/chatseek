@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "Image wasn’t cached (the file is too large)"
+  },
+  "copyDiag": {
+    "message": "Copy diagnostics"
+  },
+  "copyDiagDone": {
+    "message": "Diagnostics copied"
+  },
+  "copyDiagManual": {
+    "message": "Couldn't write to the clipboard. Select the text below and copy it."
+  },
+  "copyDiagEmpty": {
+    "message": "No diagnostics yet. Open a conversation and refresh the page."
   }
 }

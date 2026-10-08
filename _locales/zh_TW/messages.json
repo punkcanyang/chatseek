@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "圖片未快取（檔案過大）"
+  },
+  "copyDiag": {
+    "message": "複製診斷"
+  },
+  "copyDiagDone": {
+    "message": "診斷已複製"
+  },
+  "copyDiagManual": {
+    "message": "無法寫入剪貼簿，請從下方文字框複製。"
+  },
+  "copyDiagEmpty": {
+    "message": "還沒有診斷。請先打開一段對話並重新整理頁面。"
   }
 }

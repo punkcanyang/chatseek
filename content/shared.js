@@ -103,7 +103,16 @@ const Chatseek = {
             retryDelay = 0;
             clearTimeout(retryTimer);
           }
-        }, scheduleRetry)
+        }, (err) => {
+          Chatseek.rememberError(err);
+          Chatseek.publishDiag(Chatseek.diagFields({
+            platform: Chatseek._diagPlatform || "",
+            pathKind: "error",
+            healthState: "error",
+            at: Date.now(),
+          }));
+          scheduleRetry();
+        })
         .finally(() => {
           running = false;
           if (queued) {
@@ -863,8 +872,27 @@ const Chatseek = {
       }
       settling = !!zeroKey && now - (state.zeroSince || 0) < Chatseek.HEALTH_GRACE_MS;
     }
-    if (settling) {
+    const selectorHits = health?.selectorHits && typeof health.selectorHits === "object"
+      ? health.selectorHits
+      : null;
+    const anySelectorHit = !!selectorHits && Object.values(selectorHits).some((n) => Number(n) > 0);
+    // A matched shell ("ChatGPT" / Copy) is not a loading thread. Warn immediately.
+    // Zero hits on a conversation URL still waits out the grace period.
+    const forceWarn = !!(health && health.pathKind === "conversation" && !msgs.length && anySelectorHit);
+    if (settling && !forceWarn) {
       ok = false;
+      Chatseek.publishDiag(Chatseek.diagFields({
+        platform,
+        pathKind: health.pathKind,
+        selector: health.selector,
+        selectorHits,
+        userCount: health.userCount,
+        assistantCount: health.assistantCount,
+        charCount: health.charCount,
+        healthState: "settling",
+        warn: false,
+        at: Date.now(),
+      }));
     } else if (health) {
       const report = Chatseek.buildHealthReport({
         platform,
@@ -873,13 +901,34 @@ const Chatseek = {
         messageCount: msgs.length,
         selector: health.selector,
         selectorsTried: health.selectorsTried,
+        selectorHits,
+        userCount: health.userCount,
+        assistantCount: health.assistantCount,
+        charCount: health.charCount,
+        forceWarn,
       });
+      const diag = Chatseek.publishDiag(Chatseek.diagFields({
+        platform,
+        pathKind: report.pathKind,
+        selector: report.selector,
+        selectorHits: report.selectorHits,
+        userCount: report.userCount,
+        assistantCount: report.assistantCount,
+        charCount: report.charCount,
+        healthState: report.warn ? "warn" : "ok",
+        warn: report.warn,
+        at: report.at,
+      }));
+      report.diag = diag;
+      Chatseek._lastHealthSend = report;
       const healthFp = [
         report.pathKind,
         report.sidebarCount,
         report.messageCount,
         report.selector,
         report.warn ? "1" : "0",
+        report.userCount || 0,
+        report.assistantCount || 0,
       ].join("|");
       const now = Date.now();
       if (healthFp !== state.lastHealthFp || now - (state.lastHealthAt || 0) >= 60000) {
@@ -1378,9 +1427,24 @@ const Chatseek = {
    * Counts only — never message text. Warns once per selector set when a
    * conversation page produced zero messages.
    */
-  buildHealthReport({ platform, pathKind, sidebarCount, messageCount, selector, selectorsTried }) {
+  buildHealthReport({
+    platform,
+    pathKind,
+    sidebarCount,
+    messageCount,
+    selector,
+    selectorsTried,
+    selectorHits,
+    userCount,
+    assistantCount,
+    charCount,
+    forceWarn,
+  }) {
     const tried = selectorsTried || [];
-    const warn = pathKind === "conversation" && !messageCount;
+    const hits = Chatseek.compactHits(selectorHits);
+    // 0 messages on a conversation page is the warning. Callers skip this
+    // during the loading grace unless a selector already matched a shell.
+    const warn = (pathKind === "conversation" && !messageCount) || !!forceWarn;
     const where = platform === "chatgpt" ? "/c/ page" : "conversation page";
     if (warn) {
       const key = `${platform}:${where}:${tried.join(",")}`;
@@ -1399,7 +1463,515 @@ const Chatseek = {
       messageCount: messageCount || 0,
       selector: selector || "none",
       selectorsTried: tried,
+      selectorHits: hits,
+      userCount: Number(userCount) || 0,
+      assistantCount: Number(assistantCount) || 0,
+      charCount: Number(charCount) || 0,
       warn,
     };
   },
+};
+
+const DOM_SKIP_TAG = {
+  BUTTON: 1, SVG: 1, NAV: 1, TEXTAREA: 1, INPUT: 1, SELECT: 1,
+  SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, IFRAME: 1,
+  "MODEL-THOUGHTS": 1, "MAT-ICON": 1, "COPY-BUTTON": 1, "SHARE-BUTTON": 1,
+};
+
+function domClassBlob(node) {
+  if (!node || node.nodeType !== 1) return "";
+  if (typeof node.className === "string") return node.className;
+  return node.getAttribute?.("class") || "";
+}
+
+function domSkip(node) {
+  if (!node || node.nodeType !== 1) return false;
+  const tag = node.tagName || "";
+  if (DOM_SKIP_TAG[tag]) return true;
+  const role = (node.getAttribute?.("role") || "").toLowerCase();
+  if (role === "button" || role === "navigation") return true;
+  if (node.getAttribute?.("aria-hidden") === "true") return true;
+  const blob = `${domClassBlob(node)} ${node.getAttribute?.("data-testid") || ""}`;
+  if (/visually-hidden|sr-only|cdk-visually-hidden|thoughts-container|thoughts-content|model-thoughts|ql-editor|artifact/i.test(blob)) {
+    return true;
+  }
+  return false;
+}
+
+function speakerLabel(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  return /^(chatgpt|you|user|assistant|claude|grok|gemini|gpt-4o|gpt-4|gpt-5|o1|o3|4o)$/i.test(t);
+}
+
+function codeLanguage(node) {
+  const blob = [
+    domClassBlob(node),
+    domClassBlob(node?.parentElement),
+    node?.getAttribute?.("data-language") || "",
+    node?.parentElement?.getAttribute?.("data-language") || "",
+  ].join(" ");
+  const named = blob.match(/language-([A-Za-z0-9_+#-]{1,24})/i);
+  if (named) return named[1].toLowerCase();
+  const data = String(node?.getAttribute?.("data-language") || node?.parentElement?.getAttribute?.("data-language") || "").trim();
+  if (/^[A-Za-z0-9_+#-]{1,24}$/.test(data)) return data.toLowerCase();
+  return "";
+}
+
+function domState() {
+  return { out: "", lineStart: true, quote: 0, offsets: new Map() };
+}
+
+function writeRaw(state, text) {
+  if (!text) return;
+  const prefix = state.quote ? "> ".repeat(state.quote) : "";
+  const parts = String(text).split("\n");
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i > 0) {
+      state.out += "\n";
+      state.lineStart = true;
+    }
+    const piece = parts[i];
+    if (!piece) continue;
+    if (state.lineStart && prefix) state.out += prefix;
+    state.out += piece;
+    state.lineStart = false;
+  }
+}
+
+function ensureBreak(state, n) {
+  if (!state.out) {
+    state.lineStart = true;
+    return;
+  }
+  let have = 0;
+  for (let i = state.out.length - 1; i >= 0 && state.out[i] === "\n"; i -= 1) have += 1;
+  const need = Math.min(n, 2) - have;
+  if (need > 0) {
+    state.out += "\n".repeat(need);
+    state.lineStart = true;
+  }
+}
+
+function pushInline(state, text, pre) {
+  if (text == null || text === "") return;
+  const value = String(text).replace(/\r\n?/g, "\n");
+  if (pre) {
+    writeRaw(state, value);
+    return;
+  }
+  const collapsed = value.replace(/\s+/g, " ");
+  if (!collapsed.trim()) {
+    if (collapsed && state.out && !/[\n ]$/.test(state.out)) writeRaw(state, " ");
+    return;
+  }
+  const piece = !state.out || /[\n ]$/.test(state.out) ? collapsed.replace(/^ /, "") : collapsed;
+  if (piece) writeRaw(state, piece);
+}
+
+function walkChildren(node, state, ctx) {
+  const root = node?.shadowRoot || node;
+  const kids = root?.childNodes;
+  if (!kids) return;
+  for (const child of kids) walkNode(child, state, ctx);
+}
+
+function renderList(node, ordered, depth, state, ctx) {
+  if (depth > 8) return;
+  if (depth === 0) ensureBreak(state, 2);
+  let n = 1;
+  for (const child of node.children || []) {
+    if (!child || child.tagName !== "LI") continue;
+    const indent = ctx.plain ? "" : "  ".repeat(depth);
+    const marker = ctx.plain ? "" : (ordered ? `${n}. ` : "- ");
+    n += 1;
+    ensureBreak(state, 1);
+    writeRaw(state, indent + marker);
+    for (const kid of child.childNodes) {
+      if (kid.nodeType === 1 && (kid.tagName === "UL" || kid.tagName === "OL")) {
+        writeRaw(state, "\n");
+        renderList(kid, kid.tagName === "OL", depth + 1, state, ctx);
+      } else {
+        walkNode(kid, state, ctx);
+      }
+    }
+  }
+  if (depth === 0) ensureBreak(state, 2);
+}
+
+function cellPlain(cell, ctx) {
+  const state = domState();
+  walkChildren(cell, state, { plain: true, pre: false, plainPre: false });
+  return state.out.replace(/\s+/g, " ").trim().replace(/\|/g, "\\|");
+}
+
+function renderTable(node, state, ctx) {
+  const rows = [];
+  const scan = (parent) => {
+    for (const child of parent.children || []) {
+      if (child.tagName === "TR") rows.push(child);
+      else if (child.tagName === "THEAD" || child.tagName === "TBODY" || child.tagName === "TFOOT") scan(child);
+    }
+  };
+  scan(node);
+  if (!rows.length) return;
+  const matrix = rows.map((tr) => [...tr.children]
+    .filter((cell) => cell.tagName === "TH" || cell.tagName === "TD")
+    .map((cell) => cellPlain(cell, ctx)));
+  const width = matrix.reduce((max, row) => Math.max(max, row.length), 0);
+  if (!width) return;
+  const pad = (row) => {
+    const next = row.slice();
+    while (next.length < width) next.push("");
+    return next;
+  };
+  ensureBreak(state, 2);
+  if (ctx.plain) {
+    for (const row of matrix) writeRaw(state, `${pad(row).join(" ")}\n`);
+    return;
+  }
+  const header = pad(matrix[0]);
+  writeRaw(state, `| ${header.join(" | ")} |\n`);
+  writeRaw(state, `| ${header.map(() => "---").join(" | ")} |\n`);
+  for (const row of matrix.slice(1)) writeRaw(state, `| ${pad(row).join(" | ")} |\n`);
+}
+
+function walkNode(node, state, ctx) {
+  if (!node) return;
+  if (node.nodeType === 3) {
+    pushInline(state, node.nodeValue, ctx.pre || ctx.plainPre);
+    return;
+  }
+  if (node.nodeType !== 1 || domSkip(node)) return;
+  const tag = node.tagName;
+  if (tag === "BR") {
+    writeRaw(state, "\n");
+    return;
+  }
+  if (tag === "IMG") {
+    state.offsets.set(node, state.out.length);
+    return;
+  }
+  if (tag === "HR") {
+    ensureBreak(state, 2);
+    if (!ctx.plain) writeRaw(state, "---");
+    ensureBreak(state, 2);
+    return;
+  }
+  if (/^H[1-6]$/.test(tag)) {
+    if (speakerLabel(node.textContent || "")) return;
+    ensureBreak(state, 2);
+    if (!ctx.plain) writeRaw(state, `${"#".repeat(Number(tag[1]))} `);
+    walkChildren(node, state, ctx);
+    ensureBreak(state, 2);
+    return;
+  }
+  if (tag === "PRE") {
+    const code = [...(node.children || [])].find((el) => el.tagName === "CODE") || node;
+    const lang = ctx.plain ? "" : codeLanguage(code);
+    const text = String(code.textContent || "").replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    const saved = state.quote;
+    state.quote = 0;
+    ensureBreak(state, 2);
+    writeRaw(state, ctx.plain ? text : `\`\`\`${lang}\n${text}\n\`\`\``);
+    ensureBreak(state, 2);
+    state.quote = saved;
+    return;
+  }
+  if (tag === "BLOCKQUOTE") {
+    ensureBreak(state, 2);
+    if (!ctx.plain) state.quote += 1;
+    walkChildren(node, state, ctx);
+    if (!ctx.plain) state.quote = Math.max(0, state.quote - 1);
+    ensureBreak(state, 2);
+    return;
+  }
+  if (tag === "UL" || tag === "OL") {
+    renderList(node, tag === "OL", 0, state, ctx);
+    return;
+  }
+  if (tag === "TABLE") {
+    renderTable(node, state, ctx);
+    return;
+  }
+  if (tag === "CODE") {
+    const text = node.textContent || "";
+    if (ctx.plain) pushInline(state, text, false);
+    else writeRaw(state, `\`${String(text).replace(/`/g, "'")}\``);
+    return;
+  }
+  if (!ctx.plain && (tag === "STRONG" || tag === "B")) {
+    writeRaw(state, "**");
+    walkChildren(node, state, ctx);
+    writeRaw(state, "**");
+    return;
+  }
+  if (!ctx.plain && (tag === "EM" || tag === "I")) {
+    if (/icon/i.test(domClassBlob(node))) return;
+    writeRaw(state, "*");
+    walkChildren(node, state, ctx);
+    writeRaw(state, "*");
+    return;
+  }
+  if (tag === "A") {
+    const href = node.getAttribute("href") || "";
+    const safe = /^https?:\/\//i.test(href) ? href.replace(/[\s)]/g, "") : "";
+    if (ctx.plain || !safe) {
+      walkChildren(node, state, ctx);
+      return;
+    }
+    writeRaw(state, "[");
+    walkChildren(node, state, ctx);
+    writeRaw(state, `](${safe})`);
+    return;
+  }
+  const block = /^(P|DIV|SECTION|ARTICLE|LI|HEADER|FIGURE|FIGCAPTION)$/.test(tag) || tag === "M" + "AIN";
+  if (block) ensureBreak(state, 2);
+  const next = ctx.plain && /whitespace-pre-wrap|pre-wrap/i.test(domClassBlob(node))
+    ? { ...ctx, plainPre: true }
+    : ctx;
+  walkChildren(node, state, next);
+  if (block) ensureBreak(state, 1);
+}
+
+function finishDom(state) {
+  const raw = state.out;
+  let lead = 0;
+  while (lead < raw.length && (raw[lead] === "\n" || raw[lead] === " ")) lead += 1;
+  let end = raw.length;
+  while (end > lead && (raw[end - 1] === "\n" || raw[end - 1] === " ")) end -= 1;
+  const text = raw.slice(lead, end);
+  const offsets = new Map();
+  for (const [img, pos] of state.offsets) {
+    let at = pos - lead;
+    if (at < 0) at = 0;
+    if (at > text.length) at = text.length;
+    offsets.set(img, at);
+  }
+  return { text, offsets };
+}
+
+function scrubDiag(value, max) {
+  return String(value ?? "")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig, "[id]")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, max);
+}
+
+Chatseek.imageDiagCounts = () => ({ cached: 0, placeholder: 0 });
+Chatseek._lastError = null;
+Chatseek._diagFields = null;
+Chatseek._diagPlatform = "";
+Chatseek._lastDiag = "";
+Chatseek._diagTimer = 0;
+Chatseek._diagLast = "";
+Chatseek._diagPending = "";
+Chatseek._diagArmed = false;
+Chatseek._lastHealthSend = null;
+
+Chatseek.extVersion = () => {
+  try {
+    return String(chrome.runtime?.getManifest?.().version || "").slice(0, 16);
+  } catch {
+    return "";
+  }
+};
+
+Chatseek.compactHits = (hits) => {
+  const out = {};
+  if (!hits || typeof hits !== "object") return out;
+  for (const [name, count] of Object.entries(hits)) {
+    const key = String(name || "").replace(/\s+/g, " ").slice(0, 48);
+    if (!key) continue;
+    out[key] = Math.max(0, Math.floor(Number(count) || 0));
+  }
+  return out;
+};
+
+Chatseek.countSelectors = (root, layers) => {
+  const counts = {};
+  if (!root?.querySelectorAll) return counts;
+  for (const layer of layers || []) {
+    let n = 0;
+    try {
+      n = root.querySelectorAll(layer.selector).length;
+    } catch {
+      n = 0;
+    }
+    counts[layer.name] = n;
+  }
+  return counts;
+};
+
+Chatseek.messageStats = (messages) => {
+  let userCount = 0;
+  let assistantCount = 0;
+  let charCount = 0;
+  for (const msg of messages || []) {
+    if (msg?.role === "assistant") assistantCount += 1;
+    else userCount += 1;
+    charCount += String(msg?.body || "").length;
+  }
+  return { userCount, assistantCount, charCount };
+};
+
+Chatseek.isSpeakerChrome = (body) => {
+  const t = String(body || "").replace(/[#>*_`~[\]()]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return true;
+  return speakerLabel(t);
+};
+
+Chatseek.isSubstantive = (body) => {
+  if (!body || Chatseek.isUiNoise(body)) return false;
+  return !Chatseek.isSpeakerChrome(body);
+};
+
+Chatseek.rememberError = (err) => {
+  const stack = String(err?.stack || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const frame = stack.find((line) => line.startsWith("at ")) || "";
+  Chatseek._lastError = {
+    name: scrubDiag(err?.name || "Error", 40) || "Error",
+    stack: scrubDiag(frame, 140),
+  };
+};
+
+Chatseek.diagFields = (fields) => {
+  const images = Chatseek.imageDiagCounts() || { cached: 0, placeholder: 0 };
+  const err = Chatseek._lastError || {};
+  const src = fields || {};
+  return {
+    version: Chatseek.extVersion(),
+    platform: src.platform || Chatseek._diagPlatform || "",
+    pathKind: src.pathKind || "other",
+    selector: src.selector || "none",
+    selectorHits: src.selectorHits || null,
+    userCount: Number(src.userCount) || 0,
+    assistantCount: Number(src.assistantCount) || 0,
+    charCount: Number(src.charCount) || 0,
+    imagesCached: Number(images.cached) || 0,
+    imagesPlaceholder: Number(images.placeholder) || 0,
+    healthState: src.healthState || (src.warn ? "warn" : "ok"),
+    errorName: err.name || "",
+    errorStack: err.stack || "",
+    at: Number(src.at) || Date.now(),
+  };
+};
+
+Chatseek.formatDiag = (fields) => {
+  const src = fields || {};
+  const hits = Chatseek.compactHits(src.selectorHits);
+  const hitText = Object.keys(hits).map((name) => `${name}:${hits[name]}`).join(",") || "none";
+  const at = Number(src.at) || Date.now();
+  let iso = String(at);
+  try { iso = new Date(at).toISOString(); } catch { /* keep the number */ }
+  const parts = [
+    "[Chatseek] diag",
+    `v=${scrubDiag(src.version, 16) || "?"}`,
+    `platform=${scrubDiag(src.platform, 16) || "?"}`,
+    `path=${scrubDiag(src.pathKind, 24) || "?"}`,
+    `hits=${scrubDiag(hitText, 360)}`,
+    `used=${scrubDiag(src.selector, 80) || "none"}`,
+    `user=${Number(src.userCount) || 0}`,
+    `assistant=${Number(src.assistantCount) || 0}`,
+    `chars=${Number(src.charCount) || 0}`,
+    `imgCache=${Number(src.imagesCached) || 0}`,
+    `imgHold=${Number(src.imagesPlaceholder) || 0}`,
+    `health=${scrubDiag(src.healthState, 16) || "ok"}`,
+    `err=${scrubDiag(src.errorName, 40) || "-"}`,
+    `at=${iso}`,
+  ];
+  const stack = scrubDiag(src.errorStack, 140);
+  if (stack) parts.push(`stack=${stack}`);
+  return parts.join(" ");
+};
+
+Chatseek.noteDiag = (line) => {
+  Chatseek._diagPending = String(line || "");
+  const flush = () => {
+    Chatseek._diagTimer = 0;
+    const next = Chatseek._diagPending;
+    if (!next || next === Chatseek._diagLast) return;
+    Chatseek._diagLast = next;
+    try {
+      if (typeof console !== "undefined" && typeof console.log === "function") console.log(next);
+    } catch {
+      // A missing console must not stop capture.
+    }
+  };
+  if (!Chatseek._diagArmed) {
+    Chatseek._diagArmed = true;
+    flush();
+    return;
+  }
+  if (!Chatseek._diagTimer) Chatseek._diagTimer = setTimeout(flush, 4000);
+};
+
+Chatseek.publishDiag = (fields) => {
+  const stored = fields || Chatseek.diagFields();
+  Chatseek._diagFields = stored;
+  if (stored.platform) Chatseek._diagPlatform = stored.platform;
+  const line = Chatseek.formatDiag(stored);
+  Chatseek._lastDiag = line;
+  Chatseek.noteDiag(line);
+  return line;
+};
+
+Chatseek.refreshImageDiag = () => {
+  const prev = Chatseek._diagFields;
+  if (!prev) return;
+  const images = Chatseek.imageDiagCounts() || { cached: 0, placeholder: 0 };
+  if ((Number(images.cached) || 0) === (Number(prev.imagesCached) || 0) &&
+      (Number(images.placeholder) || 0) === (Number(prev.imagesPlaceholder) || 0)) {
+    return;
+  }
+  prev.imagesCached = Number(images.cached) || 0;
+  prev.imagesPlaceholder = Number(images.placeholder) || 0;
+  prev.at = Date.now();
+  const line = Chatseek.formatDiag(prev);
+  Chatseek._lastDiag = line;
+  Chatseek.noteDiag(line);
+  const report = Chatseek._lastHealthSend;
+  if (!report || !Chatseek._diagPlatform) return;
+  report.diag = line;
+  report.at = prev.at;
+  Chatseek.send({
+    type: "CAPTURE_HEALTH",
+    platform: Chatseek._diagPlatform,
+    health: report,
+  });
+};
+
+Chatseek.safeScheduleImages = (job) => {
+  try {
+    if (typeof Chatseek.scheduleMessageImages === "function") Chatseek.scheduleMessageImages(job);
+  } catch (err) {
+    Chatseek.rememberError(err);
+  }
+};
+
+Chatseek.domText = (el, plain) => {
+  if (!el || el.nodeType !== 1) return { text: "", offsets: new Map() };
+  const state = domState();
+  let ctx = { plain: !!plain, pre: false, plainPre: false };
+  if (ctx.plain && /whitespace-pre-wrap|pre-wrap/i.test(domClassBlob(el))) {
+    ctx = { ...ctx, plainPre: true };
+  }
+  const tag = el.tagName;
+  if (tag === "PRE" || tag === "TABLE" || tag === "UL" || tag === "OL" || tag === "BLOCKQUOTE") {
+    walkNode(el, state, ctx);
+  } else {
+    walkChildren(el, state, ctx);
+  }
+  return finishDom(state);
+};
+
+Chatseek.safeDomText = (el, plain) => {
+  try {
+    return Chatseek.domText(el, plain);
+  } catch (err) {
+    Chatseek.rememberError(err);
+    let text = "";
+    try { text = Chatseek.cleanClone(el); } catch { text = ""; }
+    return { text, offsets: new Map() };
+  }
 };

@@ -97,6 +97,32 @@ assert(shadowHit.messages.length === 1, "open shadow messages should be readable
 assert(shadowHit.messages[0].body.includes("shadow zebrafox"), "shadow body missing");
 assert(shadowHit.messages[0].role === "user", "shadow data-turn role missing");
 
+const shellHtml = `<main>
+  <div data-message-author-role="assistant" data-message-id="shell"><h5>ChatGPT</h5><button type="button">Copy</button></div>
+  <article data-testid="conversation-turn-8" data-turn="assistant" data-message-id="real">
+    <div class="markdown"><p>The real prose is pangolin.</p></div>
+  </article>
+</main>`;
+const shell = load(shellHtml, threadUrl);
+const shellHit = shell.api.platforms.chatgpt.inspect();
+assert(shellHit.messages.length === 1, `shell layer must not hide the turn: ${shellHit.messages.length}`);
+assert(shellHit.messages[0].body.includes("pangolin"), "turn prose missing behind the shell");
+assert(!/chatgpt/i.test(shellHit.messages[0].body), "speaker label was stored as the message");
+assert(shellHit.selector === "[data-turn]", `shell should fall through, got ${shellHit.selector}`);
+assert((shellHit.selectorHits?.["[data-message-author-role]"] || 0) >= 1, "diag should count the shell selector");
+
+const rich = load(readFileSync(join(root, "fixtures/chatgpt-thread-2026.html"), "utf8"), threadUrl);
+const richHit = rich.api.platforms.chatgpt.inspect();
+assert(richHit.messages.length === 2, `2026 DOM messages ${richHit.messages.length}`);
+assert(richHit.messages[0].role === "user" && richHit.messages[0].body === "line one\nline two", richHit.messages[0].body);
+assert(!/[*#]|https?:/.test(richHit.messages[0].body), "user text should stay plain");
+const answer = richHit.messages[1].body;
+for (const piece of ["## 行程", "- 清水寺", "  - 塔", "1. 第二天", "```python", "print(\"hi\")", "| 天 | 安排 |", "| --- | --- |", "| 1 | 寺院 |", "**红叶**", "*安静*", "`cafe`", "[官网](https://www.city.kyoto.lg.jp/)", "> 靠窗", "---"]) {
+  assert(answer.includes(piece), `markdown missing ${piece}\n${answer}`);
+}
+assert(!answer.includes("Copy"), "code chrome leaked");
+assert(richHit.health.warn === false, "a 2026 thread with prose should not warn");
+
 console.log("chatgpt-fixture ok", {
   selector: turnedHit.selector,
   messages: turnedHit.messages.length,

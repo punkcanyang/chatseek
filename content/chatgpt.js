@@ -8,14 +8,17 @@
   // (data-turn / conversation-turn / data-message-id) when the classic
   // data-message-author-role nodes are gone. A new adapter can pass its
   // own list to Chatseek.queryLayers instead of copying this walker.
+  // Public ChatGPT markup, oldest first. A layer is kept only when it
+  // yields prose. An empty data-message-author-role shell must not hide a
+  // later turn that actually has the text.
   const MESSAGE_LAYERS = [
     { name: "[data-message-author-role]", selector: "[data-message-author-role]" },
     { name: "[data-turn]", selector: "[data-turn]" },
-    {
-      name: "[data-testid*=conversation-turn]",
-      selector: "article[data-testid*='conversation-turn'], section[data-testid*='conversation-turn'], [data-testid*='conversation-turn']",
-    },
+    { name: "[data-testid*=conversation-turn]", selector: "[data-testid*='conversation-turn']" },
+    { name: "[data-turn-id]", selector: "[data-turn-id], [data-turn-id-container]" },
     { name: "[data-message-id]", selector: "[data-message-id]" },
+    { name: "[data-message-content]", selector: "[data-message-content]" },
+    { name: "[class*=conversation-turn]", selector: "[class*='conversation-turn']" },
     { name: "main article", selector: "main article" },
   ];
 
@@ -119,10 +122,8 @@
     });
   }
 
-  function bodyOf(node) {
-    const markdown = node.querySelector(".markdown, .prose");
-    const pre = node.querySelector(".whitespace-pre-wrap");
-    return Chatseek.textOf(markdown) || Chatseek.textOf(pre) || Chatseek.cleanClone(node);
+  function bodyOf(node, role) {
+    return Chatseek.safeDomText(node, role === "user");
   }
 
   function keptNodes(root, layer) {
@@ -137,49 +138,77 @@
 
   let imageHosts = [];
 
+  function messageFromNode(node, conversationId) {
+    const role = Chatseek.messageRole(node);
+    if (role === "system" || role === "tool") return null;
+    const heading = Chatseek.textOf(node.querySelector("h5, h6"));
+    const resolved = role === "assistant" || role === "user"
+      ? role
+      : (/^chatgpt/i.test(heading) ? "assistant" : "user");
+    const rendered = bodyOf(node, resolved);
+    const body = rendered.text;
+    if (!Chatseek.isSubstantive(body)) return null;
+    const platformMessageId = node.getAttribute("data-message-id") ||
+      node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
+      Chatseek.hash(resolved + ":" + body.slice(0, 180));
+    const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    return {
+      message: { id, role: resolved, body },
+      host: { el: node, messageId: id, role: resolved, body, offsets: rendered.offsets },
+    };
+  }
+
+  function takeLayer(scope, chosen) {
+    let selector = null;
+    for (const layer of MESSAGE_LAYERS) {
+      for (const node of keptNodes(scope, layer)) {
+        if (chosen.some((item) => item.node === node || item.node.contains(node) || node.contains(item.node))) {
+          continue;
+        }
+        const built = messageFromNode(node, chosen.conversationId);
+        if (!built) continue;
+        if (!selector) selector = layer.name;
+        chosen.push({ node, ...built, layer: layer.name });
+      }
+    }
+    return selector;
+  }
+
   function extractMessages(conversationId, doc) {
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
-    let selector = null;
-    let nodes = [];
+    const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
     imageHosts = [];
-    const pick = (scope) => {
-      for (const layer of MESSAGE_LAYERS) {
-        const kept = keptNodes(scope, layer);
-        if (!kept.length) continue;
-        selector = layer.name;
-        nodes = kept;
-        return true;
-      }
-      return false;
-    };
-    if (!pick(root)) {
+    const chosen = [];
+    chosen.conversationId = conversationId;
+    let selector = takeLayer(root, chosen);
+    if (!chosen.length) {
       for (const shadowRoot of Chatseek.openShadowRoots(root)) {
-        if (pick(shadowRoot)) break;
+        const shadowHits = Chatseek.countSelectors(shadowRoot, MESSAGE_LAYERS);
+        for (const [name, count] of Object.entries(shadowHits)) {
+          if (count) selectorHits[`shadow ${name}`] = (selectorHits[`shadow ${name}`] || 0) + count;
+        }
+        const shadowSelector = takeLayer(shadowRoot, chosen);
+        if (chosen.length) {
+          selector = shadowSelector ? `shadow ${shadowSelector}` : selector;
+          break;
+        }
       }
     }
-    const messages = [];
-    nodes.forEach((node) => {
-      const role = Chatseek.messageRole(node);
-      if (role === "system" || role === "tool") return;
-      const heading = Chatseek.textOf(node.querySelector("h5, h6"));
-      const resolved = role === "assistant" || role === "user"
-        ? role
-        : (/^chatgpt/i.test(heading) ? "assistant" : "user");
-      const platformMessageId = node.getAttribute("data-message-id") ||
-        node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
-        Chatseek.hash(resolved + ":" + Chatseek.textOf(node).slice(0, 180));
-      const body = bodyOf(node);
-      if (!body || Chatseek.isUiNoise(body)) return;
-      const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
-      messages.push({
-        id,
-        role: resolved,
-        body,
-      });
-      imageHosts.push({ el: node, messageId: id, role: resolved, body });
+    chosen.sort((a, b) => {
+      if (!a.node.compareDocumentPosition) return 0;
+      const pos = a.node.compareDocumentPosition(b.node);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
     });
-    return { messages, selector, selectorsTried };
+    const messages = [];
+    for (const item of chosen) {
+      messages.push(item.message);
+      imageHosts.push(item.host);
+    }
+    if (!selector && chosen[0]) selector = chosen[0].layer;
+    return { messages, selector, selectorsTried, selectorHits };
   }
 
   function healthFor(loc, doc, extraction, sidebar, platformId) {
@@ -198,6 +227,21 @@
   }
 
   async function capture(doc, loc) {
+    try {
+      return await captureInner(doc, loc);
+    } catch (err) {
+      Chatseek.rememberError(err);
+      Chatseek.publishDiag(Chatseek.diagFields({
+        platform: PLATFORM,
+        pathKind: "error",
+        healthState: "error",
+        at: Date.now(),
+      }));
+      return false;
+    }
+  }
+
+  async function captureInner(doc, loc) {
     const root = doc || document;
     const here = loc || location;
     const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
@@ -206,7 +250,12 @@
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : conversationIdFromLocation(here);
     let conversation = null;
-    let extracted = { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((l) => l.name) };
+    let extracted = {
+      messages: [],
+      selector: null,
+      selectorsTried: MESSAGE_LAYERS.map((l) => l.name),
+      selectorHits: Chatseek.countSelectors(root, MESSAGE_LAYERS),
+    };
     if (platformId) {
       const fromSidebar = sidebar.find((c) => c.platformId === platformId);
       const title = titleFromDoc(root) || fromSidebar?.title || platformId;
@@ -230,14 +279,9 @@
         conversation.archiveSource = "chatgpt:archive-list";
       } else if (signals.composer) markSeenActive(conversation, "chatgpt:conversation");
       extracted = extractMessages(platformId, root);
-      if (typeof Chatseek.scheduleMessageImages === "function") {
-        Chatseek.scheduleMessageImages({
-          conversationId: conversation.id,
-          items: imageHosts,
-        });
-      }
     }
-    return Chatseek.runCapture(state, {
+    const stats = Chatseek.messageStats(extracted.messages);
+    const result = await Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
       archivedRows,
@@ -247,8 +291,18 @@
         pathKind: Chatseek.pageKind(here, !!platformId),
         selector: extracted.selector,
         selectorsTried: extracted.selectorsTried,
+        selectorHits: extracted.selectorHits,
+        ...stats,
       },
     });
+    // Text is already stored. An image error must not reject this capture.
+    if (conversation) {
+      Chatseek.safeScheduleImages({
+        conversationId: conversation.id,
+        items: imageHosts,
+      });
+    }
+    return result;
   }
 
   function inspect(doc, loc) {
@@ -259,6 +313,7 @@
     const extracted = platformId
       ? extractMessages(platformId, root)
       : { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((l) => l.name) };
+    const stats = Chatseek.messageStats(extracted.messages);
     const health = Chatseek.buildHealthReport({
       platform: PLATFORM,
       pathKind: Chatseek.pageKind(here, !!platformId && !/[?&]temporary-chat=true(?:&|$)/.test(here.search || "")),
@@ -266,6 +321,8 @@
       messageCount: extracted.messages.length,
       selector: extracted.selector,
       selectorsTried: extracted.selectorsTried,
+      selectorHits: extracted.selectorHits,
+      ...stats,
     });
     if (/[?&]temporary-chat=true(?:&|$)/.test(here.search || "")) {
       health.pathKind = "temporary";

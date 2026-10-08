@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "Bild nicht zwischengespeichert (Datei zu groß)"
+  },
+  "copyDiag": {
+    "message": "Diagnose kopieren"
+  },
+  "copyDiagDone": {
+    "message": "Diagnose kopiert"
+  },
+  "copyDiagManual": {
+    "message": "Die Zwischenablage ist nicht beschreibbar. Text unten markieren und kopieren."
+  },
+  "copyDiagEmpty": {
+    "message": "Noch keine Diagnose. Öffne ein Gespräch und lade die Seite neu."
   }
 }

@@ -104,6 +104,10 @@ export const CATALOG = {
     confirmClearImages: "刪除這台電腦上的圖片快取？對話和訊息會保留。此操作無法復原。",
     imageUncached: "圖片未快取（原網站限制）",
     imageOversized: "圖片未快取（檔案過大）",
+    copyDiag: "複製診斷",
+    copyDiagDone: "診斷已複製",
+    copyDiagManual: "無法寫入剪貼簿，請從下方文字框複製。",
+    copyDiagEmpty: "還沒有診斷。請先打開一段對話並重新整理頁面。",
   },
   "zh-CN": {
     extName: "Chatseek",
@@ -182,6 +186,10 @@ export const CATALOG = {
     confirmClearImages: "删除这台电脑上的图片缓存？对话和消息会保留。此操作不可恢复。",
     imageUncached: "图片未缓存（原网站限制）",
     imageOversized: "图片未缓存（文件过大）",
+    copyDiag: "复制诊断",
+    copyDiagDone: "诊断已复制",
+    copyDiagManual: "无法写入剪贴板，请从下方文本框复制。",
+    copyDiagEmpty: "还没有诊断。请先打开一段对话并刷新页面。",
   },
   en: {
     extName: "Chatseek",
@@ -260,6 +268,10 @@ export const CATALOG = {
     confirmClearImages: "Delete cached images on this computer? Conversations and messages stay. This cannot be undone.",
     imageUncached: "Image wasn’t cached (the original site doesn’t allow it)",
     imageOversized: "Image wasn’t cached (the file is too large)",
+    copyDiag: "Copy diagnostics",
+    copyDiagDone: "Diagnostics copied",
+    copyDiagManual: "Couldn't write to the clipboard. Select the text below and copy it.",
+    copyDiagEmpty: "No diagnostics yet. Open a conversation and refresh the page.",
   },
   ja: {
     extName: "Chatseek",
@@ -338,6 +350,10 @@ export const CATALOG = {
     confirmClearImages: "この端末の画像キャッシュを削除しますか？会話とメッセージは残ります。元に戻せません。",
     imageUncached: "画像はキャッシュされていません（元のサイトの制限）",
     imageOversized: "画像はキャッシュされていません（ファイルが大きすぎます）",
+    copyDiag: "診断をコピー",
+    copyDiagDone: "診断をコピーしました",
+    copyDiagManual: "クリップボードに書けません。下のテキストを選んでコピーしてください。",
+    copyDiagEmpty: "診断はまだありません。会話を開いてページを再読み込みしてください。",
   },
   ko: {
     extName: "Chatseek",
@@ -416,6 +432,10 @@ export const CATALOG = {
     confirmClearImages: "이 기기의 이미지 캐시를 삭제할까요? 대화와 메시지는 남습니다. 되돌릴 수 없습니다.",
     imageUncached: "이미지를 캐시하지 못했습니다(원 사이트의 제한)",
     imageOversized: "이미지를 캐시하지 못했습니다(파일이 너무 큼)",
+    copyDiag: "진단 복사",
+    copyDiagDone: "진단을 복사했습니다",
+    copyDiagManual: "클립보드에 쓸 수 없습니다. 아래 텍스트를 선택해 복사하세요.",
+    copyDiagEmpty: "아직 진단이 없습니다. 대화를 연 뒤 페이지를 새로고침하세요.",
   },
   es: {
     extName: "Chatseek",
@@ -494,6 +514,10 @@ export const CATALOG = {
     confirmClearImages: "¿Borrar las imágenes en caché de este equipo? Las conversaciones y los mensajes se conservan. No se puede deshacer.",
     imageUncached: "Imagen no guardada en caché (limitación del sitio original)",
     imageOversized: "Imagen no guardada en caché (el archivo es demasiado grande)",
+    copyDiag: "Copiar diagnóstico",
+    copyDiagDone: "Diagnóstico copiado",
+    copyDiagManual: "No se pudo escribir en el portapapeles. Selecciona el texto de abajo y cópialo.",
+    copyDiagEmpty: "Aún no hay diagnóstico. Abre una conversación y actualiza la página.",
   },
   fr: {
     extName: "Chatseek",
@@ -572,6 +596,10 @@ export const CATALOG = {
     confirmClearImages: "Supprimer les images en cache sur cet ordinateur ? Les discussions et les messages sont conservés. Cette action est définitive.",
     imageUncached: "Image non mise en cache (restriction du site d’origine)",
     imageOversized: "Image non mise en cache (fichier trop volumineux)",
+    copyDiag: "Copier le diagnostic",
+    copyDiagDone: "Diagnostic copié",
+    copyDiagManual: "Impossible d'écrire dans le presse-papiers. Sélectionnez le texte ci-dessous.",
+    copyDiagEmpty: "Pas encore de diagnostic. Ouvrez une conversation et actualisez la page.",
   },
   de: {
     extName: "Chatseek",
@@ -650,6 +678,10 @@ export const CATALOG = {
     confirmClearImages: "Zwischengespeicherte Bilder auf diesem Computer löschen? Unterhaltungen und Nachrichten bleiben erhalten. Das kann nicht rückgängig gemacht werden.",
     imageUncached: "Bild nicht zwischengespeichert (Einschränkung der Originalwebsite)",
     imageOversized: "Bild nicht zwischengespeichert (Datei zu groß)",
+    copyDiag: "Diagnose kopieren",
+    copyDiagDone: "Diagnose kopiert",
+    copyDiagManual: "Die Zwischenablage ist nicht beschreibbar. Text unten markieren und kopieren.",
+    copyDiagEmpty: "Noch keine Diagnose. Öffne ein Gespräch und lade die Seite neu.",
   },
   "pt-BR": {
     extName: "Chatseek",
@@ -728,6 +760,10 @@ export const CATALOG = {
     confirmClearImages: "Apagar as imagens em cache neste computador? As conversas e as mensagens permanecem. Não dá para desfazer.",
     imageUncached: "Imagem não armazenada em cache (limitação do site original)",
     imageOversized: "Imagem não armazenada em cache (arquivo grande demais)",
+    copyDiag: "Copiar diagnóstico",
+    copyDiagDone: "Diagnóstico copiado",
+    copyDiagManual: "Não foi possível gravar na área de transferência. Selecione o texto abaixo.",
+    copyDiagEmpty: "Ainda não há diagnóstico. Abra uma conversa e atualize a página.",
   },
 };
 

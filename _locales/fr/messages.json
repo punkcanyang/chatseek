@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "Image non mise en cache (fichier trop volumineux)"
+  },
+  "copyDiag": {
+    "message": "Copier le diagnostic"
+  },
+  "copyDiagDone": {
+    "message": "Diagnostic copié"
+  },
+  "copyDiagManual": {
+    "message": "Impossible d'écrire dans le presse-papiers. Sélectionnez le texte ci-dessous."
+  },
+  "copyDiagEmpty": {
+    "message": "Pas encore de diagnostic. Ouvrez une conversation et actualisez la page."
   }
 }
