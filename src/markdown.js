@@ -797,15 +797,30 @@ function codePieces(source, from, to, rendered) {
   if (source.slice(from, to) === rendered) {
     return [{ text: rendered, startFrom: from, startTo: to }];
   }
+  // A newline inside a code span is shown as a space. Keep one piece per run
+  // so a later absolute-position merge can still line each character up with
+  // the source. One loose piece would paint the whole span for the first hit
+  // and drop every later hit in the same span.
   const pieces = [];
-  let local = "";
-  for (let i = from; i < to; i += 1) {
-    const ch = source[i] === "\n" ? " " : source[i];
-    local += ch;
-    pieces.push({ text: ch, startFrom: i, startTo: i + 1 });
+  let runFrom = from;
+  for (let i = from; i <= to; i += 1) {
+    if (i < to && source[i] !== "\n") continue;
+    if (i > runFrom) pieces.push({ text: source.slice(runFrom, i), startFrom: runFrom, startTo: i });
+    if (i < to) {
+      pieces.push({ text: " ", startFrom: i, startTo: i + 1 });
+      runFrom = i + 1;
+    }
   }
-  if (rendered.length === local.length - 2 && local.startsWith(" ") && local.endsWith(" ")) {
-    return pieces.slice(1, -1);
+  const joined = pieces.map((piece) => piece.text).join("");
+  if (joined === rendered) return pieces;
+  if (
+    joined.length === rendered.length + 2
+    && joined.startsWith(" ")
+    && joined.endsWith(" ")
+    && joined.slice(1, -1) === rendered
+  ) {
+    const edge = pieces[0]?.text === " " ? pieces.slice(1, -1) : null;
+    if (edge && edge.map((piece) => piece.text).join("") === rendered) return edge;
   }
   return [{ text: rendered, startFrom: from, startTo: to, loose: true }];
 }
@@ -1172,7 +1187,7 @@ function densePieces(source, map, from, to) {
 }
 
 function finishCode(token, map) {
-  const pieces = (token.pieces || []).map((piece) => {
+  const mapped = (token.pieces || []).map((piece) => {
     if (piece.loose) {
       return { text: piece.text, start: mapAt(map, piece.startFrom), end: mapAt(map, piece.startTo - 1) + 1, loose: true };
     }
@@ -1184,6 +1199,19 @@ function finishCode(token, map) {
       end: mapAt(map, localTo - 1) + 1,
     };
   });
+  // A CRLF boundary leaves a hole in the source map. Pieces on either side of
+  // that hole must stay separate, or a hit after the break lands on the wrong
+  // characters. Contiguous pieces collapse back into one run.
+  const pieces = [];
+  for (const piece of mapped) {
+    const last = pieces[pieces.length - 1];
+    if (last && !last.loose && !piece.loose && last.end === piece.start && piece.text) {
+      last.text += piece.text;
+      last.end = piece.end;
+    } else if (piece.text) {
+      pieces.push({ ...piece });
+    }
+  }
   return {
     type: "code",
     text: token.text,

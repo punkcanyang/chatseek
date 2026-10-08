@@ -253,6 +253,33 @@ async function main() {
       return problems;
     });
     assert(fit.length === 0, fit.join("; "));
+    const localeFit = await page.evaluate(() => {
+      const select = document.getElementById("lang");
+      const problems = [];
+      const codes = [...select.options].map((option) => option.value);
+      const saved = select.value;
+      for (const code of codes) {
+        select.value = code;
+        select.dispatchEvent(new Event("change"));
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) {
+          problems.push(`${code} scrolls sideways ${document.documentElement.scrollWidth}`);
+        }
+        for (const icon of document.querySelectorAll(".read, .open-site")) {
+          const box = icon.getBoundingClientRect();
+          if (box.width > 30 || box.right > window.innerWidth + 1) {
+            problems.push(`${code} icon ${icon.getAttribute("aria-label")} is ${Math.round(box.width)}px`);
+          }
+        }
+      }
+      select.value = saved;
+      select.dispatchEvent(new Event("change"));
+      return problems;
+    });
+    assert(localeFit.length === 0, localeFit.join("; "));
+    await page.waitForFunction(() => {
+      const read = document.querySelector(".read");
+      return read?.getAttribute("aria-label") === "阅读" && document.querySelector(".item.is-current");
+    }, { timeout: 5000 });
     await page.screenshot({ path: shots.narrow, clip: await rowClip() });
 
     await page.setViewport({ width: 880, height: 420, deviceScaleFactor: 2 });

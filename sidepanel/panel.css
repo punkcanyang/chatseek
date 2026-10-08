@@ -58,6 +58,7 @@ body {
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
+  min-width: 0;
 }
 
 .lang {
@@ -74,6 +75,9 @@ body {
   font-size: 12px;
   padding: 4px 6px;
   max-width: 9.5rem;
+  /* A long native name (Français, Português) must not force a 320px panel sideways. */
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .logo {

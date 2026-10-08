@@ -317,6 +317,28 @@ function distinctHits(app) {
   assert(performance.now() - started < 3000, "many hits in one message stay fast");
 }
 {
+  // A newline in an inline code span is shown as a space. Each hit inside it
+  // has to be its own mark; painting the whole span for the first hit drops
+  // the rest, so Previous / Next cannot land on them.
+  const wrapped = view(["before `foo\nbar` after foo"], "foo");
+  const fooMarks = [...wrapped.app.querySelectorAll("mark")].map((mark) => mark.textContent);
+  assert(wrapped.controls.hitCount() === 2, `two foo hits, one inside the span: ${wrapped.controls.hitCount()}`);
+  assert(fooMarks.join("|") === "foo|foo", `each foo is its own mark: ${fooMarks.join("|")}`);
+  const beta = view(["`alpha\nbeta`"], "beta");
+  assert(beta.controls.hitCount() === 1 && beta.app.querySelector("code mark")?.textContent === "beta", "the hit is beta, not the whole span");
+  const crlf = view(["`foo\r\nbar` and bar"], "bar");
+  const barMarks = [...crlf.app.querySelectorAll("mark")].map((mark) => mark.textContent);
+  assert(crlf.controls.hitCount() === 2 && barMarks.join("|") === "bar|bar", `CRLF code span keeps both hits: ${barMarks.join("|")}`);
+  const spaced = view(["use ` cafe ` today"], "cafe");
+  assert(spaced.controls.hitCount() === 1 && spaced.app.querySelector("code mark")?.textContent === "cafe", "a padded code span still highlights the word");
+  const pair = view(["`one two\nthree two`", "tail"], "two");
+  assert(pair.controls.hitCount() === 2, `two hits inside one wrapped span: ${pair.controls.hitCount()}`);
+  pair.controls.next();
+  assert(pair.controls.hitIndex() === 1, "next reaches the second hit in the span");
+  const current = [...pair.app.querySelectorAll("mark.is-current")];
+  assert(current.length === 1 && current[0].textContent === "two" && current[0].dataset.hit === "1", "the second hit is the one painted current");
+}
+{
   const source = "pre **bold** `x` [lab*el*](https://u.example/p \"title\") ![alt](https://i.example/a.png)";
   const ranges = visibleRanges(parseMarkdown(source));
   for (const [s, e] of ranges) assert(e > s && s >= 0 && e <= source.length, "visible range in bounds");
