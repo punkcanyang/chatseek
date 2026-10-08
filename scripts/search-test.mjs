@@ -561,6 +561,62 @@ for (let i = 1; i < bounded.length; i++) {
 assert(!formatActivityLabel(byBound.clockNew, boundNow, "zh-TW").text.includes("早於"), "page-exact must not render as 早於");
 assert(!formatActivityLabel(byBound.clockOld, boundNow, "en").text.startsWith("before"), "observed must not render as before");
 
+// A stored clock is a lower bound on that chat's activity. When a row below it
+// carries a later time, the clock above is stale and is not an upper bound.
+const staleAt = boundNow - 3 * 86400000;
+const freshBelowAt = boundNow - 3600000;
+const stale = Object.fromEntries(applySidebarEstimates([
+  { id: "top", updatedAt: boundNow - 1800000, updatedAtSource: "page-exact" },
+  { id: "underTop" },
+  { id: "staleClock", updatedAt: staleAt, updatedAtSource: "observed" },
+  { id: "underStale" },
+  { id: "freshBelow", updatedAt: freshBelowAt, updatedAtSource: "observed" },
+  { id: "underFresh" },
+], boundNow).map((row) => [row.id, row]));
+assert(stale.underStale.olderThanAt === boundNow - 1800000, "a contradicted clock falls back to the next trustworthy clock above");
+assert(stale.underFresh.olderThanAt === freshBelowAt, "the newest clock is still the bound for rows under it");
+assert(stale.underTop.olderThanAt === boundNow - 1800000, stale.underTop.olderThanAt);
+const onlyStale = Object.fromEntries(applySidebarEstimates([
+  { id: "staleClock", updatedAt: staleAt, updatedAtSource: "observed" },
+  { id: "x" },
+  { id: "freshBelow", updatedAt: freshBelowAt, updatedAtSource: "observed" },
+  { id: "y" },
+  { id: "laterBucket", updatedAt: freshBelowAt - 3600000, updatedAtSource: "page-bucket" },
+], boundNow).map((row) => [row.id, row]));
+assert(onlyStale.x.olderThanAt == null, `a row above a later clock must not say before the stale clock: ${onlyStale.x.olderThanAt}`);
+const xLabel = formatActivityLabel(onlyStale.x, boundNow, "zh-TW");
+assert(xLabel.unknown && xLabel.text.startsWith("日期未知（收錄於 ") && !xLabel.text.includes("早於"), xLabel.text);
+assert(onlyStale.y.olderThanAt === freshBelowAt, "rows under the fresh clock still get it");
+const bucketVeto = Object.fromEntries(applySidebarEstimates([
+  { id: "clock", updatedAt: boundNow - 2 * 86400000, updatedAtSource: "page-exact" },
+  { id: "x" },
+  { id: "today", updatedAt: boundNow - 3600000, updatedAtSource: "page-bucket" },
+], boundNow).map((row) => [row.id, row]));
+assert(bucketVeto.x.olderThanAt == null, "a later group time below vetoes an older clock above");
+for (const rows of [bounded, Object.values(stale), Object.values(onlyStale), Object.values(bucketVeto)]) {
+  for (const row of rows) {
+    if (row.olderThanAt == null) continue;
+    assert(row.updatedAt < row.olderThanAt, `${row.id} sorts at ${row.updatedAt}, after its before-bound ${row.olderThanAt}`);
+  }
+}
+
+const staleDbId = "chatgpt:19191919-1919-4191-8191-191919191919";
+const midDbId = "chatgpt:1a1a1a1a-1a1a-41a1-81a1-1a1a1a1a1a1a";
+const freshDbId = "chatgpt:1b1b1b1b-1b1b-41b1-81b1-1b1b1b1b1b1b";
+await upsertConversations([
+  convOf(staleDbId, { title: "Stale observed clock", updatedAt: staleAt, updatedAtSource: "observed" }),
+  convOf(freshDbId, { title: "Fresh observed clock", updatedAt: freshBelowAt, updatedAtSource: "observed" }),
+]);
+await upsertConversations([
+  convOf(staleDbId, { title: "Stale observed clock", sidebarIndex: 0 }),
+  convOf(midDbId, { title: "Between stale and fresh", sidebarIndex: 1 }),
+  convOf(freshDbId, { title: "Fresh observed clock", sidebarIndex: 2 }),
+]);
+const storedMid = await readConv(midDbId);
+assert(storedMid.olderThanAt == null, `IndexedDB stored a before-bound from a stale clock: ${storedMid.olderThanAt}`);
+assert(formatActivityLabel(storedMid, Date.now(), "zh-CN").text.startsWith("日期未知（收录于 "), formatActivityLabel(storedMid, Date.now(), "zh-CN").text);
+assert((await readConv(staleDbId)).updatedAt === staleAt, "the stale clock itself is not rewritten");
+
 const farId = "chatgpt:15151515-1515-4151-8151-151515151515";
 const betweenId = "chatgpt:18181818-1818-4181-8181-181818181818";
 const nearId = "chatgpt:16161616-1616-4161-8161-161616161616";

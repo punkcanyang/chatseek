@@ -158,15 +158,32 @@ function isClockAnchor(item) {
   return isValidPageMs(item?.updatedAt) && HIGH.has(item.updatedAtSource);
 }
 
-function clockAboveAt(list, index) {
+/** latestFrom[k] = the latest anchor time at index k or below. */
+function latestAnchorFrom(list) {
+  const latestFrom = new Array(list.length + 1).fill(-Infinity);
+  for (let k = list.length - 1; k >= 0; k--) {
+    const own = isAnchor(list[k]) ? list[k].updatedAt : -Infinity;
+    latestFrom[k] = Math.max(own, latestFrom[k + 1]);
+  }
+  return latestFrom;
+}
+
+/**
+ * A stored clock is only a lower bound on that chat's activity (it may have had
+ * activity we never saw). If any row below it carries a later time, the clock
+ * is stale and must not be shown as an upper bound.
+ */
+function clockAboveAt(list, index, latestFrom) {
   for (let j = index - 1; j >= 0; j--) {
-    if (isClockAnchor(list[j])) return list[j].updatedAt;
+    if (isClockAnchor(list[j]) && list[j].updatedAt >= latestFrom[j + 1]) {
+      return list[j].updatedAt;
+    }
   }
   return null;
 }
 
-function setOlderThan(item, list, index) {
-  const bound = clockAboveAt(list, index);
+function setOlderThan(item, list, index, latestFrom) {
+  const bound = clockAboveAt(list, index, latestFrom);
   if (bound) item.olderThanAt = bound;
   else delete item.olderThanAt;
 }
@@ -182,7 +199,8 @@ function clearOlderThan(item) {
  * source stays first-seen so the UI can say the date is unknown.
  *
  * olderThanAt is display-only: the nearest page-exact or observed time above
- * this row. It is not a sort key. A page-bucket above does not set it.
+ * this row that no lower anchor contradicts. It is not a sort key. A
+ * page-bucket above does not set it, but a later page-bucket below does veto it.
  */
 export function applySidebarEstimates(items, now = Date.now()) {
   const list = items.map((item) => ({ ...item }));
@@ -209,6 +227,7 @@ export function applySidebarEstimates(items, now = Date.now()) {
     return list;
   }
 
+  const latestFrom = latestAnchorFrom(list);
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     if (isAnchor(item)) {
@@ -271,7 +290,7 @@ export function applySidebarEstimates(items, now = Date.now()) {
     item.updatedAt = ms;
     item.updatedAtSource = "sidebar-rank";
     item.firstSeenAt = item.firstSeenAt || now;
-    setOlderThan(item, list, i);
+    setOlderThan(item, list, i, latestFrom);
   }
   return list;
 }
