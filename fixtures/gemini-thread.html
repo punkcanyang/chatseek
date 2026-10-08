@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zucchini protocol - Google Gemini</title>
+  </head>
+  <body>
+    <div class="conversation-items-container">
+      <div
+        data-test-id="conversation"
+        jslog='173826;track:generic_click;BardVeMetadataKey:[["c_a1b2c3d4e5f67890","r_x"]]'
+      >
+        <a href="/u/1/app/a1b2c3d4e5f67890">
+          <span class="conversation-title">Zucchini protocol</span>
+        </a>
+      </div>
+      <div data-test-id="conversation" jslog="c_bbccddee11223344">
+        <div data-test-id="conversation-title">Jslog only chat</div>
+      </div>
+      <a href="/app/cafebabecafebabe">
+        <span class="conversation-title">Plain link chat</span>
+      </a>
+      <a href="/u/1/gem/coding-helper/0123456789abcdef">
+        <span class="conversation-title">Gem thread</span>
+      </a>
+      <a href="/share/deadbeefdeadbeef">
+        <span class="conversation-title">SHARE_SHOULD_SKIP</span>
+      </a>
+      <a href="/app">
+        <span class="conversation-title">New chat</span>
+      </a>
+      <a href="/gems/edit">
+        <span class="conversation-title">GEM_EDIT_SHOULD_SKIP</span>
+      </a>
+    </div>
+
+    <main>
+      <user-query id="turn-1">
+        <div class="query-text">
+          <span class="cdk-visually-hidden">You said</span>
+          Where does the word ZUCCHINI_TOKEN appear?
+          <button type="button">Edit</button>
+        </div>
+      </user-query>
+      <model-response id="turn-2" aria-label="Gemini response">
+        <model-thoughts>
+          <div class="thoughts-container">
+            <message-content>THINKING_SECRET should not be indexed</message-content>
+          </div>
+        </model-thoughts>
+        <button type="button">Copy</button>
+        <message-content class="markdown">
+          <span class="cdk-visually-hidden">Gemini 說了</span>
+          <p>The word appears in the garden notes.</p>
+        </message-content>
+      </model-response>
+      <div class="user-query" id="turn-3">
+        <div class="query-text">
+          <span class="cdk-visually-hidden">你說了</span>
+          Second user turn about RAINBOW_TOKEN.
+        </div>
+      </div>
+      <div class="model-response" id="turn-4">
+        <div class="model-response-text markdown">Second reply stays in order.</div>
+        <div class="thoughts-container">THOUGHTS_CONTAINER_LEAK</div>
+      </div>
+      <model-response id="thinking-only">
+        <model-thoughts>
+          <message-content>ONLY_THINKING</message-content>
+        </model-thoughts>
+      </model-response>
+      <div class="ql-editor" contenteditable="true" role="textbox">
+        draft INPUT_EDITOR_LEAK
+      </div>
+      <button type="button">Show thinking</button>
+    </main>
+  </body>
+</html>

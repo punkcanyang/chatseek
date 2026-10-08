@@ -6,7 +6,8 @@
     "verify": "node scripts/verify.mjs && node scripts/chatgpt-fixture-test.mjs",
     "test:search": "node scripts/search-test.mjs && node scripts/upgrade-test.mjs",
     "test:upgrade": "node scripts/upgrade-test.mjs",
-    "test:fixture": "node scripts/chatgpt-fixture-test.mjs"
+    "test:fixture": "node scripts/chatgpt-fixture-test.mjs",
+    "test:gemini": "node scripts/gemini-fixture-test.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",

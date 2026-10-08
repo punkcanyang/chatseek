@@ -741,7 +741,7 @@ const Chatseek = {
   isGenericTitle(title) {
     const t = (title || "").trim();
     if (!t) return true;
-    return /^(new chat|chatgpt|claude|grok|untitled|无标题|新对话|新聊天)$/i.test(t);
+    return /^(new chat|chatgpt|claude|grok|gemini|google gemini|untitled|无标题|新对话|新對話|新聊天)$/i.test(t);
   },
 
   /** Keep one row per id: newer page date wins, but a real title beats "ChatGPT". */

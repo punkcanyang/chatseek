@@ -10,6 +10,7 @@
   --chatgpt: #0e8c6e;
   --claude: #c45c3e;
   --grok: #1d9bf0;
+  --gemini: #6d5efc;
   --shadow: 0 1px 0 rgba(23, 34, 31, 0.04);
   --radius: 12px;
   font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB",
@@ -28,6 +29,7 @@
     --chatgpt: #3dba9a;
     --claude: #e08a70;
     --grok: #5bb8f5;
+    --gemini: #b3a6ff;
     --shadow: none;
   }
 }
@@ -101,6 +103,7 @@ body {
 
 .filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 10px 0 8px;
 }
@@ -185,6 +188,10 @@ body {
 
 .plat.grok {
   color: var(--grok);
+}
+
+.plat.gemini {
+  color: var(--gemini);
 }
 
 .empty,

@@ -10,6 +10,7 @@ const HOSTS = {
     /^https:\/\/grok\.x\.com\//,
     /^https:\/\/x\.ai\//,
   ],
+  gemini: [/^https:\/\/gemini\.google\.com\//],
 };
 
 function openSidePanelOnClick() {

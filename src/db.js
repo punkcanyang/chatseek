@@ -110,7 +110,7 @@ async function withDb(fn) {
 function isGenericTitle(title) {
   const t = (title || "").trim();
   if (!t) return true;
-  return /^(new chat|chatgpt|claude|grok|untitled|无标题)$/i.test(t);
+  return /^(new chat|chatgpt|claude|grok|gemini|google gemini|untitled|无标题|新对话|新對話|新聊天)$/i.test(t);
 }
 
 // 2020-01-01; must match Chatseek.MIN_MS in content/shared.js.
