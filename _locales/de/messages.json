@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "Bild nicht zwischengespeichert (Einschränkung der Originalwebsite)"
+  },
+  "imageOversized": {
+    "message": "Bild nicht zwischengespeichert (Datei zu groß)"
   }
 }

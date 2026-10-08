@@ -109,6 +109,11 @@ export function openDb() {
   return dbPromise;
 }
 
+function isQuotaError(err) {
+  const name = err?.name || "";
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
 function isDeadConnection(err) {
   if (!err) return false;
   if (err.name === "InvalidStateError") return true;
@@ -811,24 +816,37 @@ export async function saveImageRecords(conversationId, images) {
   if (typeof conversationId !== "string" || !conversationId || !images?.length) {
     return { saved: 0 };
   }
-  return withDb(async (db) => {
-    const tx = db.transaction(["images", "meta"], "readwrite");
-    const store = tx.objectStore("images");
-    const meta = tx.objectStore("meta");
-    let saved = 0;
-    for (const raw of images) {
-      const rec = normalizeImageRecord(conversationId, raw);
-      if (!rec) continue;
-      const prev = await requestDone(store.get([rec.messageId, rec.index]));
-      let delta = rec.status === "cached" ? rec.bytes : 0;
-      if (prev?.bytes) delta -= Number(prev.bytes) || 0;
-      store.put(rec);
-      if (delta) await adjustImageBytes(meta, delta);
-      saved += 1;
-    }
-    await txDone(tx);
-    return { saved };
-  });
+  try {
+    return await withDb(async (db) => {
+      const tx = db.transaction(["images", "meta"], "readwrite");
+      const store = tx.objectStore("images");
+      const meta = tx.objectStore("meta");
+      let saved = 0;
+      for (const raw of images) {
+        const rec = normalizeImageRecord(conversationId, raw);
+        if (!rec) continue;
+        const prev = await requestDone(store.get([rec.messageId, rec.index]));
+        let delta = rec.status === "cached" ? rec.bytes : 0;
+        if (prev?.bytes) delta -= Number(prev.bytes) || 0;
+        try {
+          store.put(rec);
+        } catch (err) {
+          if (!isQuotaError(err)) throw err;
+          try { tx.abort(); } catch { /* already aborting */ }
+          return { saved: 0, quota: true };
+        }
+        if (delta) await adjustImageBytes(meta, delta);
+        saved += 1;
+      }
+      await txDone(tx);
+      return { saved };
+    });
+  } catch (err) {
+    // A failed put aborts the transaction, so the byte counter is unchanged
+    // and conversation rows (a different transaction) stay put.
+    if (isQuotaError(err)) return { saved: 0, quota: true };
+    throw err;
+  }
 }
 
 export async function readImagesForMessages(ids) {

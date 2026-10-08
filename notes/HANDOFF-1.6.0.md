@@ -4,14 +4,14 @@
 
 只在那段對話開著、而且 `<img>` 已經畫出來時才存。長邊縮到 512 的 WebP（不行就 JPEG），每張大約 150KB，再大就降畫質，還是太大就不存這張。同時記下提示詞、alt、屬於哪一則訊息、第幾張。不存圖片網址。
 
-跨網域或 canvas 被污染時，只留提示詞和 alt。閱讀頁原位顯示「圖片未快取（原網站限制）」，九種語言都有這句。點縮圖或這個佔位，跟「前往原網站開啟」一樣，同一段對話只留一個分頁。
+跨網域或 canvas 被污染時，只留提示詞和 alt。閱讀頁原位顯示「圖片未快取（原網站限制）」。降畫質之後仍超過約 150KB 的圖也留下提示詞和 alt，原位顯示「圖片未快取（檔案過大）」。這兩句都有九種語言。點縮圖或佔位，跟「前往原網站開啟」一樣，同一段對話只留一個分頁。
 
 側欄底部有圖片快取佔用的空間，和「清除圖片快取」（會先問一次）。從索引移除對話時，圖會一起刪。
 
 示例截圖（假資料，不是你的聊天）在：
 
 - `docs/reader-1.6.0-thumb.png`：閱讀頁裡那張縮圖，點了會回原網站。
-- `docs/reader-1.6.0-placeholder.png`：存不了的圖，原位是佔位和「前往原網站開啟」。
+- `docs/reader-1.6.0-placeholder.png`：同一則裡兩種佔位，「原網站限制」和「檔案過大」，都附「前往原網站開啟」。
 - `docs/panel-1.6.0-image-cache.png`：側欄底部的「圖片快取 3.7 KB」和「清除圖片快取」。
 
 ## 四家的圖片怎麼找
@@ -54,8 +54,8 @@
 - 你還沒把那段對話開到圖出現就離開的話，那張圖不會進快取。
 - Claude 的 artifact iframe 不讀。
 - 頭像和小於 64px 的介面圖不收。
-- 沒有 `unlimitedStorage`。磁碟配額不夠時，那張圖會存失敗，對話文字還在。
-- 降畫質之後仍超過約 150KB 的圖不存，閱讀頁上也不會有佔位（跟「網站不允許」是兩件事）。
+- 沒有 `unlimitedStorage`。磁碟配額不夠時，那張圖會存失敗，對話文字還在，已存的縮圖和使用量不會被寫壞。
+- 降畫質之後仍超過約 150KB 的圖不存像素，閱讀頁改顯示「檔案過大」佔位，和「原網站限制」是兩句不同的話。
 
 ## 自動化
 
@@ -67,6 +67,6 @@ npm run test:gemini
 npm run test:upgrade
 ```
 
-`scripts/image-cache-test.mjs`（含在 `test:search` 和 `test:upgrade`）：canvas 被污染或 `SecurityError` 時只存提示詞和 alt、超過 150KB 不存、清除圖片快取會留下對話、移除對話時連圖一起刪、版本 3 的資料庫升級後訊息還在且出現 `images` store。另外用假的 DOM 檢查四家：ChatGPT 留下生成圖、略過頭像和 icon；Claude 只留使用者上傳、不收 artifact；Gemini、Grok 留下訊息裡的大圖。閱讀頁的縮圖是 `data:` 網址，佔位是繁體那句，點了開的是對話網址。
+`scripts/image-cache-test.mjs`（含在 `test:search` 和 `test:upgrade`）：canvas 被污染、`SecurityError` 或其他轉檔錯誤時只存提示詞和 alt；`toBlob` 一直不回呼也不會卡住；超過 150KB 改存「檔案過大」佔位。清除圖片快取會留下對話和 tombstone，移除對話時連圖一起刪，版本 3 的資料庫升級後訊息和 tombstone 還在且出現 `images` store。配額不足時這張圖存失敗，對話和使用量維持原狀。另外用假的 DOM 檢查四家：ChatGPT 留下生成圖、略過頭像、按鈕圖示和重複來源，順序照文件；Claude 使用者上傳含泡泡前的那一列，不收上一則、不收助理、不收 artifact；Gemini 讀得到打開的 shadow root；Grok 留下訊息裡的大圖。閱讀頁的縮圖是 `data:` 網址，兩種佔位是繁體那兩句，和 Markdown 的圖片文字不重複，點了開的是對話網址。
 
 示例截圖用 `node scripts/screenshot-images.mjs` 重做。它用本機 Chrome 打開擴充功能頁面，寫入假索引和一張 canvas 畫的圖，不登入任何網站。

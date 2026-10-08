@@ -8,7 +8,7 @@
 
 import { fill, text } from "./i18n.js";
 import { formatActivityLabel } from "./activity-time.js";
-import { cachedMarkdown, renderMarkdown } from "./markdown-dom.js";
+import { altBag, cachedMarkdown, consumedImageRanges, renderMarkdown } from "./markdown-dom.js";
 import { hitMayBeMarkup, visibleRanges } from "./markdown.js";
 import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
 import { safeOriginalUrl } from "./reader-url.js";
@@ -69,7 +69,7 @@ export function splitPlainBlocks(text) {
   return blocks;
 }
 
-export function collectHits(title, messages, query) {
+export function collectHits(title, messages, query, images) {
   const terms = highlightTerms(query);
   const hits = [];
   if (!terms.length) return hits;
@@ -86,7 +86,12 @@ export function collectHits(title, messages, query) {
     const shown = ranges.some((range) => hitMayBeMarkup(body, range))
       ? visibleRanges(cachedMarkdown(msg, body))
       : null;
+    const shots = images?.get?.(msg?.id) || [];
+    const hidden = shots.length
+      ? consumedImageRanges(body, shots.map((shot) => shot?.alt || ""))
+      : [];
     for (const range of ranges) {
+      if (hidden.some(([start, end]) => range[0] >= start && range[1] <= end)) continue;
       if (!shown || overlapsAny(shown, range)) hits.push({ where: "message", messageIndex, range });
     }
   });
@@ -186,9 +191,11 @@ function imageSlot(doc, shot, locale, onOpen) {
     return fig;
   }
   fig.classList.add("image-missing");
+  const oversized = shot?.status === "oversized";
+  fig.dataset.reason = oversized ? "oversized" : "site";
   const note = doc.createElement("p");
   note.className = "image-missing-text";
-  note.textContent = text(locale, "imageUncached");
+  note.textContent = text(locale, oversized ? "imageOversized" : "imageUncached");
   const btn = doc.createElement("button");
   btn.type = "button";
   btn.className = "link image-open";
@@ -212,6 +219,7 @@ function renderBodyWithImages(parent, msg, shots, hits, current, locale, onOpen)
   }
   points.sort((a, b) => a.at - b.at);
   let cursor = 0;
+  const skipAlts = altBag(shots.map((shot) => shot?.alt || ""));
   const paint = (from, to) => {
     if (to <= from && body) return;
     renderMarkdown(parent, body.slice(from, to), {
@@ -219,6 +227,7 @@ function renderBodyWithImages(parent, msg, shots, hits, current, locale, onOpen)
       current,
       locale,
       owner: null,
+      skipAlts,
     });
   };
   for (const group of points) {
@@ -274,14 +283,14 @@ export function mountReader(root, options = {}) {
   const conversation = options.conversation || null;
   // Already in page order (readConversation). The view does not reorder.
   const messages = (options.messages || []).filter((msg) => msg && msg.id);
+  let imageMap = options.images instanceof Map ? options.images : new Map();
   const hits = options.missing || options.error || !conversation
     ? []
-    : collectHits(conversation.title || conversation.platformId || "", messages, query);
+    : collectHits(conversation.title || conversation.platformId || "", messages, query, imageMap);
   let hitIndex = hits.length ? 0 : -1;
   const heights = messages.map(estimateHeight);
   let prefix = buildPrefix(heights);
   let live = new Map();
-  let imageMap = options.images instanceof Map ? options.images : new Map();
   let renderedStart = -1;
   let renderedEnd = -1;
   // Logical scroll offset. A layout-less document clamps scrollTop to 0, so

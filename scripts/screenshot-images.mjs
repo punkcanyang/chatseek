@@ -104,6 +104,14 @@ await saveImageRecords(conv.id, [
     prompt: "畫一座京都清水寺，秋天的紅葉剛轉紅。",
     offset: 99,
   },
+  {
+    messageId: userId,
+    index: 1,
+    status: "oversized",
+    alt: "原始大圖",
+    prompt: "畫一座京都清水寺，秋天的紅葉剛轉紅。",
+    offset: 99,
+  },
 ]);
 location.replace("/reader/index.html?id=" + encodeURIComponent(conv.id));
 </script>`;
@@ -176,8 +184,9 @@ async function main() {
     await page.goto(`${origin}/__shot/bootstrap.html`, { waitUntil: "networkidle0", timeout: 20000 });
     await page.waitForFunction(() => {
       const thumb = document.querySelector(".cached-thumb");
-      const note = document.querySelector(".image-missing-text")?.textContent || "";
-      return thumb && thumb.getAttribute("src")?.startsWith("data:image/") && note.includes("圖片未快取");
+      const notes = [...document.querySelectorAll(".image-missing-text")].map((node) => node.textContent || "").join("\n");
+      return thumb && thumb.getAttribute("src")?.startsWith("data:image/")
+        && notes.includes("原網站限制") && notes.includes("檔案過大");
     }, { timeout: 10000 });
     await page.evaluate(() => document.fonts?.ready);
     const docs = join(root, "docs");
@@ -193,8 +202,8 @@ async function main() {
       return page.evaluate((sel) => {
         const slot = document.querySelector(sel)?.closest(".msg");
         const box = slot.getBoundingClientRect();
-        const y = Math.max(0, box.top - 12);
-        const height = Math.min(920 - y, Math.ceil(box.height + 24));
+        const y = Math.max(0, box.top - 8);
+        const height = Math.min(920 - y, Math.ceil(box.height + 10));
         return { x: 16, y, width: 728, height: Math.max(80, height) };
       }, selector);
     }

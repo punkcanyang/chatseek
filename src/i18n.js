@@ -103,6 +103,7 @@ export const CATALOG = {
     clearImages: "清除圖片快取",
     confirmClearImages: "刪除這台電腦上的圖片快取？對話和訊息會保留。此操作無法復原。",
     imageUncached: "圖片未快取（原網站限制）",
+    imageOversized: "圖片未快取（檔案過大）",
   },
   "zh-CN": {
     extName: "Chatseek",
@@ -180,6 +181,7 @@ export const CATALOG = {
     clearImages: "清除图片缓存",
     confirmClearImages: "删除这台电脑上的图片缓存？对话和消息会保留。此操作不可恢复。",
     imageUncached: "图片未缓存（原网站限制）",
+    imageOversized: "图片未缓存（文件过大）",
   },
   en: {
     extName: "Chatseek",
@@ -257,6 +259,7 @@ export const CATALOG = {
     clearImages: "Clear image cache",
     confirmClearImages: "Delete cached images on this computer? Conversations and messages stay. This cannot be undone.",
     imageUncached: "Image wasn’t cached (the original site doesn’t allow it)",
+    imageOversized: "Image wasn’t cached (the file is too large)",
   },
   ja: {
     extName: "Chatseek",
@@ -334,6 +337,7 @@ export const CATALOG = {
     clearImages: "画像キャッシュを消去",
     confirmClearImages: "この端末の画像キャッシュを削除しますか？会話とメッセージは残ります。元に戻せません。",
     imageUncached: "画像はキャッシュされていません（元のサイトの制限）",
+    imageOversized: "画像はキャッシュされていません（ファイルが大きすぎます）",
   },
   ko: {
     extName: "Chatseek",
@@ -411,6 +415,7 @@ export const CATALOG = {
     clearImages: "이미지 캐시 지우기",
     confirmClearImages: "이 기기의 이미지 캐시를 삭제할까요? 대화와 메시지는 남습니다. 되돌릴 수 없습니다.",
     imageUncached: "이미지를 캐시하지 못했습니다(원 사이트의 제한)",
+    imageOversized: "이미지를 캐시하지 못했습니다(파일이 너무 큼)",
   },
   es: {
     extName: "Chatseek",
@@ -488,6 +493,7 @@ export const CATALOG = {
     clearImages: "Borrar caché de imágenes",
     confirmClearImages: "¿Borrar las imágenes en caché de este equipo? Las conversaciones y los mensajes se conservan. No se puede deshacer.",
     imageUncached: "Imagen no guardada en caché (limitación del sitio original)",
+    imageOversized: "Imagen no guardada en caché (el archivo es demasiado grande)",
   },
   fr: {
     extName: "Chatseek",
@@ -565,6 +571,7 @@ export const CATALOG = {
     clearImages: "Effacer le cache d’images",
     confirmClearImages: "Supprimer les images en cache sur cet ordinateur ? Les discussions et les messages sont conservés. Cette action est définitive.",
     imageUncached: "Image non mise en cache (restriction du site d’origine)",
+    imageOversized: "Image non mise en cache (fichier trop volumineux)",
   },
   de: {
     extName: "Chatseek",
@@ -642,6 +649,7 @@ export const CATALOG = {
     clearImages: "Bildzwischenspeicher leeren",
     confirmClearImages: "Zwischengespeicherte Bilder auf diesem Computer löschen? Unterhaltungen und Nachrichten bleiben erhalten. Das kann nicht rückgängig gemacht werden.",
     imageUncached: "Bild nicht zwischengespeichert (Einschränkung der Originalwebsite)",
+    imageOversized: "Bild nicht zwischengespeichert (Datei zu groß)",
   },
   "pt-BR": {
     extName: "Chatseek",
@@ -719,6 +727,7 @@ export const CATALOG = {
     clearImages: "Limpar cache de imagens",
     confirmClearImages: "Apagar as imagens em cache neste computador? As conversas e as mensagens permanecem. Não dá para desfazer.",
     imageUncached: "Imagem não armazenada em cache (limitação do site original)",
+    imageOversized: "Imagem não armazenada em cache (arquivo grande demais)",
   },
 };
 

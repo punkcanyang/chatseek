@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "Image non mise en cache (restriction du site d’origine)"
+  },
+  "imageOversized": {
+    "message": "Image non mise en cache (fichier trop volumineux)"
   }
 }

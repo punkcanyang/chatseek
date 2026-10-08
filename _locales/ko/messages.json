@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "이미지를 캐시하지 못했습니다(원 사이트의 제한)"
+  },
+  "imageOversized": {
+    "message": "이미지를 캐시하지 못했습니다(파일이 너무 큼)"
   }
 }

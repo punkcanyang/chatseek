@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "图片未缓存（原网站限制）"
+  },
+  "imageOversized": {
+    "message": "图片未缓存（文件过大）"
   }
 }

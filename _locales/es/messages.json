@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "Imagen no guardada en caché (limitación del sitio original)"
+  },
+  "imageOversized": {
+    "message": "Imagen no guardada en caché (el archivo es demasiado grande)"
   }
 }

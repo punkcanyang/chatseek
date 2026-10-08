@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "Image wasn’t cached (the original site doesn’t allow it)"
+  },
+  "imageOversized": {
+    "message": "Image wasn’t cached (the file is too large)"
   }
 }

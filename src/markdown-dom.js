@@ -8,6 +8,79 @@ import { text } from "./i18n.js";
 import { parseMarkdown, safeLinkHref } from "./markdown.js";
 
 const astCache = new WeakMap();
+let skipAltBag = null;
+
+function altKey(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** One slot consumes one Markdown image with the same alt. Empty alt matches an empty alt. */
+export function altBag(alts) {
+  const bag = new Map();
+  for (const alt of alts || []) {
+    const key = altKey(alt);
+    bag.set(key, (bag.get(key) || 0) + 1);
+  }
+  return bag;
+}
+
+function takeSkip(alt) {
+  if (!skipAltBag?.size) return false;
+  const key = altKey(alt);
+  const left = skipAltBag.get(key) || 0;
+  if (!left) return false;
+  if (left === 1) skipAltBag.delete(key);
+  else skipAltBag.set(key, left - 1);
+  return true;
+}
+
+function walkInline(nodes, visit) {
+  for (const node of nodes || []) {
+    visit(node);
+    if (node.children) walkInline(node.children, visit);
+  }
+}
+
+function walkBlocks(blocks, visit) {
+  for (const block of blocks || []) {
+    if (!block) continue;
+    if (block.children) walkInline(block.children, visit);
+    if (block.blocks) walkBlocks(block.blocks, visit);
+    if (block.items) {
+      for (const item of block.items) walkBlocks(item.blocks, visit);
+    }
+    if (block.header) {
+      for (const cell of block.header) walkInline(cell.children, visit);
+    }
+    if (block.rows) {
+      for (const row of block.rows) {
+        for (const cell of row) walkInline(cell.children, visit);
+      }
+    }
+  }
+}
+
+/**
+ * Source ranges of Markdown images that a cached slot replaces.
+ * Hits that land only inside these ranges are not painted, so they must not
+ * be counted.
+ */
+export function consumedImageRanges(source, alts) {
+  const bag = altBag(alts);
+  if (!bag.size) return [];
+  const ranges = [];
+  const blocks = parseMarkdown(String(source ?? ""));
+  walkBlocks(blocks, (node) => {
+    if (node?.type !== "image") return;
+    const key = altKey(imageAlt(node));
+    const left = bag.get(key) || 0;
+    if (!left || !Number.isFinite(node.start) || !Number.isFinite(node.end) || node.end <= node.start) return;
+    if (left === 1) bag.delete(key);
+    else bag.set(key, left - 1);
+    ranges.push([node.start, node.end]);
+  });
+  return ranges;
+}
 
 export function cachedMarkdown(owner, source) {
   const key = owner && typeof owner === "object" ? owner : null;
@@ -24,9 +97,15 @@ export function cachedMarkdown(owner, source) {
  * hits: { index, range: [start, end] } in source offsets.
  * current: hit index that should carry is-current, or -1.
  */
-export function renderMarkdown(parent, source, { hits = [], current = -1, locale = "en", owner = null } = {}) {
+export function renderMarkdown(parent, source, { hits = [], current = -1, locale = "en", owner = null, skipAlts = null } = {}) {
   const blocks = cachedMarkdown(owner, String(source ?? ""));
-  renderBlocks(parent, blocks, hits, current, locale);
+  const previous = skipAltBag;
+  skipAltBag = skipAlts instanceof Map ? skipAlts : null;
+  try {
+    renderBlocks(parent, blocks, hits, current, locale);
+  } finally {
+    skipAltBag = previous;
+  }
 }
 
 function renderBlocks(parent, blocks, hits, current, locale) {
@@ -209,11 +288,12 @@ function renderLink(parent, node, hits, current, locale) {
 }
 
 function renderImage(parent, node, hits, current, locale) {
+  const alt = imageAlt(node);
+  if (takeSkip(alt)) return;
   const doc = parent.ownerDocument;
   const el = doc.createElement("span");
   el.className = "md-image";
   const label = text(locale, "imageLabel");
-  const alt = imageAlt(node);
   el.append(doc.createTextNode(alt ? `[${label}: ` : `[${label}] `));
   if (alt) {
     renderInline(el, node.children, hits, current, locale);

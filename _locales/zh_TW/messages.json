@@ -334,5 +334,8 @@
   },
   "imageUncached": {
     "message": "圖片未快取（原網站限制）"
+  },
+  "imageOversized": {
+    "message": "圖片未快取（檔案過大）"
   }
 }

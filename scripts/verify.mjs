@@ -181,6 +181,15 @@ for (const rel of [
   }
   if (/crossOrigin/.test(src)) fail(`${rel} must not set crossOrigin`);
 }
+if (/status:\s*["']omit["']|status === ["']omit["']/.test(read("content/images.js"))) {
+  fail("an oversized image must be kept as a placeholder, not dropped");
+}
+if (!/oversized/.test(read("content/images.js")) || !/oversized/.test(read("src/image-cache.js"))) {
+  fail("oversized images need their own stored status");
+}
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("content/images.js") + read("src/image-cache.js"))) {
+  fail("image cache must not assign HTML");
+}
 for (const rel of [
   "background.js",
   "content/chatgpt.js",

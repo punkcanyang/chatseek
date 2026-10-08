@@ -32,8 +32,9 @@ function asBytes(value) {
 }
 
 /**
- * A stored row. `cached` keeps the encoded bytes. `uncached` keeps prompt and
- * alt only. Anything else (still over the size cap, not loaded) is dropped.
+ * A stored row. `cached` keeps the encoded bytes. `uncached` (the site tainted
+ * the canvas) and `oversized` (still over the byte cap after recompressing)
+ * keep prompt and alt only, so the reader can show a placeholder.
  * url / src / href on the input are ignored.
  */
 export function normalizeImageRecord(conversationId, raw) {
@@ -56,8 +57,8 @@ export function normalizeImageRecord(conversationId, raw) {
     prompt,
     offset,
   };
-  if (raw.status === "uncached") {
-    return { ...base, status: "uncached", bytes: 0, mime: "", width: 0, height: 0 };
+  if (raw.status === "uncached" || raw.status === "oversized") {
+    return { ...base, status: raw.status, bytes: 0, mime: "", width: 0, height: 0 };
   }
   if (raw.status !== "cached") return null;
   const view = asBytes(raw.bytes ?? raw.blob);

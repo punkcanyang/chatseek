@@ -236,6 +236,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const images = Array.isArray(msg.images) ? msg.images.slice(0, 4) : [];
     saveImageRecords(conversationId, images)
       .then((result) => {
+        if (result?.quota) {
+          sendResponse({ ok: false, error: "quota" });
+          return;
+        }
         if (result?.saved) notifyImagesLater();
         sendResponse({ ok: true, saved: result?.saved || 0 });
       })
