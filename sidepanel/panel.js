@@ -4,11 +4,31 @@ import {
   clearAll,
   readCaptureHealth,
 } from "../src/db.js";
-import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
+import { formatActivityLabel, formatHealthEntries, labelLocale } from "../src/activity-time.js";
 
-const zh = (navigator.language || "").toLowerCase().startsWith("zh");
+const locale = labelLocale(navigator.language);
 
-const t = zh
+const t = locale === "zh-Hant"
+  ? {
+      tag: "只留在這台瀏覽器裡",
+      search: "搜尋標題和訊息全文",
+      placeholder: "搜尋對話…",
+      all: "全部",
+      empty:
+        "還沒有收錄任何對話。打開 ChatGPT、Claude 或 Grok 分頁並瀏覽對話列表或進入對話後，標題和可見訊息會寫入本機索引。",
+      none: "沒有符合的對話。",
+      loading: "正在搜尋…",
+      booting: "正在讀取本機索引…",
+      hint: "只收錄你目前打開的 ChatGPT / Claude / Grok 分頁裡已經出現在頁面上的對話，不會掃描磁碟或上傳內容。剛更新擴充功能後請重新整理對話頁；某一頁收不到訊息時，底部會提示。",
+      counts: (c, m) => `${c} 則對話 · ${m} 則訊息`,
+      clear: "清除本機索引",
+      confirm: "刪除本機 IndexedDB 中的全部對話和訊息？此操作無法復原。",
+      error: "無法讀取本機索引。",
+      chatgpt: "ChatGPT",
+      claude: "Claude",
+      grok: "Grok",
+    }
+  : locale === "zh-Hans"
   ? {
       tag: "只留在这台浏览器里",
       search: "搜索标题和消息全文",
@@ -19,7 +39,7 @@ const t = zh
       none: "没有匹配的对话。",
       loading: "正在搜索…",
       booting: "正在读取本地索引…",
-      hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请重新整理对话页；某一页收不到消息时，底部会提示。",
+      hint: "只收录你当前打开的 ChatGPT / Claude / Grok 标签页里已经出现在页面上的对话，不会扫描磁盘或上传内容。刚更新扩展后请刷新对话页；某一页收不到消息时，底部会提示。",
       counts: (c, m) => `${c} 条对话 · ${m} 条消息`,
       clear: "清除本地索引",
       confirm: "删除本机 IndexedDB 中的全部对话和消息？此操作不可恢复。",
@@ -60,6 +80,7 @@ const healthEl = document.getElementById("health");
 const searchLabel = document.getElementById("searchLabel");
 const filterAll = document.getElementById("filterAll");
 
+document.documentElement.lang = locale === "zh-Hant" ? "zh-TW" : locale === "zh-Hans" ? "zh-CN" : "en";
 tagEl.textContent = t.tag;
 qEl.placeholder = t.placeholder;
 searchLabel.textContent = t.search;
@@ -67,7 +88,6 @@ hintEl.textContent = t.hint;
 clearBtn.textContent = t.clear;
 filterAll.textContent = t.all;
 
-const locale = zh ? "zh" : "en";
 let platform = "";
 let searchTimer = 0;
 let requestSeq = 0;

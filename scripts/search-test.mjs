@@ -386,8 +386,8 @@ assert(bot.updatedAtSource === "sidebar-rank", "older sidebar neighbor should be
 assert(top.updatedAt > mid.updatedAt && top.updatedAt <= Date.now(), "estimate should sit between now and the anchor");
 assert(bot.updatedAt < mid.updatedAt, "lower sidebar rank should sort older");
 assert(mid.updatedAt === anchorAt && mid.updatedAtSource === "page-exact", "anchor time must stay exact");
-const approx = formatActivityLabel(top, Date.now(), "zh");
-const exactLabel = formatActivityLabel(mid, Date.now(), "zh");
+const approx = formatActivityLabel(top, Date.now(), "zh-TW");
+const exactLabel = formatActivityLabel(mid, Date.now(), "zh-TW");
 assert(approx.text.startsWith("約 "), `estimated time should be marked 約, got ${approx.text}`);
 assert(!exactLabel.text.includes("約"), "exact time should not be marked 約");
 assert(approx.title.includes("側欄順序"), "approx tooltip should name the sidebar estimate");
@@ -403,12 +403,33 @@ const unknownB = await readConv(unknownOld);
 assert(unknownA.updatedAtSource === "first-seen" && unknownB.updatedAtSource === "first-seen", "no anchors means first-seen");
 assert(unknownA.updatedAt > unknownB.updatedAt, "unknown rows should keep sidebar order");
 assert(unknownA.updatedAt < Date.UTC(2021, 0, 1), "unknown sort keys must not look like recent activity");
-const unknownLabel = formatActivityLabel(unknownA, Date.now(), "zh");
+const unknownLabel = formatActivityLabel(unknownA, Date.now(), "zh-TW");
 assert(
   unknownLabel.text.startsWith("日期未知（收錄於 "),
   `unknown date label drifted: ${unknownLabel.text}`,
 );
 assert(!unknownLabel.text.includes("約"), "unknown date must not look estimated");
+
+const approxHans = formatActivityLabel(top, Date.now(), "zh-CN");
+const unknownHans = formatActivityLabel(unknownA, Date.now(), "zh-CN");
+assert(approxHans.text.startsWith("约 "), `Simplified estimate should read 约, got ${approxHans.text}`);
+assert(unknownHans.text.startsWith("日期未知（收录于 "), `Simplified unknown label drifted: ${unknownHans.text}`);
+for (const [label, foreign] of [
+  [approx.text + approx.title, /[约钟时侧栏顺录]/],
+  [approxHans.text + approxHans.title, /[約鐘時側欄順錄]/],
+]) {
+  assert(!foreign.test(label), `label mixes Simplified and Traditional: ${label}`);
+}
+const lastYear = new Date(new Date().getFullYear() - 1, 5, 10, 9, 30).getTime();
+const oldUnknown = formatActivityLabel(
+  { updatedAtSource: "first-seen", updatedAt: lastYear, firstSeenAt: lastYear },
+  Date.now(),
+  "zh-TW",
+);
+assert(
+  oldUnknown.text.includes(`${new Date(lastYear).getFullYear()}/06/10`),
+  `a saved stamp from another year needs the year: ${oldUnknown.text}`,
+);
 
 const longSidebar = [];
 for (let i = 0; i < 60; i++) {
@@ -447,7 +468,7 @@ await saveCaptureHealth("claude", {
 const health = await readCaptureHealth();
 assert(health.chatgpt?.warn === true, "health warning should persist");
 assert(health.claude?.messageCount === 3, "health counts should persist");
-const healthLines = formatHealthEntries(health, Date.now(), "zh");
+const healthLines = formatHealthEntries(health, Date.now(), "zh-TW");
 assert(
   healthLines.some((line) => line.platform === "chatgpt" && line.warn && line.text.includes("頁面可能改版")),
   "side panel should show the redesign hint",
@@ -455,6 +476,12 @@ assert(
 assert(
   healthLines.some((line) => line.platform === "claude" && line.text.includes("最後收錄") && line.text.includes("3 則訊息")),
   "side panel should show the last capture line",
+);
+const healthHans = formatHealthEntries(health, Date.now(), "zh-CN");
+assert(
+  healthHans.some((line) => line.platform === "chatgpt" && line.text.includes("页面可能改版，请回报")) &&
+    healthHans.some((line) => line.platform === "claude" && line.text.includes("最后收录") && line.text.includes("3 则消息")),
+  `Simplified health lines drifted: ${healthHans.map((line) => line.text).join(" | ")}`,
 );
 
 console.log("search-test ok", {

@@ -239,9 +239,10 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 
-function formatClock(ts) {
+function formatClock(ts, now) {
   const d = new Date(ts);
-  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const day = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.getFullYear() === new Date(now).getFullYear() ? day : `${d.getFullYear()}/${day}`;
 }
 
 function formatAbsolute(ts) {
@@ -254,28 +255,94 @@ function formatHm(ts) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function relativeLabel(ts, now, zh) {
-  if (!isValidPageMs(ts)) return zh ? "无日期" : "no date";
+/**
+ * zh-Hant carries the owner's strings verbatim: 「約」 and 「日期未知（收錄於 …）」.
+ * zh-Hans matches the rest of the Simplified side panel so one label never mixes scripts.
+ */
+const STRINGS = {
+  en: {
+    noDate: "no date",
+    justNow: "just now",
+    minutes: (n) => `${n}m ago`,
+    hours: (n) => `${n}h ago`,
+    days: (n) => `${n}d ago`,
+    approx: (when) => `~ ${when}`,
+    unknown: "Unknown date",
+    unknownSaved: (stamp) => `Unknown date (saved ${stamp})`,
+    saved: (stamp) => `Saved ${stamp}`,
+    fromGroup: "Estimated from the sidebar group",
+    fromOrder: "Estimated from sidebar order",
+    temporary: (name) => `${name}: temporary chats are not saved`,
+    warn: (name, hhmm) => `${name} page may have changed — please report (last capture ${hhmm}, 0 messages)`,
+    thread: (name, hhmm, n) => `${name}: last capture ${hhmm}, ${n} messages`,
+    sidebar: (name, hhmm, n) => `${name}: last capture ${hhmm}, ${n} sidebar chats`,
+  },
+  "zh-Hant": {
+    noDate: "無日期",
+    justNow: "剛剛",
+    minutes: (n) => `${n} 分鐘前`,
+    hours: (n) => `${n} 小時前`,
+    days: (n) => `${n} 天前`,
+    approx: (when) => `約 ${when}`,
+    unknown: "日期未知",
+    unknownSaved: (stamp) => `日期未知（收錄於 ${stamp}）`,
+    saved: (stamp) => `收錄於 ${stamp}`,
+    fromGroup: "推估：依側欄分組",
+    fromOrder: "推估：依側欄順序",
+    temporary: (name) => `${name} 臨時聊天不會收錄`,
+    warn: (name, hhmm) => `${name} 頁面可能改版，請回報（最後收錄 ${hhmm}，0 則訊息）`,
+    thread: (name, hhmm, n) => `${name}：最後收錄 ${hhmm}，${n} 則訊息`,
+    sidebar: (name, hhmm, n) => `${name}：最後收錄 ${hhmm}，側欄 ${n} 條`,
+  },
+  "zh-Hans": {
+    noDate: "无日期",
+    justNow: "刚刚",
+    minutes: (n) => `${n} 分钟前`,
+    hours: (n) => `${n} 小时前`,
+    days: (n) => `${n} 天前`,
+    approx: (when) => `约 ${when}`,
+    unknown: "日期未知",
+    unknownSaved: (stamp) => `日期未知（收录于 ${stamp}）`,
+    saved: (stamp) => `收录于 ${stamp}`,
+    fromGroup: "推估：按侧栏分组",
+    fromOrder: "推估：按侧栏顺序",
+    temporary: (name) => `${name} 临时聊天不会收录`,
+    warn: (name, hhmm) => `${name} 页面可能改版，请回报（最后收录 ${hhmm}，0 则消息）`,
+    thread: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，${n} 则消息`,
+    sidebar: (name, hhmm, n) => `${name}：最后收录 ${hhmm}，侧栏 ${n} 条`,
+  },
+};
+
+/** "zh-TW" / "zh-HK" / "zh-MO" / "zh-Hant-*" → zh-Hant; any other zh → zh-Hans. */
+export function labelLocale(locale) {
+  const tag = String(locale || "").toLowerCase();
+  if (!tag.startsWith("zh")) return "en";
+  return /^zh(?:-hant|-tw|-hk|-mo)(?:-|$)/.test(tag) ? "zh-Hant" : "zh-Hans";
+}
+
+function stringsFor(locale) {
+  return STRINGS[labelLocale(locale)];
+}
+
+function relativeLabel(ts, now, s) {
+  if (!isValidPageMs(ts)) return s.noDate;
   const delta = now - ts;
   const m = Math.floor(delta / 60000);
-  if (m < 1) return zh ? "刚刚" : "just now";
-  if (m < 60) return zh ? `${m} 分钟前` : `${m}m ago`;
+  if (m < 1) return s.justNow;
+  if (m < 60) return s.minutes(m);
   const h = Math.floor(m / 60);
-  if (h < 48) return zh ? `${h} 小时前` : `${h}h ago`;
+  if (h < 48) return s.hours(h);
   const days = Math.floor(h / 24);
   if (days >= 7) {
     const d = new Date(ts);
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
-  return zh ? `${days} 天前` : `${days}d ago`;
+  return s.days(days);
 }
 
-/**
- * Side-panel label. zh uses the owner's strings: 「約」 and 「日期未知（收錄於 …）」.
- * page-exact and observed render as a normal last-activity time.
- */
+/** Side-panel label. page-exact and observed render as a normal last-activity time. */
 export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
-  const zh = String(locale || "").toLowerCase().startsWith("zh");
+  const s = stringsFor(locale);
   const source = conv?.updatedAtSource || "legacy";
   const saved = isValidPageMs(conv?.firstSeenAt)
     ? conv.firstSeenAt
@@ -286,26 +353,22 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
         : null;
 
   if (source === "first-seen" || source === "legacy" || !conv?.updatedAtSource) {
-    const stamp = saved ? formatClock(saved) : "";
-    const text = zh
-      ? (stamp ? `日期未知（收錄於 ${stamp}）` : "日期未知")
-      : stamp
-        ? `Unknown date (saved ${stamp})`
-        : "Unknown date";
-    const title = zh
-      ? (stamp ? `收錄於 ${stamp}` : "日期未知")
-      : (stamp ? `Saved ${stamp}` : "Unknown date");
-    return { text, title, source, approx: false, unknown: true };
+    const stamp = saved ? formatClock(saved, now) : "";
+    return {
+      text: stamp ? s.unknownSaved(stamp) : s.unknown,
+      title: stamp ? s.saved(stamp) : s.unknown,
+      source,
+      approx: false,
+      unknown: true,
+    };
   }
 
-  const when = relativeLabel(conv.updatedAt, now, zh);
+  const when = relativeLabel(conv.updatedAt, now, s);
   if (source === "page-bucket" || source === "sidebar-rank") {
-    const why = source === "page-bucket"
-      ? (zh ? "推估：依側欄分組" : "Estimated from the sidebar group")
-      : (zh ? "推估：依側欄順序" : "Estimated from sidebar order");
+    const why = source === "page-bucket" ? s.fromGroup : s.fromOrder;
     const absolute = isValidPageMs(conv.updatedAt) ? formatAbsolute(conv.updatedAt) : "";
     return {
-      text: zh ? `約 ${when}` : `~ ${when}`,
+      text: s.approx(when),
       title: absolute ? `${why} · ${absolute}` : why,
       source,
       approx: true,
@@ -334,7 +397,7 @@ export function healthHasWarning(byPlatform) {
 
 /** One footer line per platform that has reported. Unknown ids still get a line. */
 export function formatHealthEntries(byPlatform, now = Date.now(), locale = "en") {
-  const zh = String(locale || "").toLowerCase().startsWith("zh");
+  const s = stringsFor(locale);
   const lines = [];
   for (const [platform, row] of Object.entries(byPlatform || {})) {
     if (!row || typeof row !== "object") continue;
@@ -343,23 +406,10 @@ export function formatHealthEntries(byPlatform, now = Date.now(), locale = "en")
     const count = Number(row.messageCount) || 0;
     const sidebarCount = Number(row.sidebarCount) || 0;
     let text;
-    if (row.pathKind === "temporary") {
-      text = zh
-        ? `${name} 臨時聊天不會收錄`
-        : `${name}: temporary chats are not saved`;
-    } else if (row.warn) {
-      text = zh
-        ? `${name} 頁面可能改版，請回報（最後收錄 ${hhmm}，0 則訊息）`
-        : `${name} page may have changed — please report (last capture ${hhmm}, 0 messages)`;
-    } else if (row.pathKind === "conversation") {
-      text = zh
-        ? `${name}：最後收錄 ${hhmm}，${count} 則訊息`
-        : `${name}: last capture ${hhmm}, ${count} messages`;
-    } else {
-      text = zh
-        ? `${name}：最後收錄 ${hhmm}，側欄 ${sidebarCount} 條`
-        : `${name}: last capture ${hhmm}, ${sidebarCount} sidebar chats`;
-    }
+    if (row.pathKind === "temporary") text = s.temporary(name);
+    else if (row.warn) text = s.warn(name, hhmm);
+    else if (row.pathKind === "conversation") text = s.thread(name, hhmm, count);
+    else text = s.sidebar(name, hhmm, sidebarCount);
     lines.push({ platform, text, warn: !!row.warn });
   }
   return lines;
