@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "Imagen no guardada en caché (el archivo es demasiado grande)"
+  },
+  "copyDiag": {
+    "message": "Copiar diagnóstico"
+  },
+  "copyDiagDone": {
+    "message": "Diagnóstico copiado"
+  },
+  "copyDiagManual": {
+    "message": "No se pudo escribir en el portapapeles. Selecciona el texto de abajo y cópialo."
+  },
+  "copyDiagEmpty": {
+    "message": "Aún no hay diagnóstico. Abre una conversación y actualiza la página."
   }
 }

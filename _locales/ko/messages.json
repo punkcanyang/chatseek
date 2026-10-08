@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "이미지를 캐시하지 못했습니다(파일이 너무 큼)"
+  },
+  "copyDiag": {
+    "message": "진단 복사"
+  },
+  "copyDiagDone": {
+    "message": "진단을 복사했습니다"
+  },
+  "copyDiagManual": {
+    "message": "클립보드에 쓸 수 없습니다. 아래 텍스트를 선택해 복사하세요."
+  },
+  "copyDiagEmpty": {
+    "message": "아직 진단이 없습니다. 대화를 연 뒤 페이지를 새로고침하세요."
   }
 }

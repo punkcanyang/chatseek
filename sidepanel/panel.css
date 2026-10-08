@@ -544,6 +544,25 @@ body {
   margin: 0 0 8px;
 }
 
+.diag-box[hidden] {
+  display: none;
+}
+
+.diag-box {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88px;
+  margin: 6px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
+
 .health-warn {
   margin: 0 0 6px;
   color: #8a3d32;

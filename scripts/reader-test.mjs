@@ -416,6 +416,26 @@ await new Promise((resolve) => setTimeout(resolve, 5));
 await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second, streamed longer" }], { captureId: "stream" });
 const m2After = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
 assert(m2After.body === "second, streamed longer", "streamed body is saved");
+await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second" }], {
+  pageMessageIds: [`${id}:m2`],
+  captureId: "partial-paint",
+});
+const m2Kept = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
+assert(m2Kept.body === "second, streamed longer", "a shorter prefix must not replace the stored turn");
+await upsertMessages(conv, [{ id: `${id}:frag`, role: "assistant", body: "second, streamed" }], {
+  pageMessageIds: [`${id}:frag`],
+  captureId: "fragment",
+});
+const frag = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:frag`));
+assert(!frag, "a partial new id must not sit beside the full turn");
+await upsertMessages(conv, [
+  { id: `${id}:m1`, role: "user", body: "first" },
+  { id: `${id}:m2`, role: "assistant", body: "edited shorter" },
+  { id: `${id}:m3`, role: "user", body: "third" },
+  { id: `${id}:m4`, role: "assistant", body: "fourth" },
+], { pageMessageIds: [`${id}:m1`, `${id}:m2`, `${id}:m3`, `${id}:m4`], captureId: "edit" });
+const m2Edited = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
+assert(m2Edited.body === "edited shorter", "a real shorter edit still replaces the turn");
 assert(m2After.capturedAt === m2Before.capturedAt && m2After.captureIndex === 1, "a body rewrite keeps the turn's place");
 const reread = await readConversation(id);
 assert(reread.messages.map((msg) => msg.id.split(":").pop()).join() === "m1,m2,m3,m4", "order holds after a rewrite");
@@ -424,6 +444,23 @@ const convRow = await requestDone(db.transaction("conversations").objectStore("c
 assert(!("messageOrder" in convRow), "page order is not carried on the conversation row that list and search scan");
 const orderRow = await requestDone(db.transaction("meta").objectStore("meta").get(`order:${id}`));
 assert(orderRow?.ids?.length === 4, `page order lives in meta ${JSON.stringify(orderRow)}`);
+
+const imageBody = "maple tea\n\n![maple tea](https://cdn.example/maple.png)\n\nstill maple";
+const imageMount = mount({
+  conversation: {
+    id: "chatgpt:img",
+    platform: "chatgpt",
+    title: "pics",
+    url: "https://chatgpt.com/c/pics",
+    updatedAt: Date.now(),
+    updatedAtSource: "page-exact",
+  },
+  messages: [{ id: "img1", role: "assistant", body: imageBody }],
+  images: new Map([["img1", [{ index: 0, alt: "maple tea", offset: imageBody.indexOf("!["), status: "site" }]]]),
+  query: "maple",
+});
+const paintedHits = new Set([...imageMount.host.querySelectorAll("mark[data-hit]")].map((el) => el.dataset.hit)).size;
+assert(imageMount.view.hitCount() === paintedHits, `hit count ${imageMount.view.hitCount()} != painted ${paintedHits}`);
 await saveCaptureHealth("chatgpt", { at: Date.now(), pathKind: "conversation", messageCount: 4 });
 const health = await readCaptureHealth();
 assert(Object.keys(health).join() === "chatgpt" && health.chatgpt.messageCount === 4, `health ignores order rows ${JSON.stringify(health)}`);

@@ -15,6 +15,8 @@
 
   const queue = [];
   const done = new Map();
+  const counted = new Set();
+  const outcomes = { conversationId: "", cached: 0, placeholder: 0 };
   const waiting = new WeakSet();
   // An <img> node belongs to the first message that claimed it.
   const ownerOf = new WeakMap();
@@ -371,12 +373,27 @@
       if (encoded.status === "pending") continue;
       const status = storedStatus(encoded);
       if (!status) continue;
+      if (outcomes.conversationId !== job.conversationId) {
+        outcomes.conversationId = job.conversationId;
+        outcomes.cached = 0;
+        outcomes.placeholder = 0;
+      }
+      const countKey = `${job.conversationId}:${key}`;
+      if (!counted.has(countKey)) {
+        counted.add(countKey);
+        if (status === "cached") outcomes.cached += 1;
+        else outcomes.placeholder += 1;
+        try { Chatseek.refreshImageDiag(); } catch { /* diag must not break images */ }
+      }
+      const preset = job.offsets && typeof job.offsets.get === "function" && job.offsets.has(img)
+        ? job.offsets.get(img)
+        : null;
       const record = {
         messageId: job.messageId,
         index,
         alt: clip(img.getAttribute?.("alt"), 500),
         prompt: clip(job.prompt, 1000),
-        offset: imageTextOffset(job.el, img, job.body),
+        offset: Number.isFinite(preset) ? preset : imageTextOffset(job.el, img, job.body),
         status,
         mime: encoded.mime || "",
         width: encoded.width || 0,
@@ -463,7 +480,15 @@
     setTimeout(step, 0);
   }
 
-  function scheduleMessageImages({ conversationId, items } = {}) {
+  function scheduleMessageImages(job) {
+    try {
+      scheduleMessageImagesInner(job);
+    } catch (err) {
+      try { Chatseek.rememberError(err); } catch { /* image failures stay off the text path */ }
+    }
+  }
+
+  function scheduleMessageImagesInner({ conversationId, items } = {}) {
     if (!conversationId || !items?.length) return;
     const prompts = new Map();
     let lastUser = "";
@@ -487,12 +512,17 @@
         role: item.role || "",
         el: item.el,
         body: String(item.body || ""),
+        offsets: item.offsets || null,
         prompt: prompts.get(item.messageId) || "",
       });
     }
     pump();
   }
 
+  Chatseek.imageDiagCounts = () => ({
+    cached: outcomes.cached,
+    placeholder: outcomes.placeholder,
+  });
   Chatseek.collectContentImages = collectContentImages;
   Chatseek.encodeContentImage = encodeContentImage;
   Chatseek.imageTextOffset = imageTextOffset;

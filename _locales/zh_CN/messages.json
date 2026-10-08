@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "图片未缓存（文件过大）"
+  },
+  "copyDiag": {
+    "message": "复制诊断"
+  },
+  "copyDiagDone": {
+    "message": "诊断已复制"
+  },
+  "copyDiagManual": {
+    "message": "无法写入剪贴板，请从下方文本框复制。"
+  },
+  "copyDiagEmpty": {
+    "message": "还没有诊断。请先打开一段对话并刷新页面。"
   }
 }

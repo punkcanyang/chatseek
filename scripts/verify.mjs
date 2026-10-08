@@ -85,7 +85,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.0") fail(`version should be 1.6.0, got ${manifest.version}`);
+if (manifest.version !== "1.6.1") fail(`version should be 1.6.1, got ${manifest.version}`);
 if ((manifest.permissions || []).includes("unlimitedStorage")) {
   fail("unlimitedStorage is not allowed");
 }
@@ -694,6 +694,166 @@ if (!/gemini:\s*\[/.test(backgroundSrc) || !/knownPlatform/.test(backgroundSrc))
 }
 if (!/FOCUS_ORIGINAL/.test(backgroundSrc) || !/FOCUS_READER/.test(backgroundSrc) || !/getContexts/.test(backgroundSrc)) {
   fail("background should reuse an open conversation tab before creating one");
+}
+
+for (const rel of [
+  "content/chatgpt.js",
+  "content/claude.js",
+  "content/grok.js",
+  "content/gemini.js",
+  "content/shared.js",
+  "content/images.js",
+]) {
+  if (/innerHTML|insertAdjacentHTML|outerHTML|\beval\s*\(/.test(read(rel))) {
+    fail(`${rel} must not use innerHTML or eval`);
+  }
+}
+for (const rel of ["content/chatgpt.js", "content/claude.js", "content/grok.js", "content/gemini.js"]) {
+  const src = read(rel);
+  const captureAt = src.search(/Chatseek\.runCapture/);
+  const imageAt = src.lastIndexOf("safeScheduleImages");
+  if (captureAt < 0 || imageAt < 0 || imageAt < captureAt) {
+    fail(`${rel} must store text before scheduling images`);
+  }
+}
+if (!/safeScheduleImages = \(job\) => \{\s*try \{/.test(read("content/shared.js"))) {
+  fail("image scheduling must catch errors so text capture still finishes");
+}
+const { indexPlain } = await import("../src/markdown.js");
+const indexed = indexPlain("**bold** word\n\n# Title\n\n[lab](https://example.com/zz-secret)");
+if (/[*#]|zz-secret|example\.com/.test(indexed) || !indexed.includes("bold") || !indexed.includes("Title") || !indexed.includes("lab")) {
+  fail(`search text kept markup or a link url: ${indexed}`);
+}
+const indexedImage = indexPlain("see ![maple tea](https://cdn.example/maple.png) today");
+if (/cdn\.example|maple\.png/.test(indexedImage) || !indexedImage.includes("maple tea")) {
+  fail(`search text kept an image url: ${indexedImage}`);
+}
+const leaked = pageTime.formatDiag({
+  version: "1.6.1",
+  platform: "chatgpt",
+  pathKind: "conversation",
+  selector: "[data-turn]",
+  selectorHits: { "[data-turn]": 2, "[data-message-author-role]": 0 },
+  userCount: 1,
+  assistantCount: 1,
+  charCount: 40,
+  imagesCached: 0,
+  imagesPlaceholder: 1,
+  healthState: "warn",
+  errorName: "TypeError",
+  errorStack: "at capture (chatgpt.js:1:1)",
+  at: Date.UTC(2026, 9, 8, 12, 0, 0),
+  title: "SECRET TITLE",
+  body: "SECRET BODY zebrafox",
+  prompt: "SECRET PROMPT",
+  alt: "SECRET ALT",
+  url: "https://chatgpt.com/c/11111111-1111-4111-8111-111111111111",
+});
+if (!leaked.startsWith("[Chatseek] diag ")) fail(`diag prefix missing: ${leaked}`);
+if (/SECRET|zebrafox|11111111|chatgpt\.com\/c/.test(leaked)) fail(`diag leaked content: ${leaked}`);
+if (!/user=1/.test(leaked) || !/assistant=1/.test(leaked) || !/imgHold=1/.test(leaked) || !/path=conversation/.test(leaked)) {
+  fail(`diag missing counts: ${leaked}`);
+}
+pageTime.scheduleMessageImages = () => {
+  throw new Error("boom SECRET BODY");
+};
+let imageThrew = false;
+try {
+  pageTime.safeScheduleImages({ conversationId: "chatgpt:x", items: [{ messageId: "m" }] });
+} catch {
+  imageThrew = true;
+}
+if (imageThrew) fail("image scheduling must not throw into text capture");
+const afterImage = pageTime.formatDiag(pageTime.diagFields({
+  platform: "chatgpt",
+  pathKind: "conversation",
+  healthState: "ok",
+}));
+if (/SECRET/.test(afterImage)) fail(`diag included the image error text: ${afterImage}`);
+if (!/err=Error/.test(afterImage)) fail(`diag should keep the error name: ${afterImage}`);
+const dirtyStack = pageTime.formatDiag({
+  version: "1.6.1",
+  platform: "chatgpt",
+  pathKind: "conversation",
+  errorName: "SECRET BODY zebrafox",
+  errorStack: "at capture (chatgpt.js:1:1) SECRET BODY zebrafox https://chatgpt.com/c/11111111-1111-4111-8111-111111111111",
+  at: Date.UTC(2026, 9, 8, 12, 0, 0),
+});
+if (/SECRET|zebrafox|11111111|chatgpt\.com/.test(dirtyStack)) fail(`diag stack leaked: ${dirtyStack}`);
+const shellHealth = {
+  pathKind: "conversation",
+  selector: "[data-message-author-role]",
+  selectorsTried: ["[data-message-author-role]", "[data-turn]"],
+  selectorHits: { "[data-message-author-role]": 2, "[data-turn]": 2 },
+  userCount: 0,
+  assistantCount: 0,
+  charCount: 0,
+};
+const shellState = { lastListFp: "", lastMsgFp: "" };
+sent.length = 0;
+healthWarns.length = 0;
+await pageTime.runCapture(shellState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("shell"),
+  messages: [],
+  health: shellHealth,
+});
+if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
+  fail("selector shells during the grace period are still loading and must not warn");
+}
+shellState.zeroSince -= pageTime.HEALTH_GRACE_MS;
+await pageTime.runCapture(shellState, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("shell"),
+  messages: [],
+  health: shellHealth,
+});
+if (!healthSent().some((p) => p.health.warn && p.health.messageCount === 0 && String(p.health.diag || "").startsWith("[Chatseek] diag "))) {
+  fail("a title-only thread whose selectors matched shells must warn and store a diag line");
+}
+if (healthSent().some((p) => /SECRET|zebrafox/.test(JSON.stringify(p.health)))) {
+  fail("stored health diag must not carry message text");
+}
+const fresh = { lastListFp: "", lastMsgFp: "" };
+sent.length = 0;
+healthWarns.length = 0;
+await pageTime.runCapture(fresh, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("new"),
+  messages: [],
+  health: {
+    pathKind: "conversation",
+    selector: "none",
+    selectorsTried: ["[data-message-author-role]"],
+    selectorHits: { "[data-message-author-role]": 0 },
+    untitled: true,
+    userCount: 0,
+    assistantCount: 0,
+    charCount: 0,
+  },
+});
+fresh.zeroSince -= pageTime.HEALTH_GRACE_MS;
+await pageTime.runCapture(fresh, {
+  platform: "chatgpt",
+  sidebar: [],
+  conversation: conv("new"),
+  messages: [],
+  health: {
+    pathKind: "conversation",
+    selector: "none",
+    selectorsTried: ["[data-message-author-role]"],
+    selectorHits: { "[data-message-author-role]": 0 },
+    untitled: true,
+    userCount: 0,
+    assistantCount: 0,
+    charCount: 0,
+  },
+});
+if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
+  fail("a new chat with a generic title and no message nodes must not warn");
 }
 
 if (errors.length) {

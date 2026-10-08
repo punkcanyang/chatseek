@@ -337,5 +337,17 @@
   },
   "imageOversized": {
     "message": "Imagem não armazenada em cache (arquivo grande demais)"
+  },
+  "copyDiag": {
+    "message": "Copiar diagnóstico"
+  },
+  "copyDiagDone": {
+    "message": "Diagnóstico copiado"
+  },
+  "copyDiagManual": {
+    "message": "Não foi possível gravar na área de transferência. Selecione o texto abaixo."
+  },
+  "copyDiagEmpty": {
+    "message": "Ainda não há diagnóstico. Abra uma conversa e atualize a página."
   }
 }

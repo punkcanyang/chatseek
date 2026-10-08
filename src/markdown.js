@@ -121,6 +121,27 @@ export function visibleRanges(blocks) {
   return merged;
 }
 
+/**
+ * Text the search index and hit math should see. Markers and link
+ * destinations are not tokens, so `**`, `#`, and a URL do not add hits.
+ * Plain prose is returned as-is and is not parsed.
+ */
+export function indexPlain(body) {
+  const raw = String(body ?? "");
+  if (!raw) return "";
+  if (!/[*_`#|[\]>]|https?:\/\//i.test(raw)) return raw;
+  try {
+    const plain = markdownToPlain(raw);
+    if (!plain) return raw;
+    // Link and image destinations stay out of the index. A cached thumbnail
+    // replaces the markdown image, so a URL token would be a hit the reader
+    // does not paint.
+    return plain.replace(/https?:\/\/\S+/gi, " ").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim();
+  } catch {
+    return raw;
+  }
+}
+
 /** Readable text for previews. Link destinations are dropped; markers are not shown. */
 export function markdownToPlain(source) {
   return blocksToPlain(parseMarkdown(source))
