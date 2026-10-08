@@ -418,7 +418,6 @@
       title: titleFromDoc(root) || fromSidebar?.title || platformId,
       url: storedUrl(parsed, here),
     };
-    if (fromSidebar?.sidebarIndex != null) conversation.sidebarIndex = fromSidebar.sidebarIndex;
     Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes(root));
     const header = openThreadTimeNode(root);
     if (header) Chatseek.attachPageTime(conversation, header, jsonTimes(root));

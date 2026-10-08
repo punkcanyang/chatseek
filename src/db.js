@@ -229,8 +229,11 @@ async function writeConversations(db, list) {
 
 export async function upsertMessages(conversation, messages, meta = {}) {
   if (!conversation?.id || !messages?.length) return;
-  await upsertConversations([conversation]);
-  return withDb((db) => writeMessages(db, conversation, messages, meta));
+  // A one-row batch has no neighbours. Interpolating it alone would rewrite an
+  // undated row's sidebar sort key as if it were the last row in the sidebar.
+  const { sidebarIndex: _ignored, ...row } = conversation;
+  await upsertConversations([row]);
+  return withDb((db) => writeMessages(db, row, messages, meta));
 }
 
 /**
