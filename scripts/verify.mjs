@@ -98,6 +98,10 @@ const referenced = new Set([
   "sidepanel/panel.css",
   "src/db.js",
   "src/tokenize.js",
+  "src/activity-time.js",
+  "src/preview.js",
+  "src/conversation-url.js",
+  "src/current-tab.js",
   "LICENSE",
   ...Object.values(manifest.icons || {}),
   ...Object.values(manifest.action?.default_icon || {}),
@@ -142,6 +146,10 @@ for (const rel of [
   "content/shared.js",
   "src/activity-time.js",
   "src/db.js",
+  "src/tokenize.js",
+  "src/preview.js",
+  "src/conversation-url.js",
+  "src/current-tab.js",
   "sidepanel/panel.js",
 ]) {
   const src = read(rel);
