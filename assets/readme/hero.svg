@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Chatseek：一个侧栏，搜回你在 ChatGPT、Claude、Grok、Gemini 聊过的话</title>
+  <desc id="desc">深色底上，左侧是 Chatseek 名称、用符文刻出的 CHATSEEK 字样和一句说明；右侧是 Chatseek 的符文标志，四根分枝分别标着 ChatGPT、Claude、Grok、Gemini，汇进同一根主干，主干落在「本机 IndexedDB 索引」上。</desc>
+
+  <rect x="1" y="1" width="1198" height="418" rx="24" fill="#0B1220" stroke="#22304A" stroke-width="2"/>
+
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Noto Sans CJK SC', sans-serif">
+    <text x="64" y="84" fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="18" letter-spacing="2">CHROME 扩展 · MANIFEST V3 · 资料只留本机</text>
+    <text x="60" y="168" fill="#E8EEF7" font-size="80" font-weight="700" letter-spacing="-1">Chatseek</text>
+
+    <!-- CHATSEEK carved in Elder Futhark: kaunan hagalaz ansuz tiwaz sowilo ehwaz ehwaz kaunan -->
+    <g id="rune-row" transform="translate(66 192)" fill="none" stroke="#3DDC97" stroke-width="3.5" stroke-linecap="butt" stroke-linejoin="miter" opacity="0.7">
+      <path d="M13 6 L4 14 L13 22"/>
+      <path transform="translate(28 0)" d="M3 0 V28 M14 0 V28 M3 9 L14 18"/>
+      <path transform="translate(58 0)" d="M4 0 V28 M4 2 L14 9 M4 11 L14 18"/>
+      <path transform="translate(86 0)" d="M8 0 V28 M0 9 L8 1 L16 9"/>
+      <path transform="translate(116 0)" d="M12 0 L4 10 L13 18 L5 28"/>
+      <path transform="translate(144 0)" d="M2 28 V0 L8 10 L14 0 V28"/>
+      <path transform="translate(172 0)" d="M2 28 V0 L8 10 L14 0 V28"/>
+      <path transform="translate(200 0)" d="M13 6 L4 14 L13 22"/>
+      <path d="M0 40 H222" stroke="#22304A" stroke-width="2"/>
+    </g>
+
+    <text x="64" y="290" fill="#C5D0E2" font-size="30">一个侧栏，搜回你在四家 AI 聊过的话。</text>
+    <text x="64" y="332" fill="#8B9BB4" font-size="22">只读你打开的网页，存在你自己的浏览器里。</text>
+    <text x="64" y="380" fill="#8B9BB4" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="18">v1.2.1 · MIT · 不上传 · 不代持 API Key</text>
+  </g>
+
+  <!-- Logo D: four branches, one stave, one local index -->
+  <g id="project-proof" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Noto Sans CJK SC', sans-serif">
+    <path transform="translate(756 25) scale(4.5)" d="M32 10 V58 M14 22 L32 10 L50 22 M14 38 L32 26 L50 38" fill="none" stroke="#3DDC97" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10"/>
+
+    <rect x="793" y="110" width="14" height="14" fill="#3DBA9A"/>
+    <rect x="793" y="182" width="14" height="14" fill="#E08A70"/>
+    <rect x="993" y="110" width="14" height="14" fill="#5BB8F5"/>
+    <rect x="993" y="182" width="14" height="14" fill="#B3A6FF"/>
+
+    <text x="778" y="125" text-anchor="end" fill="#E8EEF7" font-size="24" font-weight="600">ChatGPT</text>
+    <text x="778" y="197" text-anchor="end" fill="#E8EEF7" font-size="24" font-weight="600">Claude</text>
+    <text x="1022" y="125" fill="#E8EEF7" font-size="24" font-weight="600">Grok</text>
+    <text x="1022" y="197" fill="#E8EEF7" font-size="24" font-weight="600">Gemini</text>
+
+    <path d="M780 300 H1020" stroke="#22304A" stroke-width="4"/>
+    <path d="M800 312 H1000" stroke="#22304A" stroke-width="2"/>
+    <text x="900" y="350" text-anchor="middle" fill="#C5D0E2" font-size="22">本机 IndexedDB 索引</text>
+    <text x="900" y="380" text-anchor="middle" fill="#8B9BB4" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="16">四根分枝 · 一根主干</text>
+  </g>
+</svg>

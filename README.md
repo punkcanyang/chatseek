@@ -1,39 +1,110 @@
-# Chatseek
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Chatseek：一个侧栏，搜回你在 ChatGPT、Claude、Grok、Gemini 聊过的话。只读你打开的网页，资料存在你自己的浏览器里。">
+</p>
 
-<img src="docs/chatseek-logo-d.svg" alt="Chatseek" width="64" height="64" />
+<p align="center">
+  <b>Chrome 扩展：在本地搜索你打开过的 ChatGPT / Claude / Grok / Gemini 旧聊天。</b><br>
+  数据只存在你浏览器的 IndexedDB，不上传、不代持 API Key。
+</p>
 
-Chrome 扩展：在本地搜索你打开过的 ChatGPT / Claude / Grok / Gemini 旧聊天。数据只存你浏览器的 IndexedDB（倒排索引），不上传、不代持 Key。
+<p align="center">
+  <img src="./assets/readme/panel-dark.png" width="300" alt="Chatseek 侧栏深色模式：搜「索引」，命中 ChatGPT、Claude、Grok、Gemini 各一到两段对话，每条显示平台和最后活动时间">
+  &nbsp;&nbsp;
+  <img src="./assets/readme/panel-light.png" width="300" alt="Chatseek 侧栏浅色模式：同一组搜索结果">
+</p>
 
-## 安装（Load unpacked / 加载已解压的扩展程序）
+<p align="center"><sub>侧栏实际界面，跟随系统深浅色。画面里是示例数据，用来展示四家来源和四种日期写法。</sub></p>
 
-1. 打开 `chrome://extensions`
-2. 打开「开发者模式」
-3. 点「加载已解压的扩展程序」／Load unpacked
-4. 选本仓库目录
+## 它做什么
 
-点工具栏图标打开侧栏搜索。
+你在网页上打开 ChatGPT、Claude、Grok 或 Gemini 时，Chatseek 把页面上**已经显示出来**的对话标题和消息写进本机索引。之后点工具栏图标打开侧栏，输入关键词，就能跨四家一起搜标题和正文，点结果会切回（或重新打开）原来那段对话。
+
+- **四家一个框**：可以选「全部」，也可以只看 ChatGPT、Claude、Grok 或 Gemini。
+- **搜正文，不只搜标题**：英文和数字按完整词匹配（`musicmap` 能中，`music` 不会误中 `musicmap`），中文按单字和相邻双字建索引；多个词要出现在同一段对话里。
+- **按最后活动时间排**：日期尽量取对话的最后活动时间，不拿收录时间冒充，规则见下方「侧栏日期怎么读」。
+- **收不到会提示**：对话页连续约 8 秒一则消息都没读到时，侧栏底部会提示「页面可能改版」，工具栏图标出现「!」。
+- **界面语言**跟随浏览器：简体中文、繁体中文、English。
+
+## 原则：只读、不打接口、资料留本机
+
+<p align="center">
+  <img src="./assets/readme/how-it-works.svg" width="100%" alt="怎么运作：照常聊天；只读画面上已显示的标题和消息，不发网络请求；存进本机 IndexedDB 倒排索引；在侧栏搜索，点结果开回原对话">
+</p>
+
+- **只读页面**：内容脚本只读当前标签页里已经渲染出来的对话列表和消息，不挂 fetch / XHR，也不请求各家网站的内部接口（Gemini 的 `batchexecute` 也不碰）。
+- **资料留本机**：索引存在这个浏览器的 IndexedDB，扩展本身不发任何网络请求。`npm run verify` 会挡掉代码里的 `fetch(`、`sendBeacon`、`WebSocket`、`EventSource`。
+- **权限只到这几个网站**：`chatgpt.com`、`chat.openai.com`、`claude.ai`、`grok.com`、`www.grok.com`、`grok.x.com`、`x.ai`、`gemini.google.com`，外加 `sidePanel`。不要求 `<all_urls>`，不要求 API Key。
+- **不收临时聊天**：ChatGPT 网址带 `temporary-chat=true` 的临时聊天不收录。
+- **随时清空**：侧栏底部「清除本地索引」会删掉这台浏览器里 Chatseek 的全部数据，网站上的聊天不受影响。
+
+## 安装（加载已解压的扩展程序）
+
+目前还没上架 Chrome Web Store，先用开发者模式安装：
+
+1. 下载本仓库（`git clone` 或 Download ZIP 后解压）。
+2. 打开 `chrome://extensions`，打开右上角「开发者模式」。
+3. 点「加载已解压的扩展程序」（Load unpacked），选仓库目录。
+4. 把已经开着的 ChatGPT、Claude、Grok、Gemini 标签页刷新一次。
+
+需要 Chrome 116 以上（Manifest V3 + Side Panel）。更新代码后在扩展页点「重新加载」，再刷新一次网站标签页，内容脚本才会换成新版；本地索引不会因此清空。
 
 ## 怎么用
 
-1. 打开 chatgpt.com、claude.ai、grok.com / x.ai 或 gemini.google.com，浏览你要搜的聊天（索引会在打开的标签页里采集）
-2. 打开 Chatseek 侧栏，输入关键词搜索。可以用「Gemini」只看这一家
+1. 打开 chatgpt.com、claude.ai、grok.com 或 gemini.google.com，浏览对话列表，点进你想以后搜得到的对话。
+2. 点工具栏的 Chatseek 图标打开侧栏，输入关键词。
+3. 用上方的筛选只看某一家，点结果回到原对话。
 
-## 诚实限制
+很长的对话只会收已经画在页面上的消息；想多收，就在那段对话里往上滚。
 
-没打开过的标签页里的旧聊天，这版还是搜不到（open-tab limitation）。用户得去那几个网站转一圈，或以后再做「导入官方导出文件」。只读当前标签页里已经渲染出来的会话列表和消息，不挂 fetch/XHR，不要求 API Key。侧栏日期是这条对话的最后活动时间（页面上的真实会话时间优先）。没有精确时间、但同一侧栏上方有精确时间或刚观察到的活动时间时，显示「早于」那个时间的绝对日期（繁体「早於」，英文 before），不再显示「约 N 小时前」。上方没有这种时间时仍是「日期未知」，悬停可见采集时间。分组时间（Today / Previous 7 Days）显示「约 YYYY-MM-DD」，只到日期，也不会被当成「早于」的锚点。分组时间不会盖掉已经拿到的精确时间。四家平台共用这一套，Gemini 不另写日期。
+## 侧栏日期怎么读
+
+日期表示**这段对话的最后活动时间**。拿不到确切时间时，Chatseek 会照实写出它知道多少：
+
+| 侧栏显示 | 意思 |
+| --- | --- |
+| 25 分钟前／2 天前／2026-09-30 | 确切时间：页面上本来就有，或你刚在开着的标签页里发了新消息。 |
+| 早于 2026-10-08 13:19 | 自己没有时间，但排在一条确切时间下面，所以一定比它旧。这个时间不会随「现在」漂移。 |
+| 约 2026-10-08 | 网站侧栏的分组（Today、Yesterday、Previous 7 Days），只到日期。 |
+| 日期未知（收录于 10/08 13:44） | 推不出来。括号里是收进索引的时间，不是对话时间。 |
+
+排序跟网站自己的侧栏一致，越上面越新。比较准的时间不会被比较粗的估计盖掉。四家共用同一套规则，细节见 [`notes/CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)。
+
+## 四家支持状态
+
+| 平台 | 收录内容 | 实机验证 |
+| --- | --- | --- |
+| ChatGPT | 对话列表、对话正文、页面时间 | 早期版本测过收录和搜索；1.2.x 待实机复测 |
+| Grok | 对话列表、对话正文、页面时间 | 早期版本测过收录和搜索；1.2.x 待实机复测 |
+| Claude | 对话列表、对话正文、页面时间 | **尚未实机验证** |
+| Gemini | 对话列表、对话正文（含多账号 `/u/N/` 网址） | **尚未实机验证**：选择器按公开页面结构写成，第一次实机可能还要修一轮 |
+
+自动化测试用离线 HTML 样本跑 ChatGPT 和 Gemini 的收录，不登录任何账号。
+
+## 已知限制
+
+- **没打开过的旧聊天搜不到。** 只收你在标签页里看过、或出现在网站侧栏里的对话；还不能导入官方导出文件。
+- **只收已渲染的消息。** 长对话要往上滚，较早的消息才会进索引。
+- **Gemini 页面上没有时间。** 没在开着的标签页里发过新消息的 Gemini 对话，大多会显示「日期未知」。
+- **网站改版会让收录失效。** 健康提示能发现「对话页一则消息都没读到」，但选择器要靠更新修。
+- **搜索是整词，不做词干。** `music` 不会命中 `musicmap`。
 
 ## 范围
 
-- 做：ChatGPT、Claude、Grok、Gemini、本地存、搜索
-- 不做：Perplexity、DeepSeek；不代持 API Key；不上架 Chrome Web Store / 不计费。Gemini 只读已经画出来的页面，不请求内部接口，也不一次导入全部历史
+- 做：ChatGPT、Claude、Grok、Gemini；本地存储；本地搜索。
+- 不做：Perplexity、DeepSeek；代持 API Key；一次导入全部历史。
 
-## 开发检查
+## 开发
 
 ```bash
-npm run verify
-npm run test:search
-npm run test:fixture
-npm run test:gemini
+npm install
+npm run verify        # manifest、权限、禁用网络调用检查 + ChatGPT 样本
+npm run test:search   # 搜索、日期、IndexedDB 升级
+npm run test:fixture  # ChatGPT / Gemini 离线样本
+npm run test:gemini   # Gemini 收录到 IndexedDB 全流程
 ```
 
-当前包版本 1.2.1。搜索按完整词匹配（`musicmap` 能中，`music` 不会误中 `musicmap`）。侧栏日期表示最后活动时间：精确时间和观察到的新消息照常显示；排在它们下面、自己没有精确时间的行显示「早于 YYYY-MM-DD HH:mm」（繁体「早於」，英文 before），时间是上方最近一个精确锚点，不随「现在」再猜一次相对时间。上方没有这种锚点时显示「日期未知（收录于 …）」（繁体「日期未知（收錄於 …）」）。分组时间显示「约 YYYY-MM-DD」，只到日期。不用采集时间冒充对话日期。对话页一则消息都没抓到时，侧栏底部和工具栏角标会提示。扩展 Reload 后本地索引还在；网站标签页需要刷新一次，内容脚本才会重新采集。日期规则见 `notes/CHANGELOG-1.1.0.md`，Gemini 见 `notes/CHANGELOG-1.2.0.md`，这次的日期显示见 `notes/CHANGELOG-1.2.1.md`。
+当前版本 1.2.1。版本记录在 [`notes/`](notes/)：[`CHANGELOG-1.1.0.md`](notes/CHANGELOG-1.1.0.md)（ChatGPT 收录与最后活动时间）、[`CHANGELOG-1.2.0.md`](notes/CHANGELOG-1.2.0.md)（Gemini）、[`CHANGELOG-1.2.1.md`](notes/CHANGELOG-1.2.1.md)（日期显示）。
+
+## License
+
+[MIT](LICENSE)
