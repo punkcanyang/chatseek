@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+  <title id="title">Chatseek 怎么运作</title>
+  <desc id="desc">四步：照常在网页聊天；内容脚本只读画面上已显示的标题和消息；写进本机 IndexedDB 倒排索引；在侧栏搜索，点结果开回原对话。</desc>
+  <rect x="1" y="1" width="1198" height="278" rx="24" fill="#0B1220" stroke="#22304A" stroke-width="2"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Noto Sans CJK SC', sans-serif">
+    <text x="64" y="62" fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="18" letter-spacing="2">HOW IT WORKS · 全程不离开浏览器</text>
+
+    <!-- carved rail: one stave, four notches -->
+    <path d="M64 98 H1136" stroke="#22304A" stroke-width="4"/>
+    <g fill="none" stroke="#3DDC97" stroke-width="6" stroke-linecap="butt" stroke-linejoin="miter">
+      <path d="M64 112 L80 98 L96 112"/>
+      <path d="M342 112 L358 98 L374 112"/>
+      <path d="M620 112 L636 98 L652 112"/>
+      <path d="M898 112 L914 98 L930 112"/>
+    </g>
+
+    <g transform="translate(64 158)">
+      <text fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="20">01</text>
+      <text x="36" fill="#E8EEF7" font-size="26" font-weight="700">照常聊天</text>
+      <text y="44" fill="#C5D0E2" font-size="20">打开网站的对话列表</text>
+      <text y="74" fill="#C5D0E2" font-size="20">或点进某段对话</text>
+    </g>
+    <g transform="translate(342 158)">
+      <text fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="20">02</text>
+      <text x="36" fill="#E8EEF7" font-size="26" font-weight="700">只读画面</text>
+      <text y="44" fill="#C5D0E2" font-size="20">读已显示的标题和消息</text>
+      <text y="74" fill="#C5D0E2" font-size="20">不发网络请求</text>
+    </g>
+    <g transform="translate(620 158)">
+      <text fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="20">03</text>
+      <text x="36" fill="#E8EEF7" font-size="26" font-weight="700">存进本机</text>
+      <text y="44" fill="#C5D0E2" font-size="20">IndexedDB 倒排索引</text>
+      <text y="74" fill="#C5D0E2" font-size="20">重载扩展也还在</text>
+    </g>
+    <g transform="translate(898 158)">
+      <text fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, 'DejaVu Sans Mono', monospace" font-size="20">04</text>
+      <text x="36" fill="#E8EEF7" font-size="26" font-weight="700">侧栏搜索</text>
+      <text y="44" fill="#C5D0E2" font-size="20">标题和正文一起搜</text>
+      <text y="74" fill="#C5D0E2" font-size="20">点结果开回原对话</text>
+    </g>
+  </g>
+</svg>
