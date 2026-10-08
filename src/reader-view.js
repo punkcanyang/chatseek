@@ -8,7 +8,8 @@
 
 import { fill, text } from "./i18n.js";
 import { formatActivityLabel } from "./activity-time.js";
-import { renderMarkdown } from "./markdown-dom.js";
+import { cachedMarkdown, renderMarkdown } from "./markdown-dom.js";
+import { hitMayBeMarkup, visibleRanges } from "./markdown.js";
 import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
 import { safeOriginalUrl } from "./reader-url.js";
 import { externalIcon } from "./icons.js";
@@ -75,11 +76,31 @@ export function collectHits(title, messages, query) {
     hits.push({ where: "title", range });
   }
   (messages || []).forEach((msg, messageIndex) => {
-    for (const range of findMatchRanges(msg?.body || "", terms)) {
-      hits.push({ where: "message", messageIndex, range });
+    const body = msg?.body || "";
+    const ranges = findMatchRanges(body, terms);
+    if (!ranges.length) return;
+    // A hit that lands only on markup is not painted, so it is not counted.
+    // The parse is skipped when no hit could be markup; otherwise the AST is
+    // cached on the message and reused when it scrolls into view.
+    const shown = ranges.some((range) => hitMayBeMarkup(body, range))
+      ? visibleRanges(cachedMarkdown(msg, body))
+      : null;
+    for (const range of ranges) {
+      if (!shown || overlapsAny(shown, range)) hits.push({ where: "message", messageIndex, range });
     }
   });
   return hits;
+}
+
+function overlapsAny(sorted, [start, end]) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid][1] <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < sorted.length && sorted[lo][0] < end;
 }
 
 function estimateHeight(msg) {

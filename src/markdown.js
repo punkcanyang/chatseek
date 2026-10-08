@@ -7,15 +7,128 @@
 
 const ESCAPABLE = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/;
 
+// Chat text is untrusted input. Nesting deeper than these limits stays plain
+// text, so no message can overflow the call stack or make one keystroke
+// re-parse the same characters hundreds of times.
+const MAX_BLOCK_DEPTH = 12;
+const MAX_INLINE_DEPTH = 3;
+const MAX_DEST_CHARS = 2048;
+const MAX_LABEL_SCAN = 4096;
+
 export function parseMarkdown(source) {
   const text = String(source ?? "");
   const lines = splitLines(text);
-  return parseBlocks(lines, 0, lines.length).blocks;
+  return parseBlocks(lines, 0, lines.length, 0).blocks;
+}
+
+/**
+ * Cheap pre-check before parsing a message for visibleRanges. A hit can only
+ * be hidden markup when it has no letter or digit (`**`, `|`, `#`), sits on
+ * a fence line (info string), is next to a `](` (link title), or is the
+ * number of an ordered-list marker. Anything else is shown wherever it is.
+ */
+export function hitMayBeMarkup(source, [start, end]) {
+  const text = String(source ?? "");
+  if (!/[\p{L}\p{N}]/u.test(text.slice(start, Math.min(end, start + 256)))) return true;
+  // Every scan is bounded, so a message with thousands of hits on one very
+  // long line stays linear. A fence info string or list marker that starts
+  // further back than the window is not a realistic case.
+  const from = Math.max(0, start - MAX_LABEL_SCAN);
+  let lineStart = from;
+  for (let i = start - 1; i >= from; i -= 1) {
+    if (text[i] === "\n") {
+      lineStart = i + 1;
+      break;
+    }
+  }
+  const head = text.slice(lineStart, Math.min(text.length, lineStart + 64));
+  if (lineStart > from || from === 0) {
+    if (/^[ \t>]*(?:[-+*][ \t]+)?(?:`{3,}|~{3,})/.test(head)) return true;
+    const marker = /^[ \t>]*(?:[-+*][ \t]+)*(\d{1,9})[.)]/.exec(head);
+    if (marker && start - lineStart < marker[0].length) return true;
+  }
+  let prevStart = lineStart;
+  if (lineStart > 0) {
+    prevStart = Math.max(from, lineStart - 1 - MAX_LABEL_SCAN);
+    for (let i = lineStart - 2; i >= prevStart; i -= 1) {
+      if (text[i] === "\n") {
+        prevStart = i + 1;
+        break;
+      }
+    }
+  }
+  let lineEnd = Math.min(text.length, end + MAX_LABEL_SCAN);
+  for (let i = end; i < lineEnd; i += 1) {
+    if (text[i] === "\n") {
+      lineEnd = i;
+      break;
+    }
+  }
+  return text.slice(prevStart, lineEnd).includes("](");
+}
+
+/**
+ * Source ranges [start, end) that end up as visible characters, sorted and
+ * merged. Markers such as `**`, `#`, `|`, link titles, and fence fences are
+ * not in it, so a search hit that lands only on them can be left out.
+ */
+export function visibleRanges(blocks) {
+  const out = [];
+  const add = (start, end) => {
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) out.push([start, end]);
+  };
+  const piece = (p) => {
+    if (p && p.text) add(p.start, p.end);
+  };
+  const inline = (nodes) => {
+    for (const node of nodes || []) {
+      if (node.type === "text" || node.type === "code") {
+        if (node.pieces?.length) node.pieces.forEach(piece);
+        continue;
+      }
+      if (node.type === "em" || node.type === "strong") {
+        inline(node.children);
+        continue;
+      }
+      if (node.type === "link" || node.type === "image") {
+        if (!node.auto) inline(node.children);
+        add(node.urlStart, node.urlEnd);
+      }
+    }
+  };
+  const walk = (list) => {
+    for (const block of list || []) {
+      if (block.type === "heading" || block.type === "paragraph") inline(block.children);
+      else if (block.type === "code") {
+        piece(block.info);
+        block.pieces.forEach(piece);
+      } else if (block.type === "quote") walk(block.blocks);
+      else if (block.type === "list") block.items.forEach((item) => walk(item.blocks));
+      else if (block.type === "table") {
+        block.header.forEach((cell) => inline(cell.children));
+        block.rows.forEach((row) => row.forEach((cell) => inline(cell.children)));
+      }
+    }
+  };
+  walk(blocks);
+  out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged = [];
+  for (const range of out) {
+    const last = merged[merged.length - 1];
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push([range[0], range[1]]);
+  }
+  return merged;
 }
 
 /** Readable text for previews. Link destinations are dropped; markers are not shown. */
 export function markdownToPlain(source) {
-  return blocksToPlain(parseMarkdown(source)).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return blocksToPlain(parseMarkdown(source))
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function isSafeHttpUrl(raw) {
@@ -77,11 +190,22 @@ function matchAtx(line) {
     const after = line.text.slice(rel);
     const lead = /^[ \t]+/.exec(after);
     rel += lead ? lead[0].length : 0;
-    raw = line.text.slice(rel);
-    raw = raw.replace(/[ \t]+#+[ \t]*$/, "");
-    raw = raw.replace(/[ \t]+$/, "");
+    raw = stripClosingHashes(line.text.slice(rel));
   }
   return { level: hashes, text: raw, start: line.start + rel };
+}
+
+// Same as /[ \t]+#+[ \t]*$/ then /[ \t]+$/, scanned from the end so a long
+// run of spaces inside a heading cannot make the regex engine backtrack.
+function stripClosingHashes(raw) {
+  const blank = (ch) => ch === " " || ch === "\t";
+  let end = raw.length;
+  while (end > 0 && blank(raw[end - 1])) end -= 1;
+  let hashEnd = end;
+  while (hashEnd > 0 && raw[hashEnd - 1] === "#") hashEnd -= 1;
+  if (hashEnd < end && hashEnd > 0 && blank(raw[hashEnd - 1])) end = hashEnd;
+  while (end > 0 && blank(raw[end - 1])) end -= 1;
+  return raw.slice(0, end);
 }
 
 function isHr(line) {
@@ -163,17 +287,19 @@ function isTableStart(lines, i) {
   return isDelimiterCells(delim);
 }
 
-function interrupts(lines, i) {
+function interrupts(lines, i, nest) {
   const line = lines[i];
   if (!line || isBlank(line)) return false;
-  if (matchFence(line) || matchAtx(line) || isQuote(line) || matchList(line)) return true;
+  if (matchFence(line) || matchAtx(line)) return true;
+  if (nest && (isQuote(line) || matchList(line))) return true;
   if (isTableStart(lines, i)) return true;
   if (isHr(line) && !isSetextUnderline(line)) return true;
   return false;
 }
 
-function parseBlocks(lines, start, end) {
+function parseBlocks(lines, start, end, depth) {
   const blocks = [];
+  const nest = depth < MAX_BLOCK_DEPTH;
   let i = start;
   while (i < end) {
     if (isBlank(lines[i])) {
@@ -209,15 +335,15 @@ function parseBlocks(lines, start, end) {
       i += 1;
       continue;
     }
-    if (isQuote(lines[i])) {
-      const parsed = parseQuote(lines, i, end);
+    if (nest && isQuote(lines[i])) {
+      const parsed = parseQuote(lines, i, end, depth);
       blocks.push(parsed.block);
       i = parsed.next;
       continue;
     }
-    const list = matchList(lines[i]);
+    const list = nest ? matchList(lines[i]) : null;
     if (list) {
-      const parsed = parseList(lines, i, end, list);
+      const parsed = parseList(lines, i, end, list, depth);
       blocks.push(parsed.block);
       i = parsed.next;
       continue;
@@ -228,7 +354,7 @@ function parseBlocks(lines, start, end) {
       i = parsed.next;
       continue;
     }
-    const parsed = parseParagraph(lines, i, end);
+    const parsed = parseParagraph(lines, i, end, nest);
     blocks.push(parsed.block);
     i = parsed.next;
   }
@@ -259,10 +385,17 @@ function parseFence(lines, i, end, open) {
   });
   const text = pieces.map((piece) => piece.text).join("");
   const last = closedAt >= 0 ? lines[closedAt] : content[content.length - 1] || lines[i];
+  let info = null;
+  const word = /^[ \t]*([^\s`]{1,40})/.exec(open.info);
+  if (word) {
+    const from = lines[i].start + open.indent + open.count + word[0].length - word[1].length;
+    info = { text: word[1], start: from, end: from + word[1].length };
+  }
   return {
     block: {
       type: "code",
       text,
+      info,
       pieces,
       start: lines[i].start,
       end: last.end,
@@ -271,7 +404,7 @@ function parseFence(lines, i, end, open) {
   };
 }
 
-function parseQuote(lines, i, end) {
+function parseQuote(lines, i, end, depth) {
   const inner = [];
   const start = lines[i].start;
   while (i < end && isQuote(lines[i])) {
@@ -287,7 +420,7 @@ function parseQuote(lines, i, end) {
     });
     i += 1;
   }
-  const parsed = parseBlocks(inner, 0, inner.length);
+  const parsed = parseBlocks(inner, 0, inner.length, depth + 1);
   const endLine = inner[inner.length - 1];
   return {
     block: { type: "quote", blocks: parsed.blocks, start, end: endLine ? endLine.end : start },
@@ -306,7 +439,7 @@ function dedentLine(line, columns) {
   };
 }
 
-function parseList(lines, i, end, first) {
+function parseList(lines, i, end, first, depth) {
   const ordered = first.ordered;
   const markerIndent = first.indent;
   const items = [];
@@ -355,7 +488,7 @@ function parseList(lines, i, end, first) {
       content.push(dedentLine(lines[i], item.contentColumn));
       i += 1;
     }
-    const inner = parseBlocks(content, 0, content.length);
+    const inner = parseBlocks(content, 0, content.length, depth + 1);
     const endLine = content[content.length - 1];
     items.push({
       blocks: inner.blocks,
@@ -417,12 +550,12 @@ function parseTable(lines, i, end) {
   };
 }
 
-function parseParagraph(lines, i, end) {
+function parseParagraph(lines, i, end, nest) {
   const collected = [];
   while (i < end) {
     if (isBlank(lines[i])) break;
     if (collected.length && isSetextUnderline(lines[i])) break;
-    if (collected.length && interrupts(lines, i)) break;
+    if (collected.length && interrupts(lines, i, nest)) break;
     collected.push(lines[i]);
     i += 1;
   }
@@ -497,7 +630,15 @@ function flanking(source, from, to) {
   return { left, right };
 }
 
-function parseInline(source, map, allowLinks) {
+function parseInline(source, map, allowLinks, depth = 0) {
+  const ctx = {
+    source,
+    map,
+    allowLinks,
+    depth,
+    runs: null,
+    labels: null,
+  };
   const tokens = [];
   let i = 0;
   const pushText = (from, to) => {
@@ -511,15 +652,14 @@ function parseInline(source, map, allowLinks) {
       continue;
     }
     if (c === "`") {
-      const span = readCodeSpan(source, i);
-      if (span) {
-        tokens.push(span.token);
-        i = span.next;
-        continue;
-      }
+      const span = readCodeSpan(ctx, i);
+      if (span.token) tokens.push(span.token);
+      else pushText(i, span.next);
+      i = span.next;
+      continue;
     }
-    if (c === "!" && source[i + 1] === "[") {
-      const image = readLinkOrImage(source, map, i + 1, true);
+    if (c === "!" && source[i + 1] === "[" && depth < MAX_INLINE_DEPTH) {
+      const image = readLinkOrImage(ctx, i + 1, true);
       if (image) {
         tokens.push(image.token);
         i = image.next;
@@ -527,14 +667,14 @@ function parseInline(source, map, allowLinks) {
       }
     }
     if (allowLinks && c === "[") {
-      const link = readLinkOrImage(source, map, i, false);
+      const link = readLinkOrImage(ctx, i, false);
       if (link) {
         tokens.push(link.token);
         i = link.next;
         continue;
       }
     }
-    if (c === "<") {
+    if (allowLinks && c === "<") {
       const auto = readAutolink(source, i);
       if (auto) {
         tokens.push(auto.token);
@@ -542,7 +682,7 @@ function parseInline(source, map, allowLinks) {
         continue;
       }
     }
-    if ((c === "h" || c === "H") && looksLikeUrl(source, i)) {
+    if (allowLinks && (c === "h" || c === "H") && looksLikeUrl(source, i)) {
       const url = readBareUrl(source, i);
       if (url) {
         tokens.push(url.token);
@@ -572,18 +712,19 @@ function parseInline(source, map, allowLinks) {
       continue;
     }
     let j = i + 1;
-    while (j < source.length && !isInlineBoundary(source, j, allowLinks)) j += 1;
+    while (j < source.length && !isInlineBoundary(source, j, allowLinks, depth)) j += 1;
     pushText(i, j);
     i = j;
   }
   return tokensToNodes(tokens, source, map);
 }
 
-function isInlineBoundary(source, i, allowLinks) {
+function isInlineBoundary(source, i, allowLinks, depth) {
   const c = source[i];
-  if (c === "\\" || c === "`" || c === "*" || c === "_" || c === "<") return true;
-  if (c === "!" && source[i + 1] === "[") return true;
-  if (allowLinks && c === "[") return true;
+  if (c === "\\" || c === "`" || c === "*" || c === "_") return true;
+  if (c === "!" && source[i + 1] === "[" && depth < MAX_INLINE_DEPTH) return true;
+  if (!allowLinks) return false;
+  if (c === "[" || c === "<") return true;
   if ((c === "h" || c === "H") && looksLikeUrl(source, i)) return true;
   return false;
 }
@@ -594,37 +735,62 @@ function looksLikeUrl(source, i) {
   return !isAlphaNum(prev) && prev !== "@";
 }
 
-function readCodeSpan(source, i) {
+/** Maximal backtick runs grouped by length, built once per inline source. */
+function backtickRuns(ctx) {
+  if (ctx.runs) return ctx.runs;
+  const byLen = new Map();
+  const { source } = ctx;
+  let i = source.indexOf("`");
+  while (i >= 0) {
+    let j = i;
+    while (source[j] === "`") j += 1;
+    const len = j - i;
+    if (!byLen.has(len)) byLen.set(len, []);
+    byLen.get(len).push(i);
+    i = source.indexOf("`", j);
+  }
+  ctx.runs = byLen;
+  return byLen;
+}
+
+function firstAtOrAfter(sorted, value) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < sorted.length ? sorted[lo] : -1;
+}
+
+/**
+ * Code span opened at i, or a literal run of backticks. The closer is the
+ * next run of exactly the same length; the lookup is a binary search, so a
+ * message full of unmatched backticks stays linear.
+ */
+function readCodeSpan(ctx, i) {
+  const { source } = ctx;
   let n = 0;
   while (source[i + n] === "`") n += 1;
-  let j = i + n;
-  while (j < source.length) {
-    if (source[j] !== "`") {
-      j += 1;
-      continue;
-    }
-    let m = 0;
-    while (source[j + m] === "`") m += 1;
-    if (m === n) {
-      const rawFrom = i + n;
-      const rawTo = j;
-      let from = rawFrom;
-      let to = rawTo;
-      let raw = source.slice(rawFrom, rawTo).replaceAll("\n", " ");
-      if (raw.length >= 2 && raw.startsWith(" ") && raw.endsWith(" ") && raw.trim() !== "") {
-        raw = raw.slice(1, -1);
-        from += 1;
-        to -= 1;
-      }
-      const pieces = codePieces(source, from, to, raw);
-      return {
-        token: { type: "code", text: raw, pieces, from: rawFrom, to: rawTo },
-        next: j + n,
-      };
-    }
-    j += m;
+  const starts = backtickRuns(ctx).get(n) || [];
+  const j = firstAtOrAfter(starts, i + n);
+  if (j < 0) return { token: null, next: i + n };
+  const rawFrom = i + n;
+  const rawTo = j;
+  let from = rawFrom;
+  let to = rawTo;
+  let raw = source.slice(rawFrom, rawTo).replaceAll("\n", " ");
+  if (raw.length >= 2 && raw.startsWith(" ") && raw.endsWith(" ") && raw.trim() !== "") {
+    raw = raw.slice(1, -1);
+    from += 1;
+    to -= 1;
   }
-  return null;
+  const pieces = codePieces(source, from, to, raw);
+  return {
+    token: { type: "code", text: raw, pieces, from: rawFrom, to: rawTo },
+    next: j + n,
+  };
 }
 
 function codePieces(source, from, to, rendered) {
@@ -646,8 +812,17 @@ function codePieces(source, from, to, rendered) {
 
 function readAutolink(source, i) {
   if (source[i] !== "<") return null;
-  const end = source.indexOf(">", i + 1);
-  if (end < 0 || end - i > 2048) return null;
+  const limit = Math.min(source.length, i + 1 + MAX_DEST_CHARS);
+  let end = -1;
+  for (let j = i + 1; j < limit; j += 1) {
+    const ch = source[j];
+    if (ch === ">") {
+      end = j;
+      break;
+    }
+    if (ch === "<" || ch === " " || ch === "\n" || ch === "\t") return null;
+  }
+  if (end < 0) return null;
   const inner = source.slice(i + 1, end);
   if (!/^https?:\/\/[^\s<>]+$/i.test(inner)) return null;
   return {
@@ -665,25 +840,26 @@ function readAutolink(source, i) {
   };
 }
 
+const BARE_URL = /https?:\/\/[^\s<>"'`]+/iy;
+
 function readBareUrl(source, i) {
-  const match = /^https?:\/\/[^\s<>"'`]+/i.exec(source.slice(i));
+  BARE_URL.lastIndex = i;
+  const match = BARE_URL.exec(source);
   if (!match) return null;
   let end = match[0].length;
   const raw = match[0];
+  let open = countChar(raw, "(");
+  let close = countChar(raw, ")");
   while (end > 0) {
     const ch = raw[end - 1];
     if (",.;:!?".includes(ch)) {
       end -= 1;
       continue;
     }
-    if (ch === ")") {
-      const body = raw.slice(0, end);
-      const open = countChar(body, "(");
-      const close = countChar(body, ")");
-      if (close > open) {
-        end -= 1;
-        continue;
-      }
+    if (ch === ")" && close > open) {
+      end -= 1;
+      close -= 1;
+      continue;
     }
     break;
   }
@@ -710,15 +886,16 @@ function countChar(text, ch) {
   return n;
 }
 
-function readLinkOrImage(source, map, i, image) {
+function readLinkOrImage(ctx, i, image) {
+  const { source, map } = ctx;
   if (source[i] !== "[") return null;
-  const labelEnd = findLabelEnd(source, i);
+  const labelEnd = findLabelEnd(ctx, i);
   if (labelEnd < 0 || source[labelEnd + 1] !== "(") return null;
   const dest = readDestination(source, labelEnd + 2);
   if (!dest) return null;
   const label = source.slice(i + 1, labelEnd);
   const labelMap = map.slice(i + 1, labelEnd);
-  const children = parseInline(label, labelMap, false);
+  const children = parseInline(label, labelMap, false, ctx.depth + 1);
   const token = image
     ? {
       type: "image",
@@ -742,20 +919,52 @@ function readLinkOrImage(source, map, i, image) {
   return { token, next: dest.next };
 }
 
-function findLabelEnd(source, i) {
+/**
+ * Matching `]` for every `[` in one left-to-right pass, skipping escapes and
+ * code spans the same way the inline loop does.
+ */
+function labelEnds(ctx) {
+  if (ctx.labels) return ctx.labels;
+  const { source } = ctx;
+  const ends = new Map();
+  const stack = [];
+  let j = 0;
+  while (j < source.length) {
+    const ch = source[j];
+    if (ch === "\\" && j + 1 < source.length) {
+      j += 2;
+      continue;
+    }
+    if (ch === "`") {
+      j = readCodeSpan(ctx, j).next;
+      continue;
+    }
+    if (ch === "[") stack.push(j);
+    else if (ch === "]" && stack.length) ends.set(stack.pop(), j);
+    j += 1;
+  }
+  for (const open of stack) ends.set(open, -1);
+  ctx.labels = ends;
+  return ends;
+}
+
+function findLabelEnd(ctx, i) {
+  const ends = labelEnds(ctx);
+  if (ends.has(i)) return ends.get(i);
+  // The pass above skipped this bracket (it sat inside a span the inline
+  // loop stepped over). Scan locally, bounded.
+  const { source } = ctx;
+  const limit = Math.min(source.length, i + MAX_LABEL_SCAN);
   let depth = 1;
   let j = i + 1;
-  while (j < source.length) {
+  while (j < limit) {
     if (source[j] === "\\" && j + 1 < source.length) {
       j += 2;
       continue;
     }
     if (source[j] === "`") {
-      const span = readCodeSpan(source, j);
-      if (span) {
-        j = span.next;
-        continue;
-      }
+      j = readCodeSpan(ctx, j).next;
+      continue;
     }
     if (source[j] === "[") depth += 1;
     else if (source[j] === "]") {
@@ -768,12 +977,20 @@ function findLabelEnd(source, i) {
 }
 
 function readDestination(source, i) {
-  while (source[i] === " " || source[i] === "\n" || source[i] === "\t") i += 1;
-  if (i >= source.length) return null;
+  const limit = Math.min(source.length, i + MAX_DEST_CHARS);
+  while (i < limit && (source[i] === " " || source[i] === "\n" || source[i] === "\t")) i += 1;
+  if (i >= limit) return null;
   let from;
   let to;
   if (source[i] === "<") {
-    const end = source.indexOf(">", i + 1);
+    let end = -1;
+    for (let j = i + 1; j < limit; j += 1) {
+      if (source[j] === ">") {
+        end = j;
+        break;
+      }
+      if (source[j] === "\n" || source[j] === "<") return null;
+    }
     if (end < 0) return null;
     from = i + 1;
     to = end;
@@ -781,7 +998,7 @@ function readDestination(source, i) {
   } else {
     from = i;
     let depth = 0;
-    while (i < source.length) {
+    while (i < limit) {
       const c = source[i];
       if (c === "\\" && i + 1 < source.length) {
         i += 2;
@@ -795,90 +1012,103 @@ function readDestination(source, i) {
       }
       i += 1;
     }
+    if (i >= limit) return null;
     to = i;
     if (to === from) return null;
   }
-  while (source[i] === " " || source[i] === "\n" || source[i] === "\t") i += 1;
+  while (i < limit && (source[i] === " " || source[i] === "\n" || source[i] === "\t")) i += 1;
   if (source[i] === '"' || source[i] === "'" || source[i] === "(") {
     const quote = source[i] === "(" ? ")" : source[i];
     i += 1;
-    while (i < source.length && source[i] !== quote) {
+    while (i < limit && source[i] !== quote) {
       if (source[i] === "\\" && i + 1 < source.length) i += 2;
       else i += 1;
     }
-    if (source[i] !== quote) return null;
+    if (i >= limit || source[i] !== quote) return null;
     i += 1;
-    while (source[i] === " " || source[i] === "\n" || source[i] === "\t") i += 1;
+    while (i < limit && (source[i] === " " || source[i] === "\n" || source[i] === "\t")) i += 1;
   }
-  if (source[i] !== ")") return null;
+  if (i >= limit || source[i] !== ")") return null;
   return { from, to, next: i + 1 };
 }
 
+/**
+ * CommonMark delimiter matching with an openers floor per delimiter kind, so
+ * a closer that found nothing once does not rescan the same openers.
+ */
 function tokensToNodes(tokens, source, map) {
   const opens = [];
-  const matches = [];
-  tokens.forEach((token, index) => {
-    if (token.type !== "delim") return;
-    token.index = index;
+  const floor = new Map();
+  for (const token of tokens) {
+    if (token.type !== "delim") continue;
     token.remaining = token.to - token.from;
     token.liveFrom = token.from;
     token.liveTo = token.to;
+    token.taken = [];
     if (token.canClose) {
+      const closeLen = token.to - token.from;
+      const key = `${token.char}${closeLen % 3}${token.canOpen ? 1 : 0}`;
       while (token.remaining > 0) {
-        let matched = false;
-        for (let k = opens.length - 1; k >= 0; k -= 1) {
+        const bottom = Math.min(floor.get(key) ?? 0, opens.length);
+        let found = -1;
+        for (let k = opens.length - 1; k >= bottom; k -= 1) {
           const opener = opens[k];
-          if (opener.char !== token.char || !opener.canOpen || opener.remaining <= 0 || token.remaining <= 0) continue;
-          const openerBoth = opener.canOpen && opener.canClose;
-          const closerBoth = token.canOpen && token.canClose;
-          if (openerBoth || closerBoth) {
-            const sum = opener.remaining + token.remaining;
-            if (sum % 3 === 0 && (opener.remaining % 3 !== 0 || token.remaining % 3 !== 0)) continue;
+          if (opener.char !== token.char) continue;
+          const openLen = opener.to - opener.from;
+          if ((opener.canOpen && opener.canClose) || token.canOpen) {
+            if ((openLen + closeLen) % 3 === 0 && (openLen % 3 !== 0 || closeLen % 3 !== 0)) continue;
           }
-          const use = opener.remaining >= 2 && token.remaining >= 2 ? 2 : 1;
-          const openFrom = opener.liveTo - use;
-          const closeFrom = token.liveFrom;
-          matches.push({
-            style: use === 2 ? "strong" : "em",
-            openFrom,
-            openTo: openFrom + use,
-            closeFrom,
-            closeTo: closeFrom + use,
-          });
-          opener.liveTo = openFrom;
-          opener.remaining -= use;
-          token.liveFrom = closeFrom + use;
-          token.remaining -= use;
-          if (opener.remaining === 0) opens.splice(k, 1);
-          matched = true;
+          found = k;
           break;
         }
-        if (!matched) break;
+        if (found < 0) {
+          floor.set(key, opens.length);
+          break;
+        }
+        const opener = opens[found];
+        const use = opener.remaining >= 2 && token.remaining >= 2 ? 2 : 1;
+        const openFrom = opener.liveTo - use;
+        const closeFrom = token.liveFrom;
+        const match = {
+          style: use === 2 ? "strong" : "em",
+          openFrom,
+          openTo: openFrom + use,
+          closeFrom,
+          closeTo: closeFrom + use,
+        };
+        opener.taken.push([match.openFrom, match.openTo]);
+        token.taken.push([match.closeFrom, match.closeTo]);
+        token.matches = token.matches || [];
+        token.matches.push(match);
+        opener.liveTo = openFrom;
+        opener.remaining -= use;
+        token.liveFrom = closeFrom + use;
+        token.remaining -= use;
+        // Openers between the pair can no longer close anything.
+        opens.length = opener.remaining > 0 ? found + 1 : found;
+        for (const [name, value] of floor) if (value > opens.length) floor.set(name, opens.length);
       }
     }
     if (token.canOpen && token.remaining > 0) opens.push(token);
-  });
+  }
 
   const events = [];
   for (const token of tokens) {
     if (token.type === "delim") {
-      const taken = matches
-        .flatMap((match) => [[match.openFrom, match.openTo], [match.closeFrom, match.closeTo]])
-        .filter(([from, to]) => from >= token.from && to <= token.to)
-        .sort((a, b) => a[0] - b[0]);
+      const taken = token.taken.slice().sort((a, b) => a[0] - b[0]);
       let cursor = token.from;
       for (const [from, to] of taken) {
         if (from > cursor) events.push({ pos: cursor, kind: "text", from: cursor, to: from });
         cursor = Math.max(cursor, to);
       }
       if (cursor < token.to) events.push({ pos: cursor, kind: "text", from: cursor, to: token.to });
+      for (const match of token.matches || []) {
+        events.push({ pos: match.openFrom, kind: "open", style: match.style, to: match.openTo });
+        events.push({ pos: match.closeFrom, kind: "close", style: match.style });
+      }
       continue;
     }
     events.push({ pos: token.from, kind: "node", token });
-  }
-  for (const match of matches) {
-    events.push({ pos: match.openFrom, kind: "open", style: match.style, to: match.openTo });
-    events.push({ pos: match.closeFrom, kind: "close", style: match.style });
   }
   events.sort((a, b) => a.pos - b.pos || rank(a.kind) - rank(b.kind));
 

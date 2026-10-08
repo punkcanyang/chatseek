@@ -103,6 +103,12 @@ function renderCodeBlock(parent, block, hits, current, locale) {
   pre.className = "code";
   if (!block.pieces.length) pre.append(doc.createTextNode(""));
   for (const piece of block.pieces) appendPiece(pre, piece, hits, current);
+  if (block.info?.text) {
+    const lang = doc.createElement("span");
+    lang.className = "code-lang";
+    appendPiece(lang, block.info, hits, current);
+    wrap.append(lang);
+  }
   wrap.append(button, pre);
   parent.append(wrap);
 }
@@ -122,14 +128,17 @@ function renderTable(parent, block, hits, current, locale) {
   });
   thead.append(headRow);
   const tbody = doc.createElement("tbody");
+  // GFM drops cells past the header width. A reader should not hide text, so
+  // a ragged row keeps its extra cells.
   for (const row of block.rows) {
     const tr = doc.createElement("tr");
-    block.header.forEach((_, index) => {
+    const width = Math.max(block.header.length, row.length);
+    for (let index = 0; index < width; index += 1) {
       const td = doc.createElement("td");
       applyAlign(td, block.align[index]);
       renderInline(td, row[index]?.children || [], hits, current, locale);
       tr.append(td);
-    });
+    }
     tbody.append(tr);
   }
   table.append(thead, tbody);
@@ -239,10 +248,26 @@ function appendPiece(parent, piece, hits, current) {
   });
 }
 
+/** Hits are sorted by start and do not overlap, so ends are sorted too. */
+function hitsOverlapping(hits, start, end) {
+  const list = hits || [];
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].range[1] <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  const out = [];
+  for (let i = lo; i < list.length && list[i].range[0] < end; i += 1) out.push(list[i]);
+  return out;
+}
+
 function appendDense(parent, text, start, hits, current, loose) {
   const doc = parent.ownerDocument;
+  const near = hitsOverlapping(hits, start, start + text.length);
   if (loose) {
-    const overlap = (hits || []).find((hit) => hit.range[1] > start && hit.range[0] < start + text.length);
+    const overlap = near[0];
     if (!overlap) {
       parent.append(doc.createTextNode(text));
       return;
@@ -256,7 +281,7 @@ function appendDense(parent, text, start, hits, current, loose) {
   }
   const end = start + text.length;
   const locals = [];
-  for (const hit of hits || []) {
+  for (const hit of near) {
     const from = Math.max(hit.range[0], start);
     const to = Math.min(hit.range[1], end);
     if (to > from) locals.push({ from: from - start, to: to - start, hit: hit.index });

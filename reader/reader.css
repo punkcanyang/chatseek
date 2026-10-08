@@ -294,6 +294,21 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 1rem; }
   cursor: pointer;
 }
 
+.code-lang {
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  z-index: 1;
+  max-width: calc(100% - 96px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .code {
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
   white-space: pre;
