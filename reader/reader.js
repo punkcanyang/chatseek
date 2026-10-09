@@ -173,14 +173,30 @@ if (chrome.runtime?.onMessage) {
   });
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) view?.setActivity?.(row?.conversation);
-});
-const readerClock = setInterval(() => {
+let readerClock = 0;
+function stopReaderClock() {
+  if (!readerClock) return;
+  clearInterval(readerClock);
+  readerClock = 0;
+}
+function startReaderClock() {
+  stopReaderClock();
   if (document.hidden) return;
   view?.setActivity?.(row?.conversation);
-}, 15000);
-readerClock.unref?.();
+  readerClock = setInterval(() => {
+    if (document.hidden) {
+      stopReaderClock();
+      return;
+    }
+    view?.setActivity?.(row?.conversation);
+  }, 15000);
+  readerClock.unref?.();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopReaderClock();
+  else startReaderClock();
+});
+startReaderClock();
 
 window.addEventListener("storage", (event) => {
   if (event.key !== STORAGE_KEY && event.key !== null) return;

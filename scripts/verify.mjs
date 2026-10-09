@@ -670,12 +670,21 @@ const scrollback = pageShowsNewActivity({
 });
 if (scrollback) fail("scrollback must not count as activity");
 if (!dbSrc.includes("pageShowsNewActivity")) fail("db.js must decide activity from the page ending");
-if (!read("sidepanel/panel.js").includes("paintActivityTimes")) {
-  fail("the side panel must repaint relative activity labels");
+if (!dbSrc.includes("alignRekeyedTurns") || !dbSrc.includes("planCloneDrops")) {
+  fail("db.js must collapse a re-keyed copy of the same turn");
+}
+if (!read("src/message-identity.js").includes("turnStamp")) {
+  fail("re-keyed turns need a role and normalized-text identity");
+}
+if (!read("content/shared.js").includes("Chatseek.debounce(invoke, 800)")) {
+  fail("capture must stay debounced so a stream does not write every token");
 }
 const readerSrc = read("reader/reader.js");
 if (!readerSrc.includes("INDEX_UPDATED") || !readerSrc.includes("readConversationRow")) {
   fail("the reader must refresh its clock from the conversation row");
+}
+if (!readerSrc.includes("clearInterval(readerClock)")) {
+  fail("the reader clock must stop while the reader is hidden");
 }
 const beforeCopy = {
   zh_TW: "早於",
@@ -759,6 +768,12 @@ const archivedOrder = panelHtml.indexOf('data-scope="archived"');
 const allOrder = panelHtml.indexOf('id="filterAll"');
 if (!(tabOrder < gptOrder && gptOrder < archivedOrder && archivedOrder < allOrder)) {
   fail("tab order should be active, platforms, archived, all");
+}
+if (!panelSrc.includes("paintActivityTimes")) {
+  fail("the side panel must repaint relative activity labels");
+}
+if (!panelSrc.includes("clearInterval(activityClock)")) {
+  fail("the side panel clock must stop while the panel is hidden");
 }
 if (!/gemini:\s*"Gemini"/.test(panelSrc)) fail("side panel should name Gemini");
 if (!/removeConversation/.test(panelSrc)) fail("side panel should remove a row from the local index");

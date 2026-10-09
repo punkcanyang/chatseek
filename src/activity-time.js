@@ -55,12 +55,16 @@ export function activityKey(body) {
     .slice(0, 180);
 }
 
-/** True when two bodies are the same turn, a short trim of it, or that turn grown. */
-export function sameTailText(storedBody, pageBody) {
+/**
+ * The page turn is the stored tail, or a short trim of it.
+ * A longer page turn that merely begins with a short tail is not: that would
+ * mark an old window as "just now" when the real ending is not on screen.
+ */
+export function tailTextSeen(storedBody, pageBody) {
   const storedKey = activityKey(storedBody);
   const pageKey = activityKey(pageBody);
   if (!storedKey || !pageKey) return false;
-  if (storedKey === pageKey || pageKey.startsWith(storedKey)) return true;
+  if (storedKey === pageKey) return true;
   return storedKey.startsWith(pageKey) &&
     pageKey.length >= Math.min(storedKey.length, 80) &&
     pageKey.length >= storedKey.length * 0.8;
@@ -230,7 +234,7 @@ export function pageShowsNewActivity({
   if (!seen) {
     for (const id of pageIds) {
       if (id === pageTail || !byId.has(id)) continue;
-      if (sameTailText(baselineTailBody, byId.get(id))) {
+      if (tailTextSeen(baselineTailBody, byId.get(id))) {
         seen = true;
         break;
       }

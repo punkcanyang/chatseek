@@ -1,6 +1,7 @@
 import { indexPlain } from "./markdown.js";
 import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokenize.js";
-import { applySidebarEstimates, mergeActivityTime, pageShowsNewActivity, sameTailText } from "./activity-time.js";
+import { applySidebarEstimates, mergeActivityTime, pageShowsNewActivity, tailTextSeen } from "./activity-time.js";
+import { activityBodyChanged, alignRekeyedTurns, planCloneDrops } from "./message-identity.js";
 import {
   buildPreview,
   clipPreviewSource,
@@ -361,10 +362,9 @@ export async function upsertMessages(conversation, messages, meta = {}) {
 }
 
 async function writeMessages(db, conversation, messages, meta = {}) {
-  const tx = db.transaction(
-    ["conversations", "messages", "tokenMap", "meta"],
-    "readwrite",
-  );
+  const storeNames = ["conversations", "messages", "tokenMap", "meta"];
+  if (db.objectStoreNames.contains("images")) storeNames.push("images");
+  const tx = db.transaction(storeNames, "readwrite");
   const convStore = tx.objectStore("conversations");
   const msgStore = tx.objectStore("messages");
   const tokenStore = tx.objectStore("tokenMap");
@@ -399,12 +399,161 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   let changed = 0;
+  let identityChanged = false;
   let tailBodyChanged = false;
   let observedNow = false;
   const freshIds = new Set();
   const skippedIds = new Set();
   let storedRows = null;
-  const pageCount = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds.length : 0;
+  const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
+  const pageCount = pageIds.length;
+  const imageStore = db.objectStoreNames.contains("images") ? tx.objectStore("images") : null;
+
+  async function imageRows(messageId) {
+    if (!imageStore || !messageId) return [];
+    const rows = [];
+    await cursorEach(imageStore.index("messageId"), { range: IDBKeyRange.only(messageId) }, (row) => {
+      if (row) rows.push(row);
+    });
+    return rows;
+  }
+
+  async function moveImages(fromId, toId) {
+    if (!imageStore || !fromId || !toId || fromId === toId) return;
+    for (const row of await imageRows(fromId)) {
+      const dest = await requestDone(imageStore.get([toId, row.index]));
+      imageStore.delete([fromId, row.index]);
+      if (!dest) imageStore.put({ ...row, messageId: toId });
+      else if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+    }
+  }
+
+  async function deleteStoredMessage(messageId) {
+    const existing = await requestDone(msgStore.get(messageId));
+    if (!existing) return;
+    deleteTokens(tokenStore, tokensForDelete(existing.body), conversation.id, messageId);
+    msgStore.delete(messageId);
+    for (const row of await imageRows(messageId)) {
+      imageStore.delete([messageId, row.index]);
+      if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+    }
+  }
+
+  const orderKeyEarly = ORDER_PREFIX + conversation.id;
+  let orderIdsLive = null;
+  async function loadOrderIds() {
+    if (orderIdsLive) return orderIdsLive;
+    const row = titleOnly ? null : await requestDone(metaStore.get(orderKeyEarly));
+    orderIdsLive = Array.isArray(row?.ids) ? row.ids.slice() : [];
+    return orderIdsLive;
+  }
+  function rememberOrder(ids) {
+    const next = [];
+    const seen = new Set();
+    for (const id of ids || []) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      next.push(id);
+    }
+    orderIdsLive = next;
+    if (!titleOnly && conv) {
+      metaStore.put({ key: orderKeyEarly, conversationId: conv.id, ids: next });
+    }
+  }
+  function pointTail(fromId, toId) {
+    if (!fromId || !toId || fromId === toId) return;
+    if (baselineTail === fromId) {
+      baselineTail = toId;
+      if (conv?.captureBaselineTail === fromId) conv.captureBaselineTail = toId;
+    }
+    if (conv?.tailMessageId === fromId) conv.tailMessageId = toId;
+  }
+
+  let missingId = false;
+  if (conv && baselineCount > 0 && !titleOnly) {
+    for (const msg of messages) {
+      if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
+      const existing = await requestDone(msgStore.get(msg.id));
+      if (!existing) {
+        missingId = true;
+        break;
+      }
+    }
+  }
+  const maybeClones = !!(
+    conv && baselineCount > 0 && !titleOnly &&
+    pageIds.length >= 2 && baselineCount >= pageIds.length * 2 &&
+    baselineCount % pageIds.length === 0
+  );
+  if (missingId || maybeClones) {
+    const storedList = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+    const orderIds = await loadOrderIds();
+    const byId = new Map((storedList || []).filter((row) => row?.id).map((row) => [row.id, row]));
+    const ordered = [];
+    for (const id of orderIds) {
+      const row = byId.get(id);
+      if (!row) continue;
+      ordered.push(row);
+      byId.delete(id);
+    }
+    const rest = [...byId.values()].sort((a, b) => (a.capturedAt || 0) - (b.capturedAt || 0));
+    let storedOrdered = ordered.concat(rest);
+
+    if (maybeClones) {
+      const moves = planCloneDrops(storedOrdered, pageIds, messages);
+      if (moves.length) {
+        identityChanged = true;
+        const dropIds = new Set(moves.map((move) => move.from));
+        for (const move of moves) {
+          await moveImages(move.from, move.to);
+          await deleteStoredMessage(move.from);
+          pointTail(move.from, move.to);
+        }
+        rememberOrder(orderIds.filter((id) => !dropIds.has(id)));
+        storedOrdered = storedOrdered.filter((row) => !dropIds.has(row.id));
+      }
+    }
+
+    if (missingId) {
+      const indexOf = new Map(pageIds.map((id, index) => [id, index]));
+      const pageItems = [];
+      for (const msg of messages) {
+        if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
+        pageItems.push({
+          id: msg.id,
+          role: msg.role,
+          body: msg.body,
+          index: indexOf.has(msg.id) ? indexOf.get(msg.id) : pageItems.length,
+        });
+      }
+      const alias = alignRekeyedTurns(storedOrdered, pageItems);
+      for (const [pageId, storedId] of alias) {
+        if (!pageId || !storedId || pageId === storedId) continue;
+        const existing = await requestDone(msgStore.get(storedId));
+        if (!existing) continue;
+        if (await requestDone(msgStore.get(pageId))) continue;
+        deleteTokens(tokenStore, tokensForDelete(existing.body), conversation.id, storedId);
+        msgStore.delete(storedId);
+        const record = { ...existing, id: pageId };
+        msgStore.put(record);
+        writeTokens(
+          tokenStore,
+          indexPlain(existing.body),
+          conversation.id,
+          pageId,
+          record.role,
+        );
+        await moveImages(storedId, pageId);
+        const currentOrder = await loadOrderIds();
+        rememberOrder(currentOrder.map((id) => (id === storedId ? pageId : id)));
+        pointTail(storedId, pageId);
+        const slot = storedOrdered.find((row) => row.id === storedId);
+        if (slot) slot.id = pageId;
+        identityChanged = true;
+      }
+    }
+  }
+
   for (const [captureIndex, msg] of messages.entries()) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
@@ -435,7 +584,9 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         msg.id,
       );
     }
-    if (msg.id === baselineTail) tailBodyChanged = true;
+    if (msg.id === baselineTail && activityBodyChanged(existing?.body, msg.body)) {
+      tailBodyChanged = true;
+    }
     const record = {
       id: msg.id,
       conversationId: conversation.id,
@@ -458,7 +609,6 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   if (replacedTitleOnly) changed += 1;
-  const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
   let activity = false;
   if (conv && baselineCount > 0 && baselineTail && pageIds.length) {
     let storedBody = "";
@@ -469,7 +619,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
     if (!pageIds.includes(baselineTail) && storedBody) {
       for (const msg of messages) {
-        if (msg?.body && sameTailText(storedBody, msg.body)) {
+        if (msg?.body && tailTextSeen(storedBody, msg.body)) {
           conv.captureSawTail = true;
           break;
         }
@@ -485,7 +635,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       sawStoredTail: !!conv.captureSawTail,
     });
   }
-  if (conv && (changed || activity || (meta.captureId && conv.captureToken === meta.captureId))) {
+  if (conv && (changed || activity || identityChanged || (meta.captureId && conv.captureToken === meta.captureId))) {
     const fields = nextPreviewFields(conv, messages, meta.pageMessageIds, { freshIds });
     if (fields.firstUserPreview && !poorerPreview(conv.firstUserPreview, fields.firstUserPreview)) {
       conv.firstUserPreview = fields.firstUserPreview;
@@ -501,7 +651,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     const now = Date.now();
     const incomingUpdated = pageMs(conversation.updatedAt);
     if (changed || activity) {
-      if (changed) {
+      if (changed || identityChanged) {
         const merged = mergeActivityTime(conv, {
           updatedAt: incomingUpdated,
           updatedAtSource: conversation.updatedAtSource,
@@ -528,7 +678,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         conv.updatedAtSource = observed.updatedAtSource;
         observedNow = observed.updatedAtSource === "observed";
       }
-      if (pageIds.length) conv.tailMessageId = pageIds[pageIds.length - 1];
+      // A shorter window must not move the stored tail backward.
+      const pageTail = pageIds[pageIds.length - 1];
+      if (pageIds.length && (activity || !baselineTail || pageTail === baselineTail)) {
+        conv.tailMessageId = pageTail;
+      }
     }
     if (prevTitle !== conv.title) {
       deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
@@ -536,6 +690,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
+    }
+    if (identityChanged) {
+      conv.messageCount = await requestDone(
+        msgStore.index("conversationId").count(conversation.id),
+      );
     }
     const orderIds = (pageIds.length
       ? pageIds

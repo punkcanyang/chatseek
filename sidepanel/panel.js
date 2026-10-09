@@ -988,11 +988,27 @@ applyStatic();
 resolvePanelWindow().then(syncActiveTab);
 refresh();
 
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) paintActivityTimes();
-});
-const activityClock = setInterval(() => {
+let activityClock = 0;
+function stopActivityClock() {
+  if (!activityClock) return;
+  clearInterval(activityClock);
+  activityClock = 0;
+}
+function startActivityClock() {
+  stopActivityClock();
   if (document.hidden) return;
   paintActivityTimes();
-}, 15000);
-activityClock.unref?.();
+  activityClock = setInterval(() => {
+    if (document.hidden) {
+      stopActivityClock();
+      return;
+    }
+    paintActivityTimes();
+  }, 15000);
+  activityClock.unref?.();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopActivityClock();
+  else startActivityClock();
+});
+startActivityClock();
