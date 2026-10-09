@@ -13,7 +13,7 @@
 - [x] 保守污染修復、完整性重驗、DB／虛擬窗口測試
 - [x] SPA e2e／獨立截圖腳本、Searching 狀態列競態修正
 - [x] 1.7.2 實測文案與 ROADMAP 更新
-- [ ] 外部 Chrome e2e、實際截圖、Chrome 效能對照（sandbox 已嘗試，受阻）
+- [x] 外部 Chrome e2e（test:e2e、test:e2e-sync 各連跑 2 次全過）、截圖、效能對照（产品开发在 sandbox 外跑，2026-10-09 23:40–23:58）
 - [ ] Codex 複審（另開 session，gpt-6.1-sol high）
 - [ ] 合 main
 
@@ -132,3 +132,24 @@ reader／list 在 Chrome 啟動時 `setsockopt: Operation not permitted`；500 �
 | `node --check scripts/e2e-chatgpt.mjs`／`scripts/screenshot-1.7.2.1.mjs` | exit 0；語法驗證，**不等於 Chrome 執行通過**。 |
 
 進度：Node 驗證與交接完成；外部 e2e／PNG／效能／另一個 session 複審仍未完成。不合併、不宣告 READY。
+
+## 外部驗證（产品开发在 sandbox 外實跑，2026-10-09 UTC+8）
+
+| 指令 | 結果 |
+| --- | --- |
+| `xvfb-run -a npm run test:e2e` ×2 | 兩次 exit 0；`SPA selector e2e ok: A/B/C, delayed DOM and history.back`、`SPA heuristic e2e ok: A/B/C, delayed DOM and history.back`、`e2e chatgpt ok`（複製頁面結構字元數斷言兩次都過，沒被 Searching… 蓋掉） |
+| `xvfb-run -a npm run test:e2e-sync` ×2 | 兩次 exit 0 |
+| verify／test:search／test:fixture／test:gemini／test:upgrade／test:sync／test:spa | 全部 exit 0（重跑一次） |
+
+截圖（範例資料）：`docs/panel-1.7.2.1-spa.png`、`docs/reader-1.7.2.1-spa-A.png`、`docs/reader-1.7.2.1-spa-B.png`；副本在 `/workspace/chatseek-shots/1.7.2.1/`。側欄 A／B／C 各自正確預覽，日期顯示「收錄於 10/09 23:42」。
+
+效能（同機同 Chrome，headless，基準 `git archive 213dde2`）：
+
+| | 1.7.2.1 | 213dde2 |
+| --- | --- | --- |
+| 閱讀頁 3000 則掛上（兩輪，順序互換） | 611 / 528 ms | 487 / 507 ms |
+| 閱讀頁捲動 p95 | 7.7 / 6.9 ms | 8.2 / 7.5 ms |
+| 側欄清單開啟中位（兩輪） | 611 / 363 ms | 519 / 401 ms |
+| 側欄捲動 p95 | 9 / 2 ms | 6 / 1 ms |
+
+reader-view／清單碼未改，兩輪互有高低，第一輪先跑的一方偏慢，屬冷啟動雜訊。
