@@ -176,7 +176,12 @@ function captureMeta(msg) {
     ? msg.pageMessageIds.filter((id) => typeof id === "string" && id.length <= 300).slice(-5000)
     : [];
   const captureId = typeof msg.captureId === "string" ? msg.captureId.slice(0, 400) : "";
-  return { pageMessageIds: ids, captureId };
+  const bodyHash = typeof msg.bodyHash === "string" && /^[0-9a-f]{1,8}$/.test(msg.bodyHash)
+    ? msg.bodyHash : "";
+  return { pageMessageIds: ids, captureId, bodyHash,
+    identityVerified: msg.identityVerified === true,
+    completePage: msg.completePage === true };
+
 }
 
 function validHealth(health) {
@@ -322,7 +327,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
       .then((result) => {
         notifyIndexUpdated();
-        sendResponse({ ok: true, observed: !!result?.observed });
+        sendResponse({ ok: true, observed: !!result?.observed, held: !!result?.held });
       })
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;

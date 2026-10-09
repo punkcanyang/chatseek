@@ -380,13 +380,30 @@ async function writeConversations(db, list, { reopened = false } = {}) {
 }
 
 /** Resolves { observed } — true when this write saw a new tail on a stored thread. */
+// Serialize capture entry calls in this worker; the persisted meta gate also
+// survives worker restarts. No DOM/body/id details enter diagnostics.
+let captureQueue = Promise.resolve();
 export async function upsertMessages(conversation, messages, meta = {}) {
   if (!conversation?.id || !messages?.length) return { observed: false };
-  // A one-row batch has no neighbours. Interpolating it alone would rewrite an
-  // undated row's sidebar sort key as if it were the last row in the sidebar.
-  const { sidebarIndex: _ignored, ...row } = conversation;
-  await withDb((db) => writeConversations(db, [row], { reopened: true }));
-  return withDb((db) => writeMessages(db, row, messages, meta));
+  const write = async () => {
+    if (meta.bodyHash) {
+      const held = await withDb(async db => {
+        const tx = db.transaction("meta", "readonly");
+        const gate = await requestDone(tx.objectStore("meta").get("spa:recent"));
+        return (gate?.rows || []).some(row => row.hash === meta.bodyHash &&
+          row.convId !== conversation.id && Date.now() - row.at < 5000);
+      });
+      if (held) return { observed: false, held: true };
+    }
+    // Do not interpolate a one-row batch's sidebar ordering.
+    const { sidebarIndex: _ignored, ...row } = conversation;
+    await withDb(db => writeConversations(db, [row], { reopened: true }));
+    return withDb(db => writeMessages(db, row, messages, meta));
+  };
+  if (!meta.bodyHash) return write();
+  const result = captureQueue.then(write);
+  captureQueue = result.catch(() => null);
+  return result;
 }
 
 async function writeMessages(db, conversation, messages, meta = {}) {
@@ -398,6 +415,18 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   const tokenStore = tx.objectStore("tokenMap");
   const metaStore = tx.objectStore("meta");
 
+  let gateRows = [];
+  if (meta.bodyHash) {
+    const gate = await requestDone(metaStore.get("spa:recent"));
+    gateRows = (gate?.rows || []).filter(row => Date.now() - row.at < 5000);
+    if (gateRows.some(row => row.hash === meta.bodyHash && row.convId !== conversation.id)) {
+      await txDone(tx);
+      return { observed: false, held: true };
+    }
+    gateRows = gateRows.filter(row => row.hash !== meta.bodyHash);
+    gateRows.push({ hash: meta.bodyHash, convId: conversation.id, at: Date.now() });
+    metaStore.put({ key: "spa:recent", rows: gateRows.slice(-128) });
+  }
   const conv = await requestDone(convStore.get(conversation.id));
   let baselineCount = conv?.messageCount || 0;
   let baselineTail = conv?.tailMessageId || "";
@@ -506,6 +535,35 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       if (conv?.captureBaselineTail === fromId) conv.captureBaselineTail = toId;
     }
     if (conv?.tailMessageId === fromId) conv.tailMessageId = toId;
+  }
+
+  // Absence is evidence only with a verified complete snapshot in ONE batch.
+  // Preserve stable native ids and same-body rekeys; a dom<N> row missing
+  // from a proved full transcript has no enduring website identity.
+  let repaired = false;
+  if (meta.identityVerified === true && meta.completePage === true &&
+      pageIds.length === messages.length && messages.every(m => !m.progress)) {
+    const ids = new Set(pageIds);
+    const bodies = new Set(messages.map(m => m.body));
+    const rows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+    const drops = rows.filter(row => /:dom\d+$/.test(row.id) && !ids.has(row.id) && !bodies.has(row.body));
+    if (drops.length) {
+      for (const row of drops) await deleteStoredMessage(row.id);
+      const dropped = new Set(drops.map(row => row.id));
+      rememberOrder((await loadOrderIds()).filter(id => !dropped.has(id)));
+      baselineCount = Math.max(0, baselineCount - drops.length);
+      if (dropped.has(baselineTail)) baselineTail = "";
+      conv.captureBaselineCount = baselineCount;
+      conv.captureBaselineTail = baselineTail;
+      conv.tailMessageId = baselineTail;
+      // Clear previews derived from contamination, then rebuild from capture.
+      conv.firstUserPreview = "";
+      conv.firstUserMessageId = "";
+      conv.lastPreview = "";
+      conv.lastPreviewRole = "";
+      identityChanged = true;
+      repaired = true;
+    }
   }
 
   let missingId = false;
@@ -650,7 +708,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     changed += 1;
   }
 
-  if (replacedTitleOnly) changed += 1;
+  if (replacedTitleOnly || repaired) changed += 1;
   let activity = false;
   if (conv && baselineCount > 0 && baselineTail && pageIds.length) {
     let storedBody = "";

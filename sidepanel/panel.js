@@ -150,6 +150,7 @@ const qEl = document.getElementById("q");
 const listEl = document.getElementById("list");
 let shownRows = [];
 const statusEl = document.getElementById("status");
+let statusNoticeUntil = 0;
 const countsEl = document.getElementById("counts");
 const hintEl = document.getElementById("hint");
 const tagEl = document.getElementById("tag");
@@ -560,6 +561,7 @@ async function copyDiagnostics() {
     if (statusEl) {
       statusEl.hidden = false;
       statusEl.textContent = t.copyDiagDone;
+      statusNoticeUntil = Date.now() + 5000;
     }
     if (diagBox) diagBox.hidden = true;
     return;
@@ -622,6 +624,7 @@ async function copyPageStructure() {
     if (statusEl) {
       statusEl.hidden = false;
       statusEl.textContent = t.copyStructureEmpty;
+      statusNoticeUntil = Date.now() + 5000;
     }
     showDiagBox(text || t.copyStructureEmpty);
     return;
@@ -645,6 +648,7 @@ async function copyPageStructure() {
     if (statusEl) {
       statusEl.hidden = false;
       statusEl.textContent = t.copyStructureDone(result.chars ?? text.length);
+      statusNoticeUntil = Date.now() + 5000;
     }
     if (diagBox) diagBox.hidden = true;
     return;
@@ -653,6 +657,7 @@ async function copyPageStructure() {
   if (statusEl) {
     statusEl.hidden = false;
     statusEl.textContent = `${t.copyStructureDone(text.length)} ${t.copyStructureManual}`;
+      statusNoticeUntil = Date.now() + 5000;
   }
 }
 
@@ -765,7 +770,7 @@ function showImagePane(on) {
   const searchWrap = qEl?.closest(".search");
   if (searchWrap) searchWrap.hidden = on;
   if (searchLabel) searchLabel.hidden = on;
-  if (on && statusEl) statusEl.hidden = true;
+  if (on && statusEl) if (Date.now() >= statusNoticeUntil) statusEl.hidden = true;
   if (!on) {
     imageSeq += 1;
     if (imageView) {
@@ -852,8 +857,10 @@ async function refresh() {
   const seq = ++requestSeq;
   const query = qEl.value;
   const showStatus = !loadedOnce || !!query.trim();
-  statusEl.hidden = !showStatus;
-  statusEl.textContent = !loadedOnce && !query.trim() ? t.booting : t.loading;
+  if (Date.now() >= statusNoticeUntil) {
+    statusEl.hidden = !showStatus;
+    statusEl.textContent = !loadedOnce && !query.trim() ? t.booting : t.loading;
+  }
   try {
     const items = await searchConversations({
       query,
@@ -866,7 +873,7 @@ async function refresh() {
     const shown = await attachPreviews(items, query);
     if (seq !== requestSeq) return;
     loadedOnce = true;
-    statusEl.hidden = true;
+    if (Date.now() >= statusNoticeUntil) statusEl.hidden = true;
     render(shown, { emptyKind: query.trim() ? "search" : "idle" });
     markCurrentRow();
     const s = await stats();
@@ -876,7 +883,7 @@ async function refresh() {
     await renderHealth();
   } catch {
     if (seq !== requestSeq) return;
-    statusEl.hidden = true;
+    if (Date.now() >= statusNoticeUntil) statusEl.hidden = true;
     render([], { error: true });
     if (!loadedOnce) countsEl.textContent = t.error;
     await refreshImageCache();

@@ -482,6 +482,10 @@
         return !current.banner && !current.archiveRoots.some((node) =>
           Chatseek._archiveListIds(node).includes(platformId));
       };
+      if (!state.pageIdentity) {
+        const initial = extractMessages(platformId, root, false);
+        if (initial.messages.length) Chatseek.pageIdentity(state, root, captureHref, platformId, initial);
+      }
       extracted = await extractMessagesPaced(platformId, root);
     }
     // Record the DOM before further awaits, even if this capture is held or
