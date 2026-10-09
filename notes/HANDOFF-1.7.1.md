@@ -69,3 +69,22 @@ npm run test:e2e-sync
 - 橫幅文句對不上字表、也沒有整段文字剛好是「取消封存」的按鈕時，不猜測。
 - 網站上已經取消封存、但還沒有新訊息時，索引仍保持已封存，直到手動恢復或出現新訊息。
 - Claude、Gemini、Grok 沒有封存偵測。
+
+## 工具切換交接（2026-10-09 17:35 UTC+8）
+
+Cursor 額度已用完，老闆定：用完就交接、切換。之後不再用 Cursor。
+
+- **已完成（本分支）**：(a) ChatGPT 封存偵測，`0cdaff7`；效能紀錄 `5d19f0d`。版號 1.7.1 只代表封存偵測。
+- **未完成**（Cursor agent 後續做的沒有推上來，視同沒做）：
+  - (d) **P0** ChatGPT 生圖進度文字重複入庫 → 改出 **1.7.2**，分支 `fix/imagegen-progress`，從合完 1.7.1 的 main 開。
+  - (b) 原網站已刪除 → 已封存（小字「原網站已刪除」，`deleted=N`）→ 下一輪。
+  - (c) 「從索引移除」確認框文案＋「不再提示」＋設定還原 → 下一輪。
+- **工具與模型**：
+  - 寫碼：CodeWhale（`~/.local/bin/codewhale`），模型只用 `deepseek-flash`（V4.1-Flash），不用 `deepseek-v4-pro`。`--auto` 代理模式。
+  - 複審：Codex CLI 0.162.0，`-m gpt-6.1-sol -c model_reasoning_effort=high`，非 Fast（不設 `service_tier=fast`）。
+  - 寫與審分開 session；同一件事同一個 session（`codewhale exec --resume <id>`／`codex exec resume <id>`）。session id 記在共享機 `/workspace/bd-punkcan/codewhale-sessions.md`。
+  - 任一工具報額度／登入／模型錯誤：停下回報商務拓展，不換工具或模型。
+- **下一步**：
+  1. Codex 複審 PR #17 → 修在本分支 → 全部測試實跑通過 → `merge --no-ff` 進 main。
+  2. CodeWhale 做 (d) 出 1.7.2 PR；另一個 Codex session 複審、合併。
+  3. 下一輪：(b)(c)。
