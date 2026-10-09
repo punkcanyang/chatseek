@@ -15,7 +15,7 @@
 - [x] 1.7.2 實測文案與 ROADMAP 更新
 - [x] 外部 Chrome e2e（test:e2e、test:e2e-sync 各連跑 2 次全過）、截圖、效能對照（产品开发在 sandbox 外跑，2026-10-09 23:40–23:58）
 - [x] Codex 複審 session `01a12161-9f1f-7190-a0d3-2b221e06c49f`（gpt-6.1-sol high，非 Fast；與寫碼不同 session），PR #20；結論適用包含下方未提交修正的工作樹
-- [ ] 合 main
+- [x] 合 main（`merge --no-ff`，見 git log）
 
 ## 根因（原初步判讀已由真實舊碼測試證實）
 
@@ -205,3 +205,13 @@ reader-view／清單碼未改，兩輪互有高低，第一輪先跑的一方偏
 | 捲動 p95 | 3.4 / 3.3 ms | 3.3 / 3.3 ms |
 
 image-grid／reader-view 碼沒改；開啟差 5–8 ms 在單次抖動範圍內（單次樣本 38–73 ms 兩邊都有），捲動持平。
+
+## 第二輪獨立複審（同 session `01a12161`，2026-10-10 UTC+8）
+
+審查 HEAD `da304c3`。`git diff 89761f9..HEAD` 恰好只有本 HANDOFF 新增外部驗證段與三張 SPA 範例截圖，沒有 production、測試腳本、manifest 或依賴改動；上一輪五項修正已納入 `89761f9`。重拍截圖的 A／B 正文與「收錄於」日期分別正確。
+
+產品開發在修後程式上執行的 `test:e2e` ×2、`test:e2e-sync` ×2、範例截圖與同機同 Chrome 的 500 張縮圖對 `213dde2` 效能結果，足以補齊上一輪兩項證據缺口。開啟中位兩輪比基準高 5–8 ms，捲動 p95 差 0–0.1 ms；數據已如實記錄，不由單次樣本重疊推論統計上無差異。
+
+本複審親跑 `npm run verify`、`npm run test:search`、`npm run test:spa` 全部 exit 0，含真舊碼串文／日期根因重現、新版 SPA 防護與八組資料誤刪對抗測試；`git diff --check` 通過。未發現其他新增阻擋問題，缺完整證據／缺席原生列保留及網站重用原節點可能需重新載入等既有保守限制不變。
+
+上一輪 BLOCK 解除。VERDICT: MERGE，適用已審 HEAD `da304c3`；本輪只補交接紀錄，沒有程式修正、commit、push 或合併操作。
