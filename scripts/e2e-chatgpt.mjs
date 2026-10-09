@@ -996,6 +996,45 @@ async function main() {
     const progressShots = await waitShots(PROGRESS, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "progress settled image");
     assert(progressShots.some((row) => row.status === "cached"), "the settled image was not cached");
 
+        // 1.7.2: the "copy page structure" diagnostic asks the content script of the
+    // active conversation page for a structure-only skeleton. On an archived
+    // thread it must keep the message selectors and never leak the fixture body,
+    // the conversation uuid, or any url. The clipboard is stubbed so the copied
+    // text is deterministic in headless.
+    phase.banner = true;
+    await openChat(`https://chatgpt.com/c/${BANNER}`);
+    await until(async () => {
+      const text = await page.$eval("main", (el) => el.innerText).catch(() => "");
+      return /archived/i.test(text) ? text : "";
+    }, "archived banner thread", 20000);
+    await panel.evaluate(() => {
+      window.__copiedSkeleton = null;
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (t) => { window.__copiedSkeleton = String(t); } },
+      });
+    });
+    // The panel resolves the active tab of its own window. Front the chat tab so
+    // chrome.tabs.query(active) names it, then click the button programmatically
+    // (a background extension tab still runs its listeners).
+    await page.bringToFront();
+    await panel.evaluate(() => document.getElementById("copyStructureBtn")?.click());
+    const skeleton = await until(
+      async () => panel.evaluate(() => window.__copiedSkeleton || ""),
+      "copied page skeleton",
+      20000,
+    );
+    assert(skeleton.includes("# chatseek page skeleton v1"), `skeleton header missing: ${skeleton.slice(0, 160)}`);
+    assert(/nodes=\d+/.test(skeleton), `skeleton node count missing: ${skeleton.slice(0, 160)}`);
+    assert(/data-message-author-role=assistant/.test(skeleton), "skeleton lost the assistant role value");
+    assert(!skeleton.includes(USER) && !/southern forest ridge/.test(skeleton), "skeleton leaked the fixture body");
+    assert(!skeleton.includes("://"), `skeleton leaked a url: ${skeleton.slice(0, 240)}`);
+    assert(!skeleton.includes(BANNER), "skeleton leaked the conversation uuid");
+    const structureStatus = await panel.$eval("#status", (el) => el.textContent || "").catch(() => "");
+    assert(/\d/.test(structureStatus), `the panel did not show the skeleton size: ${structureStatus}`);
+    await panel.setViewport({ width: 420, height: 860 });
+    await panel.screenshot({ path: join(docs, "panel-1.7.2-copy-structure.png"), fullPage: true });
+
     const reader = await browser.newPage();
     await reader.setViewport({ width: 900, height: 900 });
     await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${IMG}`)}`, {
