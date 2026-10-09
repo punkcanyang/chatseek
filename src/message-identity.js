@@ -122,8 +122,9 @@ export function alignRekeyedTurns(stored, page) {
   // Transition write. An older capture stored a live image-generation status
   // turn under its own hash id; the page now shows the next status line or the
   // settled turn under a fresh id at the same slot. Same index + same role +
-  // at least one side is progress-only text means the stored row is rewritten
-  // in place instead of filed as a duplicate.
+  // known capture position + an old assistant progress body means the stored
+  // row is rewritten in place instead of filed as a duplicate. A new status
+  // must never overwrite an unrelated stored user or legitimate short answer.
   for (let j = 0; j < m; j++) {
     if (usedP.has(j)) continue;
     const item = items[j];
@@ -132,8 +133,10 @@ export function alignRekeyedTurns(stored, page) {
     if (index < 0 || index >= n || usedS.has(index)) continue;
     const row = rows[index];
     if (!row?.body) continue;
+    if (row.role !== "assistant" || !Number.isInteger(row.captureIndex) ||
+        row.captureIndex !== index) continue;
     if (canonicalRole(row.role) !== canonicalRole(item.role)) continue;
-    if (!isProgressText(row.body) && !isProgressText(item.body)) continue;
+    if (!isProgressText(row.body)) continue;
     usedS.add(index);
     usedP.add(j);
     if (item.id !== row.id) map.set(item.id, row.id);

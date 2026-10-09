@@ -1476,16 +1476,6 @@ export async function clearAll() {
  */
 const PROGRESS_REPAIR_KEY = "progressRepair";
 
-async function imageRowsForMessage(imageStore, messageId) {
-  const rows = [];
-  await cursorEach(
-    imageStore.index("messageId"),
-    { range: IDBKeyRange.only(messageId) },
-    (row) => { if (row) rows.push(row); },
-  );
-  return rows;
-}
-
 async function repairConversationProgress(db, convId) {
   const storeNames = ["conversations", "messages", "tokenMap", "meta"];
   const hasImages = db.objectStoreNames.contains("images");
@@ -1497,90 +1487,112 @@ async function repairConversationProgress(db, convId) {
   const metaStore = tx.objectStore("meta");
   const imageStore = hasImages ? tx.objectStore("images") : null;
 
-  const conv = await requestDone(convStore.get(convId));
-  if (!conv) {
-    await txDone(tx);
-    return { dropped: 0, groups: 0 };
-  }
-  const all = await requestDone(msgStore.index("conversationId").getAll(convId));
-  // Time order, never the stored order meta: a 1.7.1 capture anchored the meta
-  // order on the first user id, which can leave the progress rewrites reversed.
-  // capturedAt / captureIndex are monotonic per write, so they recover the run.
-  const rows = orderMessages(all || [], null);
+  const completed = txDone(tx);
+  completed.catch(() => {}); // request failures are handled below
+  try {
+    const conv = await requestDone(convStore.get(convId));
+    if (!conv) {
+      await completed;
+      return { dropped: 0, groups: 0 };
+    }
+    const all = await requestDone(msgStore.index("conversationId").getAll(convId));
+    // Time order, never the stored order meta: a 1.7.1 capture anchored the meta
+    // order on the first user id, which can leave the progress rewrites reversed.
+    // First capture time recovers rewrite order; captureIndex separately
+    // supplies position evidence. Missing positions are never guessed.
+    const rows = orderMessages(all || [], null);
 
-  const plans = planProgressMerges(
-    rows.map((row) => ({ id: row.id, role: row.role, body: row.body })),
-  );
-  if (!plans.length) {
-    await txDone(tx);
-    return { dropped: 0, groups: 0 };
-  }
+    const plans = planProgressMerges(rows);
+    if (!plans.length) {
+      await completed;
+      return { dropped: 0, groups: 0 };
+    }
 
-  const dropToKeep = new Map();
-  for (const plan of plans) {
-    for (const id of plan.drop) dropToKeep.set(id, plan.keep);
-  }
+    const dropToKeep = new Map();
+    for (const plan of plans) {
+      for (const id of plan.drop) dropToKeep.set(id, plan.keep);
+    }
 
-  // A progress row has no image of its own; move any anyway so a thumbnail
-  // never points at a row that is about to disappear.
-  if (imageStore) {
-    for (const [from, keep] of dropToKeep) {
-      for (const row of await imageRowsForMessage(imageStore, from)) {
-        const dest = await requestDone(imageStore.get([keep, row.index]));
-        const key = imageBlobKey(from, row.index);
-        const packed = await requestDone(metaStore.get(key));
-        metaStore.delete(key);
-        const bytes = copyBytes(packed?.blob) || copyBytes(row.blob);
-        imageStore.delete([from, row.index]);
-        if (!dest) {
-          imageStore.put(withoutBlob({ ...row, messageId: keep }));
-          if (bytes) metaStore.put({ key: imageBlobKey(keep, row.index), blob: bytes });
-        } else if (row.bytes) {
-          await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+    // A progress row has no image of its own; move any anyway so a thumbnail
+    // never points at a row that is about to disappear.
+    if (imageStore) {
+      // One indexed read for this conversation rather than thousands of empty
+      // message-id cursor scans. Current image rows carry metadata only.
+      const imageRows = await requestDone(imageStore.index("conversationId").getAll(convId));
+      const imagesByMessage = new Map();
+      for (const image of imageRows) {
+        if (!imagesByMessage.has(image.messageId)) imagesByMessage.set(image.messageId, []);
+        imagesByMessage.get(image.messageId).push(image);
+      }
+      const occupiedByKeep = new Map();
+      for (const [from, keep] of dropToKeep) {
+        for (const row of imagesByMessage.get(from) || []) {
+          let index = row.index;
+          // Keep distinct images even when every old progress row used slot 0.
+          // The stable turn's original slots retain their indices for reader
+          // links; moved records take a free slot and retain their bitmap bytes.
+          let slots = occupiedByKeep.get(keep);
+          if (!slots) {
+            const keptImages = imagesByMessage.get(keep) || [];
+            slots = { occupied: new Set(keptImages.map(image => image.index)), next: 0 };
+            occupiedByKeep.set(keep, slots);
+          }
+          if (slots.occupied.has(index)) {
+            while (slots.occupied.has(slots.next)) slots.next += 1;
+            index = slots.next++;
+          }
+          slots.occupied.add(index);
+          const key = imageBlobKey(from, row.index);
+          const packed = await requestDone(metaStore.get(key));
+          metaStore.delete(key);
+          const bytes = copyBytes(packed?.blob) || copyBytes(row.blob);
+          imageStore.delete([from, row.index]);
+          imageStore.put(withoutBlob({ ...row, messageId: keep, index, offset: 0 }));
+          if (bytes) metaStore.put({ key: imageBlobKey(keep, index), blob: bytes });
         }
       }
     }
-  }
 
-  for (const id of dropToKeep.keys()) {
-    const existing = await requestDone(msgStore.get(id));
-    if (!existing) continue;
-    deleteTokens(tokenStore, tokensForDelete(existing.body), convId, id);
-    msgStore.delete(id);
-    if (imageStore) {
-      for (const row of await imageRowsForMessage(imageStore, id)) {
-        imageStore.delete([id, row.index]);
-        metaStore.delete(imageBlobKey(id, row.index));
-        if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    for (const id of dropToKeep.keys()) {
+      const existing = byId.get(id);
+      if (!existing) continue;
+      deleteTokens(tokenStore, tokensForDelete(existing.body), convId, id);
+      msgStore.delete(id);
+      // All image rows were moved above in this same transaction. No second
+      // cursor sweep per deleted message, and no bitmap bytes were discarded.
+    }
+
+    const orderRow = await requestDone(metaStore.get(ORDER_PREFIX + convId));
+    const nextOrder = (orderRow?.ids || []).filter((id) => id && !dropToKeep.has(id));
+    if (orderRow) metaStore.put({ ...orderRow, ids: nextOrder });
+
+    // Counts and pointers only. updatedAt / updatedAtSource stay exactly as they
+    // were: the last progress write already stamped the conversation "just now".
+    conv.messageCount = await requestDone(msgStore.index("conversationId").count(convId));
+    const droppedTail = !!(conv.tailMessageId && dropToKeep.has(conv.tailMessageId));
+    if (droppedTail) conv.tailMessageId = dropToKeep.get(conv.tailMessageId);
+    if (conv.captureBaselineTail && dropToKeep.has(conv.captureBaselineTail)) {
+      conv.captureBaselineTail = dropToKeep.get(conv.captureBaselineTail);
+    }
+    // The sidebar preview may have been the last progress rewrite. Show the kept
+    // settled turn instead. A kept progress row (no settled tail) is left alone.
+    if (droppedTail && conv.tailMessageId) {
+      const keptTail = await requestDone(msgStore.get(conv.tailMessageId));
+      if (keptTail && typeof keptTail.body === "string" && keptTail.body.trim() &&
+          !isProgressText(keptTail.body)) {
+        conv.lastPreview = clipPreviewSource(keptTail.body);
+        conv.lastPreviewRole = keptTail.role;
       }
     }
+    convStore.put(conv);
+    await completed;
+    return { dropped: dropToKeep.size, groups: plans.length };
+  } catch (error) {
+    try { tx.abort(); } catch { /* already completed or aborted */ }
+    await completed.catch(() => {});
+    throw error;
   }
-
-  const orderRow = await requestDone(metaStore.get(ORDER_PREFIX + convId));
-  const nextOrder = (orderRow?.ids || []).filter((id) => id && !dropToKeep.has(id));
-  if (orderRow) metaStore.put({ ...orderRow, ids: nextOrder });
-
-  // Counts and pointers only. updatedAt / updatedAtSource stay exactly as they
-  // were: the last progress write already stamped the conversation "just now".
-  conv.messageCount = await requestDone(msgStore.index("conversationId").count(convId));
-  const droppedTail = !!(conv.tailMessageId && dropToKeep.has(conv.tailMessageId));
-  if (droppedTail) conv.tailMessageId = dropToKeep.get(conv.tailMessageId);
-  if (conv.captureBaselineTail && dropToKeep.has(conv.captureBaselineTail)) {
-    conv.captureBaselineTail = dropToKeep.get(conv.captureBaselineTail);
-  }
-  // The sidebar preview may have been the last progress rewrite. Show the kept
-  // settled turn instead. A kept progress row (no settled tail) is left alone.
-  if (droppedTail && conv.tailMessageId) {
-    const keptTail = await requestDone(msgStore.get(conv.tailMessageId));
-    if (keptTail && typeof keptTail.body === "string" && keptTail.body.trim() &&
-        !isProgressText(keptTail.body)) {
-      conv.lastPreview = clipPreviewSource(keptTail.body);
-      conv.lastPreviewRole = keptTail.role;
-    }
-  }
-  convStore.put(conv);
-  await txDone(tx);
-  return { dropped: dropToKeep.size, groups: plans.length };
 }
 
 /**
@@ -1604,6 +1616,7 @@ export async function repairProgressDuplicates() {
 
     let merged = 0;
     let dropped = 0;
+    let failed = 0;
     for (const id of ids) {
       try {
         const res = await repairConversationProgress(db, id);
@@ -1611,13 +1624,14 @@ export async function repairProgressDuplicates() {
         dropped += res.dropped;
       } catch {
         // One unreadable conversation must not strand the rest.
+        failed += 1;
       }
     }
 
     const doneTx = db.transaction("meta", "readwrite");
     doneTx.objectStore("meta").put({
       key: PROGRESS_REPAIR_KEY,
-      done: true,
+      done: failed === 0,
       merged,
       dropped,
       at: Date.now(),
@@ -1627,16 +1641,19 @@ export async function repairProgressDuplicates() {
       try { console.log(`[Chatseek] progress repair merged=${merged} dropped=${dropped}`); }
       catch { /* missing console must not stop the tidy */ }
     }
-    return { merged, dropped, done: true };
+    return { merged, dropped, done: failed === 0 };
   });
 }
 
 let progressRepairPromise = null;
 
-/** Run the repair at most once per service-worker lifetime. */
+/** Share a pending/successful repair; a failed attempt remains retryable. */
 export function ensureProgressRepair() {
   if (!progressRepairPromise) {
-    progressRepairPromise = repairProgressDuplicates().catch(() => null);
+    progressRepairPromise = repairProgressDuplicates().then((result) => {
+      if (!result.done) progressRepairPromise = null;
+      return result;
+    }).catch(() => { progressRepairPromise = null; return null; });
   }
   return progressRepairPromise;
 }

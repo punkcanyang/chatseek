@@ -91,3 +91,31 @@ npm run test:e2e-sync  # 需 xvfb-run
 - `heuristicFromBlock` 有 body 長度 ≥24 的 gate，非 selector 命中的短進度文字本來就會被丟；封閉 shadow 需 `chrome.dom.openOrClosedShadowRoot`。
 - 遷移的 progress alias 對「剛好是進度片語的合法 assistant 短訊」可能別名到同位置舊 row（低風險）。未涵蓋語系的舊重複塊遷移時不會被合併，會保留原狀。
 - 一次性整理是啟動時 best-effort；DB 版本維持 4，若之後要改結構仍需另寫遷移與 `test:upgrade`。
+
+## PR #19 獨立複審（Codex，2026-10-09；與 CodeWhale 寫碼 session 分開）
+
+複審起點 `31965c9`，基準 `ad8f7d1`。以下修正留在工作目錄，**沒有 commit／push**。先前各節是寫碼者交接；本節記錄複審後的狀態，不是 STATUS READY。
+
+### 實際發現並修正
+
+新增回歸測試先在原 PR 上確認四項失敗：不同 captureIndex 的進度列被誤合併、合法短答 `Drawing` 被當進度、同一 DOM 訊息非前綴改寫後從 2 列變 3 列、三張 index=0 的縮圖遷移後只剩一張。另修正圖片出現但沒有正文／仍留舊狀態文字的擷取，以及等長且尾 80 字相同的正文改寫被 fingerprint 跳過。
+
+- `content/chatgpt.js`：優先原生訊息／turn id，無 id 時用 WeakMap 保持同一 DOM turn 的身份；元素被換掉時，限同對話、等長可見窗口、有同位置不變的鄰居才沿用位置。不同訊息的同文仍分開。純圖片回覆用 `🖼` 保持可寫入的正文與圖片 host，圖片出現時移除整則舊進度狀態（不改网站 DOM）。
+- `content/shared.js`、`src/image-progress.js`：保護 `Drawing` 等單字合法短答；不把一般 `aria-valuenow` 控件或空 figure 當生成／圖片證據。進度旗標不套到明確的 user 訊息。正文比對增加完整字串參照，避免等長首部改寫漏寫。
+- `src/image-progress.js`、`src/message-identity.js`：遷移必須同對話、相鄰、有效且相同的 captureIndex；缺少位置資料則保留。舊進度轉穩定版的別名只處理 assistant 與已知位置，不用新進度去蓋合法舊正文。
+- `src/db.js`：縮圖 index 相撞分配空 slot，保留位元組與原有 byte counter；整個對話事務出錯時回滾，任何失敗都不標全庫修復完成，下次可重試。改成逐對話一次讀圖片 metadata，避免逐刪除列反覆開空 cursor；遷移不改 updatedAt／updatedAtSource／封存狀態。
+- `src/reader-url.js`：閱讀頁跳轉接受遷移保留下來的第 24 個以後 slot（有整數上限）；現場擷取仍最多 24 張，沒有加擷取量、權限或網路請求。
+- `scripts/progress-test.mjs`：根因不再只依靠手工 seed。直接從 git 讀 `ad8f7d1` 的擷取與 DB／identity 模組，僅隔離 DB 名稱，實際寫出 **5 列，其中 4 列進度**。舊列 fixture 改為實際寫碼者會存的相同 captureIndex。
+- 新增 `scripts/progress-review-test.mjs`：上述四項回歸、替換 DOM 元素、等長首部改寫、純圖片、使用者文字、失敗回滾重試、索引清理、3000 列／500 張縮圖與所有 slot 跳轉、刪掉 repair flag 後再跑仍冪等。
+- `package.json`：review 測試加入 test:search／test:upgrade／test:progress，依賴未改。
+- `scripts/verify.mjs`：逐行對基準只加強，另把 message-identity 加入網路掃描、模組掃描禁止 new Image，原檢查未移除。
+
+### 驗證與限制
+
+授權的 `verify`、`test:search`、`test:fixture`、`test:gemini`、`test:upgrade`、`test:sync` 均通過；新增 review 回歸也通過。manifest 深比對確認 permissions 恰好 `["sidePanel"]`，hosts／content_scripts（含 matches）／CSP 與基準相同；依賴與 lockfile 相同，DB 仍 4，花費 $0。擴充執行碼的禁用網路、HTML 注入與點擊掃描零命中。
+
+**尚有阻擋項：遷移的首次等待沒有界限。** 標準 sparse-index 負載（3000 列／500 張 1-byte 假縮圖）在 fake IndexedDB 約 6–8 秒，event-loop 最大間隔約 32–45 ms。加入完整倒排索引後，同樣負載測得 **211451 ms**，event-loop 最大間隔 **90 ms**，功能仍正確。這是 Node／fake IndexedDB 數據，不能等同 Chrome 原生 IndexedDB；但 `background.js` 的 CAPTURE_MESSAGES 會先等待**全庫** ensureProgressRepair，而 content/shared.js 的 send 回應期限是 **15000 ms**。單對話事務也同時鎖住 conversations/messages/tokenMap/meta/images，其他資料操作可能等待該事務。
+
+完整索引案例可重現：`node scripts/progress-review-test.mjs --full-index`。保留為 opt-in 壓力測試，索引正確性另有小 fixture，沒有刪掉壓力案例來掩蓋耗時。需要以 Chrome 原生 IndexedDB 確認首次擷取／搜尋不被長時間阻塞，或把修復改成有界的事務與等待；在此之前複審 **VERDICT: BLOCK**。Chrome e2e／e2e-sync、瀏覽器效能重測及實機測試依老闆指示由老闆跑，本 session 沒跑，也沒有重新宣稱先前截圖與效能數據驗證了複審改動。
+
+剩餘保守限制：未涵蓋語系／與狀態完全同文的合法 assistant 短句仍無法單靠文字判別；無位置的舊列不合併。DOM 全換、無原生 id 又無鄰居證據時，不冒險跨窗口覆蓋舊訊息。旧 captureIndex 是分批内位置，不是全对话绝对位置；窗口／分批发生变化时，位置证据仍有限，需要实机样本验证。

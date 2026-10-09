@@ -13,7 +13,10 @@
  * Part D  top / same-origin iframe / open+closed shadow all settle to one row
  */
 import "fake-indexeddb/auto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
@@ -88,26 +91,26 @@ assert(PROGRESS_PHRASES.some((p) => /[\uac00-\ud7af]/.test(p)), "ko phrases pres
     { id: "p3", role: "assistant", body: "Adding details 80%" },
     { id: "final", role: "assistant", body: "Here is the image." },
   ];
-  const plans = planProgressMerges(rows);
+  const plans = planProgressMerges(rows.map(row => ({ ...row, conversationId: "fixture", captureIndex: 1 })));
   assert(plans.length === 1, "one merge plan");
   assert(plans[0].keep === "final", "the settled turn is kept");
   assert(plans[0].drop.join(",") === "p1,p2,p3", "the progress run is dropped");
   const tail = planProgressMerges([
-    { id: "a", role: "assistant", body: "Sketching 40%" },
-    { id: "b", role: "assistant", body: "Adding details 80%" },
+    { id: "a", role: "assistant", body: "Sketching 40%", conversationId: "fixture", captureIndex: 1 },
+    { id: "b", role: "assistant", body: "Adding details 80%", conversationId: "fixture", captureIndex: 1 },
   ]);
   assert(tail.length === 1 && tail[0].keep === "b" && tail[0].drop[0] === "a", "a run without a settled tail keeps its last row");
   assert(planProgressMerges([{ id: "s", role: "assistant", body: "Sketching 40%" }]).length === 0, "a lone progress row is left alone");
 }
 
 // ---------------------------------------------------------------- harness
-function buildApi(dom, chromeExtra = {}) {
+function buildApi(dom, chromeExtra = {}, sources = { sharedSrc, chatgptSrc }) {
   const fn = new Function(
     "document", "location", "Node", "NodeFilter", "console", "chrome",
-    `${sharedSrc}
+    `${sources.sharedSrc}
      Chatseek.autoStart = false;
      if (!Chatseek.scheduleMessageImages) Chatseek.scheduleMessageImages = () => {};
-     ${chatgptSrc}
+     ${sources.chatgptSrc}
      return Chatseek;`,
   );
   return fn(
@@ -226,6 +229,40 @@ async function seedRows({ conversation, messages, order, images = [] }) {
   console.log("Part A  progress turn ids:", ids.length, "distinct:", new Set(ids).size);
   assert(new Set(ids).size === 4, "root cause: each rewrite hashes to a new id");
 
+  // Run the actual reviewed main implementation, not a hand-seeded imitation.
+  // Only its DB name is isolated; capture, identity and write logic are intact.
+  const baselineDir = mkdtempSync(join(tmpdir(), "chatseek-progress-baseline-"));
+  const runGit = promisify(execFile);
+  const fromMain = async (file) => (await runGit("git", ["show", `ad8f7d1:${file}`], { cwd: root, encoding: "utf8" })).stdout;
+  try {
+    writeFileSync(join(baselineDir, "package.json"), '{"type":"module"}');
+    const loaded = new Set();
+    const loadModule = async (file) => {
+      if (loaded.has(file)) return;
+      loaded.add(file);
+      let source = await fromMain(`src/${file}`);
+      for (const match of source.matchAll(/from "\.\/([^"\n]+)"/g)) await loadModule(match[1]);
+      if (file === "db.js") source = source.replace('const DB_NAME = "chatseek"', 'const DB_NAME = "chatseek-progress-baseline"');
+      writeFileSync(join(baselineDir, file), source);
+    };
+    await loadModule("db.js");
+    const oldDb = await import(`file://${baselineDir}/db.js`);
+    const baselineSources = { sharedSrc: await fromMain("content/shared.js"), chatgptSrc: await fromMain("content/chatgpt.js") };
+    const dom = new JSDOM(page([turn("user", USER_TEXT), turn("assistant", TICKS[0])]), { url: CONV.url });
+    const oldApi = buildApi(dom, {}, baselineSources);
+    for (const tick of [...TICKS, LAST_TICK]) {
+      dom.window.document.querySelector('[data-turn="assistant"]').textContent = tick;
+      const messages = oldApi.platforms.chatgpt.extractMessages(PLATFORM_ID, dom.window.document, false).messages;
+      await oldDb.upsertMessages(CONV, messages, { captureId: tick, pageMessageIds: messages.map(m => m.id) });
+    }
+    const actual = await oldDb.readConversation(CONV_ID);
+    const progressRows = actual.messages.filter(m => isProgressText(m.body));
+    console.log("Part A  actual ad8f7d1 writes:", actual.messages.length, "rows;", progressRows.length, "progress");
+    assert(actual.messages.length === 5 && progressRows.length === 4, "actual pre-fix write path reproduces duplicates");
+    assert(progressRows.every(m => m.captureIndex === 1), "legacy rewrites retain the same capture position");
+    (await oldDb.openDb()).close();
+  } finally { rmSync(baselineDir, { recursive: true, force: true }); }
+
   // Seed exactly what <= 1.7.1 wrote for one progress turn: four rows, with the
   // stored order meta anchored on the user id so the rewrites came out reversed.
   const CONV_A = `${CONV_ID}:a`;
@@ -240,9 +277,9 @@ async function seedRows({ conversation, messages, order, images = [] }) {
     messages: [
       { id: U, conversationId: CONV_A, role: "user", body: USER_TEXT, capturedAt: T, captureIndex: 0 },
       ...TICKS.map((body, i) => ({
-        id: p(i + 1), conversationId: CONV_A, role: "assistant", body, capturedAt: T + 1 + i, captureIndex: i + 1,
+        id: p(i + 1), conversationId: CONV_A, role: "assistant", body, capturedAt: T + 1 + i, captureIndex: 1,
       })),
-      { id: p(4), conversationId: CONV_A, role: "assistant", body: LAST_TICK, capturedAt: T + 4, captureIndex: 4 },
+      { id: p(4), conversationId: CONV_A, role: "assistant", body: LAST_TICK, capturedAt: T + 4, captureIndex: 1 },
     ],
     order: [U, p(4), p(3), p(2), p(1)],
   });
@@ -337,10 +374,10 @@ async function seedRows({ conversation, messages, order, images = [] }) {
     },
     messages: [
       { id: p(1), conversationId: CONV_C, role: "assistant", body: TICKS[0], capturedAt: T, captureIndex: 0 },
-      { id: p(2), conversationId: CONV_C, role: "assistant", body: TICKS[1], capturedAt: T + 1, captureIndex: 1 },
-      { id: finalId, conversationId: CONV_C, role: "assistant", body: SETTLED_BODY, capturedAt: T + 2, captureIndex: 2 },
-      { id: q(1), conversationId: CONV_C, role: "assistant", body: "Sketching 38%", capturedAt: T + 3, captureIndex: 3 },
-      { id: q(2), conversationId: CONV_C, role: "assistant", body: "Adding details 80%", capturedAt: T + 4, captureIndex: 4 },
+      { id: p(2), conversationId: CONV_C, role: "assistant", body: TICKS[1], capturedAt: T + 1, captureIndex: 0 },
+      { id: finalId, conversationId: CONV_C, role: "assistant", body: SETTLED_BODY, capturedAt: T + 2, captureIndex: 0 },
+      { id: q(1), conversationId: CONV_C, role: "assistant", body: "Sketching 38%", capturedAt: T + 3, captureIndex: 1 },
+      { id: q(2), conversationId: CONV_C, role: "assistant", body: "Adding details 80%", capturedAt: T + 4, captureIndex: 1 },
     ],
     order: [p(1), finalId, p(2), q(1), q(2)],
     images: [

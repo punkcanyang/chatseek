@@ -1180,7 +1180,8 @@ const Chatseek = {
       conversation.archiveSource || "",
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
-    if (msgFp === state.lastMsgFp) {
+    if (msgFp === state.lastMsgFp && state.lastMsgBodies &&
+        msgs.every((m) => state.lastMsgBodies.get(m.id) === m.body)) {
       Chatseek.noteSyncStored(conversation.id, msgs.length);
       const restored = await restorePending();
       return ok && restored;
@@ -1211,6 +1212,10 @@ const Chatseek = {
       if (res.observed) observed = true;
     }
     state.lastMsgFp = msgFp;
+    // A stable turn id can also rewrite the beginning at the same length.
+    // Keep string references so a matching length/tail fingerprint alone
+    // cannot hide that edit; this does not copy or hash entire transcripts.
+    state.lastMsgBodies = new Map(msgs.map((m) => [m.id, m.body]));
     state.lastMsgConvId = conversation.id;
     state.lastMsgKeys = new Set(keys);
     Chatseek.noteSyncStored(conversation.id, msgs.length);
@@ -1383,6 +1388,8 @@ const Chatseek = {
   isProgressText(body) {
     const core = Chatseek.progressCore(body);
     if (!core) return false;
+    if (/^(drawing|painting|sketching|dibujando|esboçando)$/.test(core) &&
+        !/\d{1,3}\s*[%％]/.test(String(body))) return false;
     if (!Chatseek._progressPhraseSet) {
       Chatseek._progressPhraseSet = new Set(Chatseek.PROGRESS_PHRASES);
     }
@@ -1392,11 +1399,11 @@ const Chatseek = {
   isProgressNode(node) {
     if (!node || typeof node.querySelector !== "function") return false;
     try {
-      if (node.matches?.("[data-is-streaming='true'], [aria-valuenow], [aria-valuetext], [role='progressbar'], progress")) {
+      if (node.matches?.("[data-is-streaming='true'], [role='progressbar'], progress")) {
         return true;
       }
       return !!node.querySelector(
-        "[role='progressbar'], progress, [aria-valuenow], [aria-valuetext]," +
+        "[role='progressbar'], progress," +
         "[data-is-streaming='true'], [data-testid*='progress' i], [data-testid*='streaming' i]"
       );
     } catch {
@@ -1407,11 +1414,12 @@ const Chatseek = {
   _hasContentImage(node) {
     if (!node || typeof node.querySelectorAll !== "function") return false;
     try {
-      for (const img of node.querySelectorAll("img, picture, figure, canvas, [data-message-image]")) {
-        const tag = String(img.tagName || "").toLowerCase();
-        if (tag !== "img") return true;
+      for (const img of node.querySelectorAll("img")) {
         const src = String(img.getAttribute?.("src") || img.currentSrc || "");
-        if (src && !src.startsWith("data:")) return true;
+        const width = Number(img.getAttribute?.("width") || img.naturalWidth || 0);
+        const height = Number(img.getAttribute?.("height") || img.naturalHeight || 0);
+        if ((width && width <= 32) || (height && height <= 32)) continue;
+        if (src && (!src.startsWith("data:") || (width > 32 && height > 32))) return true;
       }
     } catch {
       return false;
@@ -1423,7 +1431,8 @@ const Chatseek = {
     const core = Chatseek.progressCore(body);
     if (!core || core.length > 48) return false;
     const raw = String(body ?? "").replace(/\s+/g, " ").trim();
-    return !/[.。!！?？\n\r]/.test(raw);
+    return !/[.。!！?？\n\r]/.test(raw) &&
+      /^(正在(?:準備|准备|生成|建立|繪製|绘制|創建|创建|思考)|準備中|准备中|thinking|loading|generating|creating|preparing|drawing|painting|sketching)(?:\b|[\u4e00-\u9fff])/i.test(core);
   },
 
   isProgressMessage(body, node) {

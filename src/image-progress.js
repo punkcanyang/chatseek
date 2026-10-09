@@ -60,8 +60,8 @@ export const PROGRESS_PHRASES = [
 const PHRASE_SET = new Set(PROGRESS_PHRASES);
 
 // A progress turn may keep a small decorative bitmap (spinner). Only a real
-// content image (http/blob src, not an inline data: pixel) counts as settled.
-const IMAGE_SELECTOR = "img, picture, figure, canvas, [data-message-image]";
+// content image (not a small spinner or inline data: pixel) counts as settled.
+const IMAGE_SELECTOR = "img";
 
 /** Fold a status string to its comparable core: no %, no strays, lowercase. */
 export function progressCore(raw) {
@@ -81,6 +81,9 @@ export function progressCore(raw) {
 export function isProgressText(body) {
   const core = progressCore(body);
   if (!core) return false;
+  // A single word such as Drawing can be a legitimate answer.
+  if (/^(drawing|painting|sketching|dibujando|esboçando)$/.test(core) &&
+      !/\d{1,3}\s*[%％]/.test(String(body))) return false;
   return PHRASE_SET.has(core);
 }
 
@@ -88,11 +91,11 @@ export function isProgressText(body) {
 export function isProgressNode(node) {
   if (!node || typeof node.querySelector !== "function") return false;
   try {
-    if (node.matches?.("[data-is-streaming='true'], [aria-valuenow], [aria-valuetext], [role='progressbar'], progress")) {
+    if (node.matches?.("[data-is-streaming='true'], [role='progressbar'], progress")) {
       return true;
     }
     return !!node.querySelector(
-      "[role='progressbar'], progress, [aria-valuenow], [aria-valuetext]," +
+      "[role='progressbar'], progress," +
       "[data-is-streaming='true'], [data-testid*='progress' i], [data-testid*='streaming' i]",
     );
   } catch {
@@ -104,10 +107,11 @@ function hasContentImage(node) {
   if (!node || typeof node.querySelectorAll !== "function") return false;
   try {
     for (const img of node.querySelectorAll(IMAGE_SELECTOR)) {
-      const tag = String(img.tagName || "").toLowerCase();
-      if (tag !== "img") return true;
       const src = String(img.getAttribute?.("src") || img.currentSrc || "");
-      if (src && !src.startsWith("data:")) return true;
+      const width = Number(img.getAttribute?.("width") || img.naturalWidth || 0);
+      const height = Number(img.getAttribute?.("height") || img.naturalHeight || 0);
+      if ((width && width <= 32) || (height && height <= 32)) continue;
+      if (src && (!src.startsWith("data:") || (width > 32 && height > 32))) return true;
     }
   } catch {
     return false;
@@ -121,7 +125,8 @@ function isShortStatusLine(body) {
   if (!core) return false;
   if (core.length > 48) return false;
   const raw = String(body ?? "").replace(/\s+/g, " ").trim();
-  return !/[.。!！?？\n\r]/.test(raw);
+  return !/[.。!！?？\n\r]/.test(raw) &&
+    /^(正在(?:準備|准备|生成|建立|繪製|绘制|創建|创建|思考)|準備中|准备中|thinking|loading|generating|creating|preparing|drawing|painting|sketching)(?:\b|[\u4e00-\u9fff])/i.test(core);
 }
 
 /**
@@ -137,7 +142,9 @@ export function isProgressMessage(body, node) {
 
 /**
  * Group already-stored rows into merges. rows must be in stored order and
- * carry { id, role, body }. A run of consecutive progress-only assistant rows
+ * carry { id, role, body, conversationId, captureIndex }. Only adjacent rows
+ * with the same conversation and known position can form a merge. A run of
+ * consecutive progress-only assistant rows
  * folds into the assistant row right after it; if that row is missing, not an
  * assistant, or is itself progress text, the run's own last row is kept. A row
  * with images is a valid keep target (its images stay put), and a progress row
@@ -156,12 +163,15 @@ export function planProgressMerges(rows) {
       i += 1;
       continue;
     }
-    let j = i;
-    while (j < list.length && isProg(list[j])) j += 1;
+    const sameSlot = (a, b) => a && b &&
+      typeof a.conversationId === "string" && a.conversationId === b.conversationId &&
+      Number.isInteger(a.captureIndex) && a.captureIndex >= 0 && a.captureIndex === b.captureIndex;
+    let j = i + 1;
+    while (j < list.length && isProg(list[j]) && sameSlot(list[i], list[j])) j += 1;
     const next = list[j];
     const drop = [];
     let keep;
-    if (next && next.role === "assistant" && !isProg(next)) {
+    if (next && next.role === "assistant" && !isProg(next) && sameSlot(list[i], next)) {
       keep = next.id;
       for (let k = i; k < j; k += 1) drop.push(list[k].id);
     } else {

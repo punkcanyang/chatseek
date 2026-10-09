@@ -153,6 +153,7 @@ const referenced = new Set([
   "src/current-tab.js",
   "src/i18n.js",
   "src/message-order.js",
+  "src/message-identity.js",
   "src/reader-url.js",
   "src/reader-view.js",
   "reader/index.html",
@@ -269,6 +270,7 @@ for (const rel of [
   "content/images.js",
   "src/activity-time.js",
   "src/db.js",
+  "src/message-identity.js",
   "src/tokenize.js",
   "src/preview.js",
   "src/conversation-url.js",
@@ -289,7 +291,7 @@ for (const rel of [
   "sidepanel/sync-ui.js",
 ]) {
   const src = read(rel);
-  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts/.test(src)) {
+  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts|\bnew\s+Image\b/.test(src)) {
     fail(`${rel} must not make network requests`);
   }
   if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
