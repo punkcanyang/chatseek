@@ -1696,6 +1696,46 @@ function pushInline(state, text, pre) {
   if (piece) writeRaw(state, piece);
 }
 
+function closedShadowRoot(node) {
+  if (!node || node.nodeType !== 1 || node.shadowRoot || node.tagName === "IFRAME") return null;
+  try {
+    const dom = typeof chrome !== "undefined" ? chrome.dom : null;
+    return dom?.openOrClosedShadowRoot?.(node) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Record where a picture sits without copying its address or its chrome text.
+function stampImageNodes(root, state) {
+  if (!root || !state) return;
+  const at = state.out.length;
+  let images = [];
+  try {
+    if (root.tagName === "IMG") images = [root];
+    else if (root.querySelectorAll) images = [...root.querySelectorAll("img")].slice(0, 24);
+  } catch {
+    images = [];
+  }
+  for (const img of images) {
+    if (img && !state.offsets.has(img)) state.offsets.set(img, at);
+  }
+}
+
+function stampSkippedImages(node, state) {
+  if (!node || node.nodeType !== 1) return;
+  const tag = node.tagName || "";
+  const role = (node.getAttribute?.("role") || "").toLowerCase();
+  if (tag === "IFRAME") {
+    let doc = null;
+    try { doc = node.contentDocument; } catch { doc = null; }
+    const base = doc?.body || doc?.documentElement;
+    if (base) stampImageNodes(base, state);
+    return;
+  }
+  if (tag === "BUTTON" || role === "button") stampImageNodes(node, state);
+}
+
 function walkChildren(node, state, ctx) {
   const shadow = node?.shadowRoot;
   if (shadow && shadow.childNodes && shadow.childNodes.length) {
@@ -1703,8 +1743,11 @@ function walkChildren(node, state, ctx) {
     return;
   }
   const kids = node?.childNodes;
-  if (!kids) return;
-  for (const child of kids) walkNode(child, state, ctx);
+  if (kids) {
+    for (const child of kids) walkNode(child, state, ctx);
+  }
+  const closed = closedShadowRoot(node);
+  if (closed) stampImageNodes(closed, state);
 }
 
 function isSaidLine(node) {
@@ -1869,7 +1912,10 @@ function walkNode(node, state, ctx) {
     pushInline(state, node.nodeValue, ctx.pre || ctx.plainPre);
     return;
   }
-  if (node.nodeType !== 1 || domSkip(node)) return;
+  if (node.nodeType !== 1 || domSkip(node)) {
+    stampSkippedImages(node, state);
+    return;
+  }
   if (isSaidLine(node) || isCodeHeader(node) || isArtifactChrome(node) || isCitationCaption(node)) return;
   if (!ctx.plain && writeKatex(node, state)) return;
   const tag = node.tagName;
@@ -2002,7 +2048,12 @@ function scrubDiag(value, max) {
     .slice(0, max);
 }
 
-Chatseek.imageDiagCounts = () => ({ cached: 0, placeholder: 0 });
+Chatseek.imageDiagCounts = () => ({
+  detected: 0,
+  cached: 0,
+  placeholder: 0,
+  fail: { tainted: 0, tooBig: 0, timeout: 0, notLoaded: 0 },
+});
 Chatseek._lastError = null;
 Chatseek._scriptedFrames = new WeakMap();
 Chatseek._diagFields = null;
@@ -2113,8 +2164,25 @@ Chatseek.rememberError = (err) => {
   };
 };
 
+function imageFailOf(images) {
+  const fail = images?.fail || {};
+  return {
+    tainted: Number(fail.tainted) || 0,
+    tooBig: Number(fail.tooBig) || 0,
+    timeout: Number(fail.timeout) || 0,
+    notLoaded: Number(fail.notLoaded) || 0,
+  };
+}
+
+function imageCountsOf(images) {
+  const cached = Number(images?.cached) || 0;
+  const placeholder = Number(images?.placeholder) || 0;
+  const detected = images?.detected == null ? cached + placeholder : (Number(images.detected) || 0);
+  return { detected, cached, placeholder, fail: imageFailOf(images) };
+}
+
 Chatseek.diagFields = (fields) => {
-  const images = Chatseek.imageDiagCounts() || { cached: 0, placeholder: 0 };
+  const images = imageCountsOf(Chatseek.imageDiagCounts());
   const err = Chatseek._lastError || {};
   const src = fields || {};
   return {
@@ -2126,8 +2194,10 @@ Chatseek.diagFields = (fields) => {
     userCount: Number(src.userCount) || 0,
     assistantCount: Number(src.assistantCount) || 0,
     charCount: Number(src.charCount) || 0,
-    imagesCached: Number(images.cached) || 0,
-    imagesPlaceholder: Number(images.placeholder) || 0,
+    imagesDetected: images.detected,
+    imagesCached: images.cached,
+    imagesPlaceholder: images.placeholder,
+    imageFail: images.fail,
     healthState: src.healthState || (src.warn ? "warn" : "ok"),
     errorName: err.name || "",
     errorStack: err.stack || "",
@@ -2135,6 +2205,18 @@ Chatseek.diagFields = (fields) => {
     at: Number(src.at) || Date.now(),
   };
 };
+
+function imageCountLine(src) {
+  const saved = Number(src?.imagesCached) || 0;
+  const hold = Number(src?.imagesPlaceholder) || 0;
+  const detected = src?.imagesDetected == null ? saved + hold : (Number(src.imagesDetected) || 0);
+  const fail = src?.imageFail || {};
+  const tainted = Number(fail.tainted) || 0;
+  const tooBig = Number(fail.tooBig) || 0;
+  const timeout = Number(fail.timeout) || 0;
+  const notLoaded = Number(fail.notLoaded) || 0;
+  return `imgs=${detected}/${saved}/${hold} fail=tainted:${tainted},too-big:${tooBig},timeout:${timeout},not-loaded:${notLoaded}`;
+}
 
 Chatseek.formatDiag = (fields) => {
   const src = fields || {};
@@ -2155,6 +2237,7 @@ Chatseek.formatDiag = (fields) => {
     `chars=${Number(src.charCount) || 0}`,
     `imgCache=${Number(src.imagesCached) || 0}`,
     `imgHold=${Number(src.imagesPlaceholder) || 0}`,
+    imageCountLine(src),
     `health=${scrubDiag(src.healthState, 16) || "ok"}`,
     `err=${oneWord(src.errorName)}`,
     `at=${iso}`,
@@ -2210,13 +2293,21 @@ Chatseek.publishDiag = (fields) => {
 Chatseek.refreshImageDiag = () => {
   const prev = Chatseek._diagFields;
   if (!prev) return;
-  const images = Chatseek.imageDiagCounts() || { cached: 0, placeholder: 0 };
-  if ((Number(images.cached) || 0) === (Number(prev.imagesCached) || 0) &&
-      (Number(images.placeholder) || 0) === (Number(prev.imagesPlaceholder) || 0)) {
+  const images = imageCountsOf(Chatseek.imageDiagCounts());
+  const old = prev.imageFail || {};
+  if (images.detected === (Number(prev.imagesDetected) || 0) &&
+      images.cached === (Number(prev.imagesCached) || 0) &&
+      images.placeholder === (Number(prev.imagesPlaceholder) || 0) &&
+      images.fail.tainted === (Number(old.tainted) || 0) &&
+      images.fail.tooBig === (Number(old.tooBig) || 0) &&
+      images.fail.timeout === (Number(old.timeout) || 0) &&
+      images.fail.notLoaded === (Number(old.notLoaded) || 0)) {
     return;
   }
-  prev.imagesCached = Number(images.cached) || 0;
-  prev.imagesPlaceholder = Number(images.placeholder) || 0;
+  prev.imagesDetected = images.detected;
+  prev.imagesCached = images.cached;
+  prev.imagesPlaceholder = images.placeholder;
+  prev.imageFail = images.fail;
   prev.at = Date.now();
   const line = Chatseek.formatDiag(prev);
   Chatseek._lastDiag = line;

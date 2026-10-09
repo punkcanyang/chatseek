@@ -8,7 +8,7 @@ import {
   imageCacheUsage,
   clearImageCache,
 } from "../src/db.js";
-import { formatByteSize } from "../src/image-cache.js";
+import { formatCacheSize } from "../src/image-cache.js";
 import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
@@ -197,9 +197,14 @@ function applyStatic() {
   if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
   if (copyDiagBtn) copyDiagBtn.textContent = t.copyDiag;
   if (injectWarnEl && !injectWarnEl.hidden) injectWarnEl.textContent = t.injectMissing;
-  if (imageCacheEl && imageCacheEl.dataset.bytes) {
-    imageCacheEl.textContent = t.imageCache(formatByteSize(Number(imageCacheEl.dataset.bytes)));
+  if (imageCacheEl) {
+    if (imageCacheEl.dataset.state === "ready") {
+      imageCacheEl.textContent = t.imageCache(formatCacheSize(Number(imageCacheEl.dataset.bytes)));
+    } else {
+      imageCacheEl.textContent = t.imageCache("—");
+    }
   }
+  if (clearImagesBtn && imageCacheEl?.dataset.state !== "ready") clearImagesBtn.disabled = true;
   if (filterActive) filterActive.textContent = t.active;
   if (filterArchived) filterArchived.textContent = t.archived;
   if (filterAll) filterAll.textContent = t.all;
@@ -624,6 +629,7 @@ async function refresh() {
     statusEl.hidden = true;
     render([], { error: true });
     if (!loadedOnce) countsEl.textContent = t.error;
+    await refreshImageCache();
   }
 }
 
@@ -670,14 +676,28 @@ clearBtn.addEventListener("click", async () => {
   refresh();
 });
 
+function paintImageCache(bytes, failed) {
+  if (!imageCacheEl) return;
+  if (failed) {
+    imageCacheEl.dataset.state = "unknown";
+    delete imageCacheEl.dataset.bytes;
+    imageCacheEl.textContent = t.imageCache("—");
+    if (clearImagesBtn) clearImagesBtn.disabled = true;
+    return;
+  }
+  imageCacheEl.dataset.state = "ready";
+  imageCacheEl.dataset.bytes = String(bytes);
+  imageCacheEl.textContent = t.imageCache(formatCacheSize(bytes));
+  if (clearImagesBtn) clearImagesBtn.disabled = !(bytes > 0);
+}
+
 async function refreshImageCache() {
   if (!imageCacheEl) return;
   try {
     const bytes = await imageCacheUsage();
-    imageCacheEl.dataset.bytes = String(bytes);
-    imageCacheEl.textContent = t.imageCache(formatByteSize(bytes));
+    paintImageCache(bytes, false);
   } catch {
-    imageCacheEl.textContent = t.error;
+    paintImageCache(0, true);
   }
 }
 
@@ -690,10 +710,12 @@ clearImagesBtn?.addEventListener("click", async () => {
   try {
     await clearImageCache();
   } catch {
-    if (imageCacheEl) imageCacheEl.textContent = t.error;
+    paintImageCache(0, true);
     return;
   }
   await refreshImageCache();
+  const sent = chrome.runtime?.sendMessage?.({ type: "IMAGE_CACHE_UPDATED" });
+  if (sent && typeof sent.catch === "function") sent.catch(() => {});
 });
 
 removeCancel?.addEventListener("click", () => closeRemove(false));

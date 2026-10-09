@@ -23,19 +23,51 @@ function clampDim(value) {
   return Math.min(IMAGE_MAX_EDGE, n);
 }
 
+const IMAGE_URL = /blob:[^\s)]+|data:image\/[^\s)]+|https?:\/\/\S+/gi;
+
+function isImageUrl(url) {
+  return /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:[?#]|$)/i.test(url)
+    || /oaiusercontent|googleusercontent|ggpht\.com/i.test(url);
+}
+
+/** Alt and prompt stay, but an image address never does. */
+export function scrubImageUrls(value, limit, dropAllUrls = false) {
+  const text = clipText(value, limit).replace(IMAGE_URL, (url) => {
+    if (/^blob:|^data:image\//i.test(url)) return "";
+    if (dropAllUrls || isImageUrl(url)) return "";
+    return url;
+  });
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function asBytes(value) {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
+  // chrome.runtime.sendMessage delivers an ArrayBuffer to the service worker
+  // as a plain object, so the content script sends a number array instead.
+  if (Array.isArray(value)) {
+    if (value.length < 1 || value.length > IMAGE_MAX_BYTES) return null;
+    const copy = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i += 1) {
+      const n = value[i];
+      if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+      copy[i] = n;
+    }
+    return copy;
+  }
   return null;
 }
 
 /**
- * A stored row. `cached` keeps the encoded bytes. `uncached` (the site tainted
- * the canvas) and `oversized` (still over the byte cap after recompressing)
- * keep prompt and alt only, so the reader can show a placeholder.
- * url / src / href on the input are ignored.
+ * A stored row. `cached` keeps the encoded bytes. Placeholders keep prompt and
+ * alt only: `uncached` (the site tainted the canvas), `oversized` (still over
+ * the byte cap after recompressing), `timeout` (encoding did not finish),
+ * `not-loaded` (the picture had not finished painting; a later scan can
+ * replace it), `cleared` (the user dropped the bytes; the slot stays).
+ * url / src / href / currentSrc on the input are ignored, and image
+ * addresses inside alt or prompt are removed before the row is stored.
  */
 export function normalizeImageRecord(conversationId, raw) {
   if (!conversationId || !raw || typeof raw !== "object") return null;
@@ -44,8 +76,8 @@ export function normalizeImageRecord(conversationId, raw) {
   if (!Number.isInteger(raw.index) || raw.index < 0 || raw.index >= IMAGE_MAX_PER_MESSAGE) {
     return null;
   }
-  const alt = clipText(raw.alt, ALT_LIMIT);
-  const prompt = clipText(raw.prompt, PROMPT_LIMIT);
+  const alt = scrubImageUrls(raw.alt, ALT_LIMIT, true);
+  const prompt = scrubImageUrls(raw.prompt, PROMPT_LIMIT, false);
   const offset = Number.isFinite(Number(raw.offset))
     ? Math.max(0, Math.min(1_000_000, Math.floor(Number(raw.offset))))
     : 0;
@@ -57,7 +89,10 @@ export function normalizeImageRecord(conversationId, raw) {
     prompt,
     offset,
   };
-  if (raw.status === "uncached" || raw.status === "oversized") {
+  if (
+    raw.status === "uncached" || raw.status === "oversized" || raw.status === "timeout"
+    || raw.status === "not-loaded" || raw.status === "cleared"
+  ) {
     return { ...base, status: raw.status, bytes: 0, mime: "", width: 0, height: 0 };
   }
   if (raw.status !== "cached") return null;
@@ -100,6 +135,14 @@ export function dataUrlFromBytes(bytes, mime) {
     binary += String.fromCharCode.apply(null, slice);
   }
   return `data:${type};base64,${btoa(binary)}`;
+}
+
+/** Sidebar label. Zero is always "0 KB"; a failed read uses an em dash instead. */
+export function formatCacheSize(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n === 0) return "0 KB";
+  return formatByteSize(n);
 }
 
 export function formatByteSize(value) {

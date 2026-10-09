@@ -6,6 +6,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +25,13 @@ const GIZMO_DECOY = "77777777-7777-4777-8777-777777777777";
 const GIZMO = "66666666-6666-4666-8666-666666666666";
 const PROJECT = "88888888-8888-4888-8888-888888888888";
 const TITLE = "99999999-9999-4999-8999-999999999999";
+const IMG = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BIG = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const HEUR_IMG = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const SHADOW_IMG = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const CLOSED_IMG = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const FRAME_IMG = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const LAZY = "12121212-1212-4121-8121-121212121212";
 const USER = "User asked about the pangolin habitat across the southern forest ridge today.";
 const ASST = "Assistant explained that a pangolin rolls into a ball when it feels threatened.";
 const TOP_SELECTORS = [
@@ -116,12 +124,165 @@ function titleOnlyPage() {
 }
 
 const phase = { titleBody: false };
+let releaseSlow = () => {};
+const slowGate = new Promise((resolve) => {
+  releaseSlow = resolve;
+});
+
+function crc32(buf) {
+  let c = ~0;
+  for (const byte of buf) {
+    c ^= byte;
+    for (let i = 0; i < 8; i += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+}
+
+function solidPng(width, height, r, g, b) {
+  const raw = Buffer.alloc((width * 4 + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (width * 4 + 1);
+    raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const i = row + 1 + x * 4;
+      raw[i] = r;
+      raw[i + 1] = g;
+      raw[i + 2] = b;
+      raw[i + 3] = 255;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const PNG_RED = solidPng(96, 64, 196, 73, 58);
+const PNG_BLUE = solidPng(120, 80, 47, 107, 69);
+
+function imageMessage({ user, assistant, images }) {
+  return `<div data-message-author-role="user" data-message-id="u1"><div class="whitespace-pre-wrap">${user}</div></div>
+    <div data-message-author-role="assistant" data-message-id="a1"><div class="markdown"><p>${assistant}</p>${images}</div></div>`;
+}
+
+function selectorImagePage(images) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Image habitat</title></head><body><main>
+    ${imageMessage({
+      user: "Draw the pangolin habitat with a southern forest ridge.",
+      assistant: "Here is the southern forest ridge.",
+      images,
+    })}
+  </main></body></html>`;
+}
+
+function heuristicImagePage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Heuristic image</title></head><body><main>
+    <div><h2>You</h2><p>${USER}</p></div>
+    <div>
+      <h2>ChatGPT</h2>
+      <p>${ASST}</p>
+    </div>
+    <div><img id="beside" alt="ridge" src="/blue.png" width="120" height="80"></div>
+  </main></body></html>`;
+}
+
+function shadowImagePage(mode) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${mode} shadow image</title></head><body><main>
+    ${imageMessage({
+      user: "Draw the pangolin habitat with a southern forest ridge.",
+      assistant: "Here is the southern forest ridge.",
+      images: `<div id="host"></div>`,
+    })}
+  </main>
+  <script>
+    const root = document.getElementById("host").attachShadow({ mode: ${JSON.stringify(mode)} });
+    const img = document.createElement("img");
+    img.alt = "ridge";
+    img.width = 120;
+    img.height = 80;
+    img.src = "/blue.png";
+    root.append(img);
+  </script>
+  </body></html>`;
+}
+
+function frameImagePage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>iframe image</title></head><body>
+    <p>outer shell</p>
+    <iframe src="/inner-img/${FRAME_IMG}"></iframe>
+  </body></html>`;
+}
+
+function frameImageInner() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>inner image</title></head><body><main>
+    <div><h2>You</h2><p>${USER}</p></div>
+    <div><h2>ChatGPT</h2><p>${ASST}</p><img alt="ridge" src="/blue.png" width="120" height="80"></div>
+  </main></body></html>`;
+}
+
+function lazyImagePage() {
+  return selectorImagePage(`<img id="late" alt="late ridge" src="/hold.png" width="96" height="64">`);
+}
+
+function noisePage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Large image</title></head><body><main>
+    ${imageMessage({
+      user: "Draw a very large picture of the southern forest ridge.",
+      assistant: "The large picture is attached.",
+      images: `<img id="noise" alt="large ridge" width="480" height="480">`,
+    })}
+    <script>
+      const canvas = document.createElement("canvas");
+      canvas.width = 480;
+      canvas.height = 480;
+      const ctx = canvas.getContext("2d");
+      const pixels = ctx.createImageData(480, 480);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        pixels.data[i] = (Math.random() * 256) | 0;
+        pixels.data[i + 1] = (Math.random() * 256) | 0;
+        pixels.data[i + 2] = (Math.random() * 256) | 0;
+        pixels.data[i + 3] = 255;
+      }
+      ctx.putImageData(pixels, 0, 0);
+      document.getElementById("noise").src = canvas.toDataURL("image/png");
+    </script>
+  </main></body></html>`;
+}
 
 function route(url) {
   const path = new URL(url, "https://chatgpt.com").pathname;
   if (path === `/inner/${IFRAME}`) {
     return pageHtml({ title: "inner", classic: false, user: USER, assistant: ASST });
   }
+  if (path === `/inner-img/${FRAME_IMG}`) return frameImageInner();
+  if (path === `/c/${IMG}`) {
+    return selectorImagePage(`
+      <img id="same" alt="ridge" src="/red.png" width="96" height="64">
+      <button type="button"><img id="light" alt="ridge button" src="/blue.png" width="120" height="80"></button>
+      <button type="button"><img id="cross" alt="cross ridge" src="https://files.oaiusercontent.com/gen.png" width="96" height="64"></button>`);
+  }
+  if (path === `/c/${BIG}`) return noisePage();
+  if (path === `/c/${HEUR_IMG}`) return heuristicImagePage();
+  if (path === `/c/${SHADOW_IMG}`) return shadowImagePage("open");
+  if (path === `/c/${CLOSED_IMG}`) return shadowImagePage("closed");
+  if (path === `/c/${FRAME_IMG}`) return frameImagePage();
+  if (path === `/c/${LAZY}`) return lazyImagePage();
   if (path === `/c/${CLASSIC}`) {
     return pageHtml({
       title: "Classic habitat",
@@ -165,7 +326,9 @@ async function readDb(worker) {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    const tx = db.transaction(["conversations", "messages", "meta"], "readonly");
+    const names = ["conversations", "messages", "meta"];
+    if (db.objectStoreNames.contains("images")) names.push("images");
+    const tx = db.transaction(names, "readonly");
     const all = (store) => new Promise((resolve, reject) => {
       const req = tx.objectStore(store).getAll();
       req.onsuccess = () => resolve(req.result || []);
@@ -174,6 +337,7 @@ async function readDb(worker) {
     const convs = await all("conversations");
     const msgs = await all("messages");
     const meta = await all("meta");
+    const images = names.includes("images") ? await all("images") : [];
     const health = meta.find((row) => row && row.key === "health:chatgpt") || null;
     return {
       convs: convs.map((row) => ({
@@ -189,8 +353,19 @@ async function readDb(worker) {
         body: row.body,
       })),
       health,
+      images: images.map((row) => ({
+        messageId: row.messageId,
+        index: row.index,
+        status: row.status,
+        bytes: Number(row.bytes) || 0,
+      })),
     };
   });
+}
+
+function shotsOf(db, id) {
+  const prefix = `chatgpt:${id}:`;
+  return (db.images || []).filter((row) => String(row.messageId || "").startsWith(prefix));
 }
 
 function convOf(db, id) {
@@ -259,10 +434,29 @@ async function main() {
     "-keyout", key, "-out", cert,
     "-days", "2", "-nodes",
     "-subj", "/CN=chatgpt.com",
-    "-addext", "subjectAltName=DNS:chatgpt.com,DNS:chat.openai.com",
+    "-addext", "subjectAltName=DNS:chatgpt.com,DNS:chat.openai.com,DNS:files.oaiusercontent.com",
   ], { stdio: "ignore" });
 
   const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (req, res) => {
+    const path = new URL(req.url || "/", "https://chatgpt.com").pathname;
+    if (path === "/red.png" || path === "/blue.png" || path === "/gen.png" || path === "/hold.png") {
+      const file = path === "/blue.png" ? PNG_BLUE : PNG_RED;
+      const send = () => {
+        if (res.writableEnded) return;
+        res.writeHead(200, {
+          "content-type": "image/png",
+          "cache-control": "no-store",
+          "content-length": String(file.length),
+        });
+        res.end(file);
+      };
+      if (path === "/hold.png") {
+        slowGate.then(send);
+        return;
+      }
+      send();
+      return;
+    }
     const body = route(req.url || "/");
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
@@ -286,18 +480,19 @@ async function main() {
       headless: false,
       enableExtensions: true,
       dumpio: false,
-      protocolTimeout: 12000,
+      protocolTimeout: 60000,
       userDataDir: profile,
       args: [
         "--disable-gpu",
         "--no-sandbox",
+        "--disable-features=DisableLoadExtensionCommandLineSwitch",
         "--disable-dev-shm-usage",
         "--ignore-certificate-errors",
         "--allow-insecure-localhost",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
-        `--host-resolver-rules=MAP chatgpt.com:443 127.0.0.1:${port}, EXCLUDE localhost`,
+        `--host-resolver-rules=MAP chatgpt.com:443 127.0.0.1:${port}, MAP files.oaiusercontent.com:443 127.0.0.1:${port}, EXCLUDE localhost`,
         "--window-size=1280,900",
         `--disable-extensions-except=${root}`,
         `--load-extension=${root}`,
@@ -338,7 +533,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.2 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.3 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -451,10 +646,143 @@ async function main() {
     const diagBox = await panel.$eval("#diagBox", (el) => el.value);
     assert(diagBox.includes("skeleton="), diagBox);
     assert(diagBox.includes("frames=") && diagBox.includes("shadows=") && diagBox.includes("main="), diagBox);
-    assert(!/pangolin|Welcome back/i.test(diagBox), `panel diag leaked text: ${diagBox}`);
+    assert(/imgs=\d+\/\d+\/\d+ fail=tainted:\d+,too-big:\d+,timeout:\d+,not-loaded:\d+/.test(diagBox), diagBox);
+    assert(!/pangolin|Welcome back|https?:\/\//i.test(diagBox), `panel diag leaked text: ${diagBox}`);
     await panel.screenshot({ path: join(docs, "panel-1.6.2-skeleton-diag.png"), fullPage: true });
 
+    const zeroCache = await until(async () => {
+      const text = await panel.$eval("#imageCache", (el) => el.textContent || "").catch(() => "");
+      const disabled = await panel.$eval("#clearImagesBtn", (el) => el.disabled).catch(() => false);
+      return /0 KB/.test(text) && disabled ? text : "";
+    }, "image cache reads 0 KB", 10000);
+    assert(/cache|快取|缓存|キャッシュ|캐시|Caché|Cache|Bild/i.test(zeroCache), zeroCache);
+    await panel.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
+    await panel.screenshot({ path: join(docs, "panel-1.6.3-image-cache-zero.png"), fullPage: true });
+
+    async function waitShots(id, pred, label) {
+      return until(async () => {
+        const snap = await readDb(probe);
+        const rows = shotsOf(snap, id);
+        if (pred(rows)) return rows;
+        const sample = (snap.images || []).slice(0, 8).map((row) => `${row.status}:${row.bytes}:${row.messageId}`).join(" || ");
+        throw new Error(`matched=${rows.length} stored=${(snap.images || []).length} ${sample}`);
+      }, label, 20000);
+    }
+
+    await openChat(`https://chatgpt.com/c/${IMG}`);
+    const selectorShots = await waitShots(IMG, (rows) => {
+      const cached = rows.filter((row) => row.status === "cached" && row.bytes > 0).length;
+      const tainted = rows.filter((row) => row.status === "uncached").length;
+      return cached >= 2 && tainted >= 1 && rows.length >= 3;
+    }, "selector thumbnails and cross-origin placeholder");
+    await until(async () => logs.some((line) => /imgs=\d+\/[1-9]\d*\/\d+ fail=tainted:[1-9]/.test(line)), "image diag counts", 15000);
+    const imageDiag = logs.filter((line) => line.includes("imgs=")).pop() || "";
+    assert(!/https?:\/\/|oaiusercontent|red\.png|alt=/i.test(imageDiag), `image diag leaked: ${imageDiag}`);
+
+    await panel.bringToFront();
+    await panel.evaluate(() => {
+      if (navigator.clipboard) navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
+    });
+    const imageDiagBox = await until(async () => {
+      await panel.evaluate(() => {
+        if (navigator.clipboard) navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
+      });
+      await panel.click("#copyDiagBtn");
+      await sleep(400);
+      const text = await panel.$eval("#diagBox", (el) => (el.hidden ? "" : el.value)).catch(() => "");
+      return /imgs=\d+\/[1-9]\d*\/\d+ fail=tainted:[1-9]/.test(text) ? text : "";
+    }, "copied image diag", 15000);
+    assert(!/https?:\/\/|oaiusercontent|pangolin|southern forest/i.test(imageDiagBox), imageDiagBox);
+    await panel.screenshot({ path: join(docs, "panel-1.6.3-diag-imgs.png"), fullPage: true });
+    const usedCache = await until(async () => {
+      const text = await panel.$eval("#imageCache", (el) => el.textContent || "").catch(() => "");
+      const disabled = await panel.$eval("#clearImagesBtn", (el) => el.disabled).catch(() => true);
+      return /[1-9]\d*(?:\.\d+)? (?:KB|MB)/.test(text) && !disabled ? text : "";
+    }, "image cache above zero", 10000);
+    await panel.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
+    await panel.screenshot({ path: join(docs, "panel-1.6.3-image-cache.png"), fullPage: true });
+
+    const hook = `(() => {
+      const proto = HTMLCanvasElement && HTMLCanvasElement.prototype;
+      if (!proto || proto.__chatseekCap) return "armed";
+      const orig = proto.toBlob;
+      proto.toBlob = function(cb, type, quality) {
+        if (this.width >= 400 && this.height >= 400) {
+          const bytes = new Uint8Array(160 * 1024);
+          bytes[0] = 82;
+          cb(new Blob([bytes], { type: "image/webp" }));
+          return;
+        }
+        return orig.apply(this, arguments);
+      };
+      proto.__chatseekCap = true;
+      return "armed";
+    })()`;
+    const bigClient = await page.createCDPSession();
+    bigClient.on("Runtime.executionContextCreated", (event) => {
+      const ctx = event.context;
+      if (ctx.auxData?.isDefault !== false) return;
+      bigClient.send("Runtime.evaluate", { contextId: ctx.id, expression: hook, returnByValue: true }).catch(() => {});
+    });
+    await bigClient.send("Runtime.enable");
+    await openChat(`https://chatgpt.com/c/${BIG}`);
+    let bigShots = await waitShots(BIG, (rows) => rows.some((row) => row.status === "oversized" || row.status === "cached"), "large image first pass");
+    if (!bigShots.some((row) => row.status === "oversized")) {
+      await openChat(`https://chatgpt.com/c/${BIG}`);
+      bigShots = await waitShots(BIG, (rows) => rows.some((row) => row.status === "oversized"), "large image placeholder");
+    }
+    assert(bigShots.some((row) => row.status === "oversized"), `expected an oversized placeholder, got ${JSON.stringify(bigShots)}`);
+    await bigClient.detach().catch(() => {});
+
+    await openChat(`https://chatgpt.com/c/${HEUR_IMG}`);
+    const heurShots = await waitShots(HEUR_IMG, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "heuristic image");
+    assert(heurShots.some((row) => row.status === "cached"), "heuristic path did not cache the sibling image");
+
+    await openChat(`https://chatgpt.com/c/${SHADOW_IMG}`);
+    assert((await waitShots(SHADOW_IMG, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "open shadow image")).some((row) => row.status === "cached"), "open shadow image missing");
+
+    await openChat(`https://chatgpt.com/c/${CLOSED_IMG}`);
+    assert((await waitShots(CLOSED_IMG, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "closed shadow image")).some((row) => row.status === "cached"), "closed shadow image missing");
+
+    await openChat(`https://chatgpt.com/c/${FRAME_IMG}`);
+    assert((await waitShots(FRAME_IMG, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "iframe image")).some((row) => row.status === "cached"), "same-origin iframe image missing");
+
+    await openChat(`https://chatgpt.com/c/${LAZY}`);
+    const lazyHold = await waitShots(LAZY, (rows) => rows.some((row) => row.status === "not-loaded"), "lazy image placeholder");
+    assert(lazyHold.some((row) => row.status === "not-loaded"), "a late image did not leave a not-loaded placeholder");
+    releaseSlow();
+    const lazyDone = await waitShots(LAZY, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "lazy image filled in");
+    assert(lazyDone.some((row) => row.status === "cached"), "a late image was not filled in after it loaded");
+
     const reader = await browser.newPage();
+    await reader.setViewport({ width: 900, height: 900 });
+    await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${IMG}`)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await until(async () => {
+      const thumbs = await reader.$$eval(".cached-thumb", (nodes) => nodes.length).catch(() => 0);
+      const site = await reader.$$eval("[data-reason='site']", (nodes) => nodes.length).catch(() => 0);
+      return thumbs >= 1 && site >= 1;
+    }, "reader thumbnails and site placeholder", 10000);
+    await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${BIG}`)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await until(async () => {
+      const text = await reader.$eval("#app", (el) => el.innerText).catch(() => "");
+      const reason = await reader.$eval("[data-reason='oversized']", (el) => el.getAttribute("data-reason")).catch(() => "");
+      return reason === "oversized" && /too large|檔案過大|文件过大|大きすぎ|너무 큼|demasiado grande|trop volumineux|zu groß|grande demais/i.test(text);
+    }, "reader oversized placeholder", 10000);
+    await reader.screenshot({ path: join(docs, "reader-1.6.3-images.png"), fullPage: true });
+    await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${IMG}`)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await until(async () => {
+      const thumbs = await reader.$$eval(".cached-thumb", (nodes) => nodes.length).catch(() => 0);
+      const site = await reader.$$eval("[data-reason='site']", (nodes) => nodes.length).catch(() => 0);
+      return thumbs >= 1 && site >= 1;
+    }, "reader mixed image states", 10000);
+    await reader.screenshot({ path: join(docs, "reader-1.6.3-placeholders.png"), fullPage: true });
+
     await reader.setViewport({ width: 900, height: 800 });
     await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${CLASSIC}`)}`, {
       waitUntil: "domcontentloaded",
@@ -465,6 +793,7 @@ async function main() {
     }, "reader markdown", 10000);
 
     const emptyTab = page;
+    await reader.close().catch(() => {});
     await silenceContentPing(emptyTab);
     await panel.bringToFront();
     await emptyTab.bringToFront();
@@ -474,7 +803,15 @@ async function main() {
       const text = await panelAgain.$eval("#injectWarn", (el) => el.textContent || "").catch(() => "");
       return !hidden && text.includes("Chatseek") ? text : "";
     }, "inject warning", 8000);
-    await panelAgain.screenshot({ path: join(docs, "panel-1.6.2-inject-warn.png"), fullPage: true });
+    await panelAgain.evaluate((chatUrl) => {
+      chrome.tabs.query = async () => [{ id: 1, url: chatUrl, active: true }];
+      chrome.tabs.sendMessage = async () => null;
+    }, emptyTab.url());
+    await panelAgain.bringToFront();
+    await panelAgain.screenshot({
+      path: join(docs, "panel-1.6.2-inject-warn.png"),
+      clip: { x: 0, y: 0, width: 420, height: 860 },
+    });
 
     const leaked = logs.join("\n");
     assert(!/southern forest ridge today/.test(leaked), "console diag included message text");

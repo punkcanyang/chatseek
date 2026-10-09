@@ -85,7 +85,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.2") fail(`version should be 1.6.2, got ${manifest.version}`);
+if (manifest.version !== "1.6.3") fail(`version should be 1.6.3, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -204,6 +204,56 @@ if (/status:\s*["']omit["']|status === ["']omit["']/.test(read("content/images.j
 }
 if (!/oversized/.test(read("content/images.js")) || !/oversized/.test(read("src/image-cache.js"))) {
   fail("oversized images need their own stored status");
+}
+if (!/openOrClosedShadowRoot/.test(read("content/images.js"))) {
+  fail("image scan must open closed shadow roots without a new permission");
+}
+if (!/not-loaded/.test(read("content/images.js")) || !/"timeout"/.test(read("content/images.js"))) {
+  fail("image results must include timeout and not-loaded placeholders");
+}
+if (!/const MIN_EDGE = 48/.test(read("content/images.js"))) {
+  fail("decorative images are those under 48px");
+}
+if (!/function byteList/.test(read("content/images.js")) || !/Array.isArray\(value\)/.test(read("src/image-cache.js"))) {
+  fail("cached thumbnails must cross the extension message as a byte list");
+}
+if (!/view\.byteLength > MAX_BYTES/.test(read("content/images.js"))) {
+  fail("a thumbnail list must stay within 150KB before it is sent");
+}
+if (!/function inChildFrame/.test(read("content/images.js")) || !/window\.top !== window/.test(read("content/images.js"))) {
+  fail("a child frame must not capture images the top frame already walks");
+}
+if (!/paceDom/.test(read("content/images.js")) || !/MAX_TRIES/.test(read("content/images.js"))) {
+  fail("image walks must yield and image retries must be capped");
+}
+if (!/function scrubImageUrls/.test(read("src/image-cache.js"))) {
+  fail("image rows must scrub image urls before they are stored");
+}
+const { normalizeImageRecord: normalizeShot } = await import("../src/image-cache.js");
+const hiddenUrl = normalizeShot("chatgpt:c", {
+  messageId: "chatgpt:c:m",
+  index: 0,
+  status: "uncached",
+  alt: "https://cdn.example/secret.png",
+  prompt: "see https://files.oaiusercontent.com/gen.png",
+  url: "https://cdn.example/secret.png",
+  src: "blob:https://chatgpt.com/abc",
+  currentSrc: "https://cdn.example/secret.png",
+});
+if (/https?:|cdn\.example|oaiusercontent|blob:/i.test(JSON.stringify(hiddenUrl))) {
+  fail(`image record kept an address: ${JSON.stringify(hiddenUrl)}`);
+}
+if (!/status: "cleared"/.test(read("src/db.js")) || !/imageCleared/.test(read("src/reader-view.js"))) {
+  fail("clearing the image cache must leave a placeholder the reader can draw");
+}
+if (!/imgs=\$\{detected\}\/\$\{saved\}\/\$\{hold\} fail=tainted:/.test(read("content/shared.js"))) {
+  fail("diag must include imgs= detected/saved/placeholder and fail counts");
+}
+if (!/return "0 KB"/.test(read("src/image-cache.js"))) {
+  fail("a zero image cache must read 0 KB");
+}
+if (!/clearImagesBtn.disabled/.test(read("sidepanel/panel.js"))) {
+  fail("clear image cache must be disabled when the cache is empty or unreadable");
 }
 if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("content/images.js") + read("src/image-cache.js"))) {
   fail("image cache must not assign HTML");
@@ -837,6 +887,9 @@ if (/11111111/.test(uuidSkeleton) || !/skeleton=-/.test(uuidSkeleton)) {
 }
 if (!/user=1/.test(leaked) || !/assistant=1/.test(leaked) || !/imgHold=1/.test(leaked) || !/path=conversation/.test(leaked)) {
   fail(`diag missing counts: ${leaked}`);
+}
+if (!/imgs=1\/0\/1 fail=tainted:0,too-big:0,timeout:0,not-loaded:0/.test(leaked)) {
+  fail(`diag missing image counts: ${leaked}`);
 }
 pageTime.scheduleMessageImages = () => {
   throw new Error("boom SECRET BODY");

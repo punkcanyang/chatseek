@@ -338,6 +338,15 @@
   "imageOversized": {
     "message": "画像はキャッシュされていません（ファイルが大きすぎます）"
   },
+  "imageTimeout": {
+    "message": "画像はキャッシュされていません（変換がタイムアウトしました）"
+  },
+  "imageNotLoaded": {
+    "message": "画像はキャッシュされていません（まだ読み込みが終わっていません）"
+  },
+  "imageCleared": {
+    "message": "画像はキャッシュされていません（この端末で消去しました）"
+  },
   "copyDiag": {
     "message": "診断をコピー"
   },

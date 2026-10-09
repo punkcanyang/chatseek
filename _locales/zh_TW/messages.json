@@ -338,6 +338,15 @@
   "imageOversized": {
     "message": "圖片未快取（檔案過大）"
   },
+  "imageTimeout": {
+    "message": "圖片未快取（轉檔逾時）"
+  },
+  "imageNotLoaded": {
+    "message": "圖片未快取（圖還沒載完）"
+  },
+  "imageCleared": {
+    "message": "圖片未快取（已清除）"
+  },
   "copyDiag": {
     "message": "複製診斷"
   },

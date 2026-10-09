@@ -338,6 +338,15 @@
   "imageOversized": {
     "message": "Imagem não armazenada em cache (arquivo grande demais)"
   },
+  "imageTimeout": {
+    "message": "Imagem não armazenada em cache (a conversão expirou)"
+  },
+  "imageNotLoaded": {
+    "message": "Imagem não armazenada em cache (ainda não terminou de carregar)"
+  },
+  "imageCleared": {
+    "message": "Imagem não armazenada em cache (apagada neste computador)"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

@@ -191,11 +191,19 @@ function imageSlot(doc, shot, locale, onOpen) {
     return fig;
   }
   fig.classList.add("image-missing");
-  const oversized = shot?.status === "oversized";
-  fig.dataset.reason = oversized ? "oversized" : "site";
+  const reason = shot?.status === "oversized"
+    ? ["oversized", "imageOversized"]
+    : shot?.status === "timeout"
+      ? ["timeout", "imageTimeout"]
+      : shot?.status === "not-loaded"
+        ? ["not-loaded", "imageNotLoaded"]
+        : shot?.status === "cleared"
+          ? ["cleared", "imageCleared"]
+          : ["site", "imageUncached"];
+  fig.dataset.reason = reason[0];
   const note = doc.createElement("p");
   note.className = "image-missing-text";
-  note.textContent = text(locale, oversized ? "imageOversized" : "imageUncached");
+  note.textContent = text(locale, reason[1]);
   const btn = doc.createElement("button");
   btn.type = "button";
   btn.className = "link image-open";

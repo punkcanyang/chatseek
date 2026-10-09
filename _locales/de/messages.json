@@ -338,6 +338,15 @@
   "imageOversized": {
     "message": "Bild nicht zwischengespeichert (Datei zu groß)"
   },
+  "imageTimeout": {
+    "message": "Bild nicht zwischengespeichert (Zeitüberschreitung bei der Umwandlung)"
+  },
+  "imageNotLoaded": {
+    "message": "Bild nicht zwischengespeichert (noch nicht fertig geladen)"
+  },
+  "imageCleared": {
+    "message": "Bild nicht zwischengespeichert (auf diesem Computer gelöscht)"
+  },
   "copyDiag": {
     "message": "Diagnose kopieren"
   },

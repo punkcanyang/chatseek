@@ -599,6 +599,13 @@ body {
   padding: 0;
 }
 
+.link:disabled {
+  opacity: 0.45;
+  cursor: default;
+  text-decoration: none;
+}
+}
+
 button {
   font-family: inherit;
 }
