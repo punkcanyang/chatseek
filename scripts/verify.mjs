@@ -86,7 +86,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.0") fail(`version should be 1.7.0, got ${manifest.version}`);
+if (manifest.version !== "1.7.1") fail(`version should be 1.7.1, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -740,6 +740,18 @@ if (!/formatAbsoluteStamp|Intl\.DateTimeFormat/.test(activitySrc)) {
 }
 if (!/readArchiveSignals/.test(sharedSrc)) fail("shared.js should expose archive signal reading");
 if (!/supported: false/.test(sharedSrc)) fail("platforms without an archive surface must be able to decline");
+if (!/archiveScopes/.test(sharedSrc)) fail("archive detection must walk iframe and shadow scopes");
+if (!/archive=banner:/.test(sharedSrc)) fail("diag must include archive hit counts");
+const chatgptArchive = read("content/chatgpt.js");
+if (/chatgpt:sidebar/.test(chatgptArchive) || /chatgpt:conversation/.test(chatgptArchive)) {
+  fail("sidebar presence or a composer must not set an archive source");
+}
+if (!/restoreOnNewMessages/.test(chatgptArchive) || !/chatgpt:new-messages/.test(sharedSrc)) {
+  fail("only a new message on a banner-free page may restore a chat");
+}
+if (!/restoreConversation/.test(read("src/db.js")) || !/restoreConversation/.test(read("sidepanel/panel.js"))) {
+  fail("the side panel needs a manual restore");
+}
 
 pageTime._healthWarned = "";
 const zero = pageTime.buildHealthReport({
@@ -1026,6 +1038,18 @@ if (/11111111/.test(uuidSkeleton) || !/skeleton=-/.test(uuidSkeleton)) {
 }
 if (!/user=1/.test(leaked) || !/assistant=1/.test(leaked) || !/imgHold=1/.test(leaked) || !/path=conversation/.test(leaked)) {
   fail(`diag missing counts: ${leaked}`);
+}
+if (!/archive=banner:0,list:0/.test(leaked)) fail(`diag missing archive counts: ${leaked}`);
+const poisonedArchive = pageTime.formatDiag({
+  version: "1.7.1",
+  platform: "chatgpt",
+  pathKind: "conversation",
+  archiveBanner: "SECRET BODY zebrafox",
+  archiveList: "https://chatgpt.com/c/11111111-1111-4111-8111-111111111111",
+  at: Date.UTC(2026, 9, 8, 12, 0, 0),
+});
+if (/SECRET|zebrafox|11111111|chatgpt\.com/.test(poisonedArchive) || !/archive=banner:0,list:0/.test(poisonedArchive)) {
+  fail(`archive diag leaked text: ${poisonedArchive}`);
 }
 if (!/imgs=1\/0\/1 fail=tainted:0,too-big:0,timeout:0,not-loaded:0/.test(leaked)) {
   fail(`diag missing image counts: ${leaked}`);

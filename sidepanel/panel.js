@@ -3,6 +3,7 @@ import {
   stats,
   clearAll,
   removeConversation,
+  restoreConversation,
   readCaptureHealth,
   attachPreviews,
   imageCacheUsage,
@@ -105,6 +106,7 @@ function bundle(code) {
     injectMissing: say("injectMissing"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
+    restoreActive: say("restoreActive"),
     remove: say("remove"),
     confirmRemoveTitle: say("confirmRemoveTitle"),
     confirmRemoveBody: (title) => say("confirmRemoveBody", title),
@@ -393,6 +395,15 @@ function render(items, { emptyKind, error }) {
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
+    if (conv.archived === true) {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "restore";
+      restoreBtn.dataset.id = conv.id || "";
+      restoreBtn.textContent = t.restoreActive;
+      restoreBtn.addEventListener("click", () => restoreActive(conv));
+      actions.append(restoreBtn);
+    }
     actions.append(readBtn, openBtn);
     row.append(btn, removeBtn, actions);
     li.append(row);
@@ -423,6 +434,17 @@ function closeRemove(answer) {
   const pending = pendingRemove;
   pendingRemove = null;
   if (pending) pending(answer);
+}
+
+async function restoreActive(conv) {
+  if (!conv?.id) return;
+  try {
+    await restoreConversation(conv.id);
+  } catch {
+    render([], { error: true });
+    return;
+  }
+  refresh();
 }
 
 function askRemove(conv) {

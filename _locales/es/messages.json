@@ -64,6 +64,9 @@
   "archivedBadge": {
     "message": "Archivada"
   },
+  "restoreActive": {
+    "message": "Restaurar"
+  },
   "remove": {
     "message": "Quitar del índice"
   },

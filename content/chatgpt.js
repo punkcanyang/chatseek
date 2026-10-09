@@ -83,18 +83,21 @@
     return [...byId.values()];
   }
 
+  function archiveContains(archiveRoot, el) {
+    const roots = Array.isArray(archiveRoot) ? archiveRoot : (archiveRoot ? [archiveRoot] : []);
+    return roots.some((node) => node?.contains?.(el));
+  }
+
   function extractSidebar(doc, archiveRoot) {
     const root = doc || document;
     const byId = new Map();
     const times = jsonTimes(root);
     const anchors = [];
-    const liveIds = new Set();
     root.querySelectorAll('a[href*="/c/"]').forEach((a) => {
-      if (archiveRoot && archiveRoot.contains(a)) return;
+      if (archiveContains(archiveRoot, a)) return;
       const id = Chatseek.conversationIdFromPath(a.getAttribute("href") || a.href);
       if (!id) return;
       anchors.push(a);
-      if (Chatseek.inLiveSidebar(a, archiveRoot)) liveIds.add(id);
     });
     const sectionMap = Chatseek.sectionTimesFor(anchors);
     for (const slot of Chatseek.sidebarSlots(anchors)) {
@@ -102,13 +105,9 @@
       if (!conv) continue;
       Chatseek.rememberConv(byId, conv);
     }
-    const rows = [...byId.values()];
-    // Only the live chat list says "not archived". A /c/ link in a message or
-    // an unrecognised dialog is indexed but leaves the stored archive state alone.
-    for (const conv of rows) {
-      if (liveIds.has(conv.platformId)) markSeenActive(conv, "chatgpt:sidebar");
-    }
-    return rows;
+    // Sidebar presence is not evidence. A listed chat stays whatever the
+    // index already stored; disappearing from the sidebar is not archive.
+    return [...byId.values()];
   }
 
   function dropNested(nodes) {
@@ -343,8 +342,8 @@
     };
   }
 
-  function markSeenActive(conv, source) {
-    conv.archived = false;
+  function markArchived(conv, source) {
+    conv.archived = true;
     conv.archiveSource = source;
     return conv;
   }
@@ -367,12 +366,23 @@
   async function captureInner(doc, loc) {
     const root = doc || document;
     const here = loc || location;
-    const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
-    const sidebar = extractSidebar(root, signals.archiveRoot);
-    const archivedRows = extractArchivedList(root, signals.archiveRoot);
+    const topHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
+    const anyTop = Object.values(topHits).some((count) => Number(count) > 0);
+    const signals = Chatseek.readArchiveSignals(root, here, PLATFORM, { closed: !anyTop });
+    const sidebar = extractSidebar(root, signals.archiveRoots);
+    const archivedRows = [];
+    const seenArchived = new Set();
+    for (const archiveRoot of signals.archiveRoots || []) {
+      for (const row of extractArchivedList(root, archiveRoot)) {
+        if (seenArchived.has(row.platformId)) continue;
+        seenArchived.add(row.platformId);
+        archivedRows.push(row);
+      }
+    }
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : conversationIdFromLocation(here);
     let conversation = null;
+    let restoreOnNewMessages = false;
     let titled = "";
     let extracted = {
       messages: [],
@@ -392,17 +402,13 @@
         url: canonicalUrl(platformId),
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes(root));
-      // The live sidebar is a non-archived context and wins over a stale banner.
-      // A banner or archive-list-only view is the explicit archived signal.
-      // With neither a banner nor a composer the view proves nothing either way.
-      if (fromSidebar?.archived === false) markSeenActive(conversation, "chatgpt:sidebar");
-      else if (signals.banner) {
-        conversation.archived = true;
-        conversation.archiveSource = "chatgpt:banner";
-      } else if (archivedRows.some((row) => row.platformId === platformId)) {
-        conversation.archived = true;
-        conversation.archiveSource = "chatgpt:archive-list";
-      } else if (signals.composer) markSeenActive(conversation, "chatgpt:conversation");
+      // A banner or an archive-list link is the explicit archived signal.
+      // Sidebar presence and a composer do not restore the chat. A later
+      // new message on a page with no banner is the only capture-side restore.
+      const listedHere = archivedRows.some((row) => row.platformId === platformId);
+      if (signals.banner) markArchived(conversation, "chatgpt:banner");
+      else if (listedHere) markArchived(conversation, "chatgpt:archive-list");
+      else restoreOnNewMessages = true;
       extracted = await extractMessagesPaced(platformId, root);
     }
     const stats = Chatseek.messageStats(extracted.messages);
@@ -427,8 +433,11 @@
         selectorHits: extracted.selectorHits,
         untitled: !!titled && Chatseek.isGenericTitle(titled),
         structure,
+        archiveBanner: signals.bannerHits,
+        archiveList: signals.listHits,
         ...stats,
       },
+      restoreOnNewMessages,
     });
     // Text is already stored. An image error must not reject this capture.
     if (conversation) {

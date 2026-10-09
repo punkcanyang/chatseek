@@ -16,8 +16,12 @@ const ACTIVE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OPEN = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OLD = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-function load(html, url) {
+function load(html, url, reply) {
   const dom = new JSDOM(html, { url });
+  return loadDom(dom, reply);
+}
+
+function loadDom(dom, reply) {
   const sent = [];
   const fn = new Function(
     "document",
@@ -42,21 +46,31 @@ function load(html, url) {
         id: "test",
         sendMessage(payload, cb) {
           sent.push(payload);
-          cb({ ok: true });
+          const extra = typeof reply === "function" ? reply(payload) : null;
+          cb({ ok: true, ...(extra || {}) });
         },
       },
+      dom: dom.window.chromeDom || {},
     },
   );
   return { api, sent, dom };
 }
 
-async function capture(html, url) {
-  const loaded = load(html, url);
+async function capture(html, url, reply) {
+  const loaded = load(html, url, reply);
   const ok = await loaded.api.platforms.chatgpt.capture();
   assert(ok === true, "capture should ack");
   const batches = loaded.sent.filter((row) => row.type === "CAPTURE_CONVERSATIONS");
   const rows = batches.flatMap((row) => row.conversations || []);
-  return { rows, signals: loaded.api.readArchiveSignals(loaded.dom.window.document, loaded.dom.window.location, "chatgpt") };
+  for (const msg of loaded.sent) {
+    if (msg.type === "CAPTURE_MESSAGES" && msg.conversation) rows.push(msg.conversation);
+  }
+  const health = loaded.sent.find((row) => row.type === "CAPTURE_HEALTH");
+  return {
+    rows,
+    signals: loaded.api.readArchiveSignals(loaded.dom.window.document, loaded.dom.window.location, "chatgpt"),
+    diag: health?.health?.diag || "",
+  };
 }
 
 const COMPOSER = `<form><div id="prompt-textarea" contenteditable="true"></div></form>`;
@@ -72,8 +86,8 @@ const story = await capture(`
 const storyOpen = story.rows.find((row) => row.platformId === OPEN);
 const storyActive = story.rows.find((row) => row.platformId === ACTIVE);
 assert(story.signals.banner === false, "message text is not an archive banner");
-assert(storyOpen?.archived === false && storyOpen.archiveSource === "chatgpt:conversation", JSON.stringify(storyOpen));
-assert(storyActive?.archived === false && storyActive.archiveSource === "chatgpt:sidebar", "sidebar row stays active");
+assert(storyOpen && !("archived" in storyOpen), `composer alone does not restore: ${JSON.stringify(storyOpen)}`);
+assert(storyActive && !("archived" in storyActive), `sidebar presence does not mark active: ${JSON.stringify(storyActive)}`);
 
 const banner = await capture(`
   <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
@@ -85,7 +99,7 @@ const banner = await capture(`
 const bannerOpen = banner.rows.find((row) => row.platformId === OPEN);
 assert(banner.signals.banner === true, "status banner should count");
 assert(bannerOpen?.archived === true && bannerOpen.archiveSource === "chatgpt:banner", JSON.stringify(bannerOpen));
-assert(banner.rows.find((row) => row.platformId === ACTIVE)?.archived === false, "other sidebar row stays active");
+assert(!("archived" in (banner.rows.find((row) => row.platformId === ACTIVE) || {})), "another sidebar row is not marked active or archived");
 
 const menu = load(`
   <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
@@ -122,7 +136,7 @@ const foreign = await capture(`
 const foreignOld = foreign.rows.find((row) => row.platformId === OLD);
 assert(!foreign.signals.archiveRoot, "an unknown-language archive dialog is not recognised");
 assert(foreignOld && !("archived" in foreignOld), `an unrecognised archive dialog does not restore its rows: ${JSON.stringify(foreignOld)}`);
-assert(foreign.rows.find((row) => row.platformId === ACTIVE)?.archived === false, "the real sidebar still counts");
+assert(!("archived" in (foreign.rows.find((row) => row.platformId === ACTIVE) || {})), "the real sidebar does not change archive state");
 
 const quoted = load(`
   <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
@@ -152,8 +166,147 @@ const listedActive = listed.rows.filter((row) => row.platformId === ACTIVE);
 assert(listed.signals.archiveRoot, "archive dialog should be found");
 assert(listedOld?.archived === true && listedOld.archiveSource === "chatgpt:archive-list", JSON.stringify(listedOld));
 assert(listedOld.sidebarIndex == null, "archive-list rows are not sidebar-rank neighbours");
-assert(listedActive.length === 1 && listedActive[0].archived === false, "a chat still in the sidebar stays active");
+assert(listedActive.some((row) => row.archived === true && row.archiveSource === "chatgpt:archive-list"), "an archive-list link stays archived even if the sidebar also has it");
+assert(!listedActive.some((row) => row.archived === false), "the sidebar copy does not restore a listed chat");
 assert(!listed.rows.some((row) => row.platformId === OLD && row.archived === false), "archive-only chat is not marked active");
+
+const plainBanner = await capture(`
+  <main>
+    <div class="notice">This conversation is archived.</div>
+    <div data-turn="user" data-message-id="m1"><div class="markdown">hello from the plain banner thread</div></div>
+  </main>
+`, `https://chatgpt.com/c/${OPEN}`);
+assert(plainBanner.signals.banner === true && plainBanner.signals.bannerHits === 1, `plain div banner ${plainBanner.signals.bannerHits}`);
+assert(/archive=banner:1,list:0/.test(plainBanner.diag), `diag ${plainBanner.diag}`);
+assert(!/hello from the plain|bbbbbbbb/.test(plainBanner.diag), "diag must not include the banner thread");
+assert(plainBanner.rows.find((row) => row.platformId === OPEN)?.archiveSource === "chatgpt:banner", "plain div banner marks the open chat");
+
+const shortBanner = await capture(`
+  <main>
+    <p>已封存</p>
+    <div data-turn="user" data-message-id="m1"><div class="markdown">hello from the short label thread</div></div>
+  </main>
+`, `https://chatgpt.com/c/${OPEN}`);
+assert(shortBanner.signals.banner === true, "a short 已封存 label counts");
+
+const settingsList = await capture(`
+  <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
+  <div role="dialog" aria-label="Settings">
+    <h2>Settings</h2>
+    <section>
+      <h3>Archived chats</h3>
+      <a href="/c/${OLD}">Old camera</a>
+    </section>
+  </div>
+`, "https://chatgpt.com/");
+assert(settingsList.signals.archiveRoot, "a later heading inside Settings is the archive list");
+assert(settingsList.signals.listHits === 1, `list hit ${settingsList.signals.listHits}`);
+assert(settingsList.rows.find((row) => row.platformId === OLD)?.archiveSource === "chatgpt:archive-list", "settings archive link is archived");
+assert(!settingsList.rows.some((row) => row.platformId === ACTIVE && row.archived === false), "settings sidebar row is not restored");
+
+const shadowDom = new JSDOM(`<!DOCTYPE html><html><body><div id="host"></div></body></html>`, {
+  url: `https://chatgpt.com/c/${OPEN}`,
+});
+{
+  const host = shadowDom.window.document.getElementById("host");
+  const shadow = host.attachShadow({ mode: "open" });
+  const main = shadowDom.window.document.createElement("main");
+  const banner = shadowDom.window.document.createElement("div");
+  banner.textContent = "This conversation is archived.";
+  const turn = shadowDom.window.document.createElement("div");
+  turn.setAttribute("data-turn", "user");
+  turn.setAttribute("data-message-id", "m1");
+  const prose = shadowDom.window.document.createElement("p");
+  prose.textContent = "hello from the open shadow thread that is long enough";
+  turn.append(prose);
+  main.append(banner, turn);
+  shadow.append(main);
+}
+const shadowLoaded = loadDom(shadowDom);
+const shadowSignals = shadowLoaded.api.readArchiveSignals(shadowDom.window.document, shadowDom.window.location, "chatgpt");
+assert(shadowSignals.banner === true && shadowSignals.bannerHits >= 1, `open shadow banner ${shadowSignals.bannerHits}`);
+await shadowLoaded.api.platforms.chatgpt.capture();
+const shadowRows = shadowLoaded.sent.filter((row) => row.type === "CAPTURE_CONVERSATIONS").flatMap((row) => row.conversations || []);
+assert(shadowRows.find((row) => row.platformId === OPEN)?.archiveSource === "chatgpt:banner", "open shadow capture marks archived");
+
+const frameDom = new JSDOM(`<!DOCTYPE html><html><body><iframe id="f"></iframe></body></html>`, {
+  url: `https://chatgpt.com/c/${OPEN}`,
+});
+{
+  const child = frameDom.window.document.getElementById("f").contentDocument;
+  const main = child.createElement("main");
+  const banner = child.createElement("div");
+  banner.textContent = "This conversation is archived.";
+  const turn = child.createElement("div");
+  turn.setAttribute("data-turn", "user");
+  turn.setAttribute("data-message-id", "m1");
+  const prose = child.createElement("p");
+  prose.textContent = "hello from the iframe thread that is long enough";
+  turn.append(prose);
+  main.append(banner, turn);
+  child.body.append(main);
+}
+const frameLoaded = loadDom(frameDom);
+const frameSignals = frameLoaded.api.readArchiveSignals(frameDom.window.document, frameDom.window.location, "chatgpt");
+assert(frameSignals.banner === true, "same-origin iframe banner counts");
+await frameLoaded.api.platforms.chatgpt.capture();
+const frameRows = frameLoaded.sent.filter((row) => row.type === "CAPTURE_CONVERSATIONS").flatMap((row) => row.conversations || []);
+assert(frameRows.find((row) => row.platformId === OPEN)?.archiveSource === "chatgpt:banner", "iframe capture marks archived");
+
+const closedDom = new JSDOM(`<!DOCTYPE html><html><body><div id="host"></div></body></html>`, {
+  url: `https://chatgpt.com/c/${OPEN}`,
+});
+{
+  const host = closedDom.window.document.getElementById("host");
+  const shadow = host.attachShadow({ mode: "closed" });
+  const main = closedDom.window.document.createElement("main");
+  const banner = closedDom.window.document.createElement("div");
+  banner.setAttribute("role", "status");
+  banner.textContent = "This conversation is archived.";
+  const turn = closedDom.window.document.createElement("div");
+  turn.setAttribute("data-turn", "user");
+  turn.setAttribute("data-message-id", "m1");
+  const prose = closedDom.window.document.createElement("p");
+  prose.textContent = "hello from the closed shadow thread that is long enough";
+  turn.append(prose);
+  main.append(banner, turn);
+  shadow.append(main);
+  closedDom.window.chromeDom = {
+    openOrClosedShadowRoot(el) {
+      return el === host ? shadow : null;
+    },
+  };
+}
+const closedLoaded = loadDom(closedDom);
+const closedSignals = closedLoaded.api.readArchiveSignals(closedDom.window.document, closedDom.window.location, "chatgpt");
+assert(closedSignals.banner === true, "closed shadow banner counts");
+
+const observed = await capture(`
+  <nav><a href="/c/${OPEN}">Open trip</a></nav>
+  <main>
+    <form><div id="prompt-textarea" contenteditable="true"></div></form>
+    <div data-turn="user" data-message-id="m1"><div class="markdown">hello from the thread that grew a new tail today</div></div>
+  </main>
+`, `https://chatgpt.com/c/${OPEN}`, (payload) => (
+  payload.type === "CAPTURE_MESSAGES" ? { observed: true } : null
+));
+const observedOpen = observed.rows.filter((row) => row.platformId === OPEN);
+assert(observed.signals.banner === false, "the grown thread has no banner");
+assert(observedOpen.some((row) => row.archived === false && row.archiveSource === "chatgpt:new-messages"), `new messages restore: ${JSON.stringify(observedOpen)}`);
+
+const stillArchived = await capture(`
+  <nav><a href="/c/${OPEN}">Open trip</a></nav>
+  <main>
+    <div class="notice">This conversation is archived.</div>
+    <form><div id="prompt-textarea" contenteditable="true"></div></form>
+    <div data-turn="user" data-message-id="m1"><div class="markdown">hello from the thread that grew a new tail today</div></div>
+  </main>
+`, `https://chatgpt.com/c/${OPEN}`, (payload) => (
+  payload.type === "CAPTURE_MESSAGES" ? { observed: true } : null
+));
+const stillRows = stillArchived.rows.filter((row) => row.platformId === OPEN);
+assert(stillRows.some((row) => row.archived === true), "a banner blocks restore even when a new message is stored");
+assert(!stillRows.some((row) => row.archived === false), "new activity must not clear a visible banner");
 
 const claudeDom = load(`
   <div role="dialog"><h2>Archived chats</h2><a href="/chat/${OLD}">Old</a></div>
@@ -270,5 +423,35 @@ assert(again && again.archived !== true && again.messageCount === 1, "opening th
 assert((await db.searchConversations({ query: "reopened", scope: "active" })).length === 1, "the reopened chat is searchable");
 await db.upsertConversations([conv("chatgpt", "4", "Scopeword camera again")]);
 assert(await read(archivedGpt.id), "after reopening, sidebar rescans update it as usual");
+
+const stampedArchive = conv("chatgpt", "7", "Scopeword sealed", {
+  archived: true,
+  archiveSource: "chatgpt:banner",
+  archivedAt: Date.now() - 5000,
+});
+await db.upsertConversations([stampedArchive]);
+const activityAt = Date.now();
+await db.upsertConversations([{
+  ...stampedArchive,
+  updatedAt: activityAt,
+  updatedAtSource: "observed",
+}]);
+row = await read(stampedArchive.id);
+assert(row.archived === true && row.archiveSource === "chatgpt:banner", "a new last-activity time does not restore");
+assert(row.updatedAtSource === "observed" && row.updatedAt === activityAt, "the activity time still moves forward");
+const grown = { id: `${stampedArchive.id}:u2`, role: "user", body: "scopeword sealed grew a tail" };
+await db.upsertMessages(
+  { ...stampedArchive, archived: undefined, archiveSource: undefined, updatedAt: activityAt, updatedAtSource: "page-exact" },
+  [grown],
+  { pageMessageIds: [grown.id], captureId: "grow" },
+);
+row = await read(stampedArchive.id);
+assert(row.archived === true, "storing a new tail without an explicit restore keeps the archive flag");
+assert(await db.restoreConversation(stampedArchive.id) === true, "manual restore returns true");
+row = await read(stampedArchive.id);
+assert(row.archived === false && row.archiveSource == null && row.archivedAt == null, "manual restore clears the flag");
+assert(row.updatedAtSource === "observed" || row.updatedAtSource === "page-exact", "manual restore leaves the activity time");
+const activeAfter = await db.listRecent({ scope: "active", limit: 20 });
+assert(activeAfter.some((item) => item.id === stampedArchive.id), "a restored chat returns to the active tab");
 
 console.log("archive-test ok");

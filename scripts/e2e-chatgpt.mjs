@@ -33,6 +33,11 @@ const SHADOW_IMG = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const CLOSED_IMG = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const FRAME_IMG = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const LAZY = "12121212-1212-4121-8121-121212121212";
+const BANNER = "14141414-1414-4141-8141-141414141414";
+const BANNER_FRAME = "15151515-1515-4151-8151-151515151515";
+const BANNER_SHADOW = "16161616-1616-4161-8161-161616161616";
+const BANNER_CLOSED = "17171717-1717-4171-8171-171717171717";
+const LISTED = "18181818-1818-4181-8181-181818181818";
 const USER = "User asked about the pangolin habitat across the southern forest ridge today.";
 const ASST = "Assistant explained that a pangolin rolls into a ball when it feels threatened.";
 const TOP_SELECTORS = [
@@ -99,6 +104,74 @@ function shadowPage(mode) {
   </body></html>`;
 }
 
+function bannerThread(title) {
+  const notice = phase.banner
+    ? `<div class="notice">This conversation is archived.</div>`
+    : `<form><div id="prompt-textarea" contenteditable="true"></div></form>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head><body>
+    <nav><a href="/c/${BANNER}">${title}<time datetime="2026-10-09T00:00:00.000Z">2026-10-09</time></a></nav>
+    <main>
+      ${notice}
+      <div data-message-author-role="user" data-message-id="u1"><div class="whitespace-pre-wrap">${USER}</div></div>
+      <div data-message-author-role="assistant" data-message-id="a1"><div class="markdown"><p>${ASST}</p></div></div>
+    </main>
+  </body></html>`;
+}
+
+function shadowBannerPage(mode) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${mode} shadow archive</title></head><body>
+    <div id="host"></div>
+    <script>
+      const root = document.getElementById("host").attachShadow({ mode: ${JSON.stringify(mode)} });
+      const main = document.createElement("main");
+      const banner = document.createElement("div");
+      banner.textContent = "This conversation is archived.";
+      const user = document.createElement("div");
+      const you = document.createElement("h2");
+      you.textContent = "You";
+      const userText = document.createElement("p");
+      userText.textContent = ${JSON.stringify(USER)};
+      user.append(you, userText);
+      const bot = document.createElement("div");
+      const gpt = document.createElement("h2");
+      gpt.textContent = "ChatGPT";
+      const botText = document.createElement("p");
+      botText.textContent = ${JSON.stringify(ASST)};
+      bot.append(gpt, botText);
+      main.append(banner, user, bot);
+      root.append(main);
+    </script>
+  </body></html>`;
+}
+
+function archiveFramePage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>iframe archive</title></head><body>
+    <p>outer shell</p>
+    <iframe src="/inner-archive/${BANNER_FRAME}"></iframe>
+  </body></html>`;
+}
+
+function archiveFrameInner() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>inner archive</title></head><body><main>
+    <div>This conversation is archived.</div>
+    <div><h2>You</h2><p>${USER}</p></div>
+    <div><h2>ChatGPT</h2><p>${ASST}</p></div>
+  </main></body></html>`;
+}
+
+function archiveListPage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Settings</title></head><body>
+    <nav><a href="/c/${CLASSIC}">Classic habitat</a></nav>
+    <div role="dialog" aria-label="Settings">
+      <h2>Settings</h2>
+      <section>
+        <h3>Archived chats</h3>
+        <a href="/c/${LISTED}">Old camera habitat</a>
+      </section>
+    </div>
+  </body></html>`;
+}
+
 function iframePage() {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>iframe habitat</title></head><body>
     <p>outer shell</p>
@@ -124,7 +197,7 @@ function titleOnlyPage() {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Seeded habitat title</title></head><body><main><p>Welcome back</p></main></body></html>`;
 }
 
-const phase = { titleBody: false };
+const phase = { titleBody: false, banner: true };
 let releaseSlow = () => {};
 const slowGate = new Promise((resolve) => {
   releaseSlow = resolve;
@@ -268,6 +341,7 @@ function noisePage() {
 
 function route(url) {
   const path = new URL(url, "https://chatgpt.com").pathname;
+  if (path === `/inner-archive/${BANNER_FRAME}`) return archiveFrameInner();
   if (path === `/inner/${IFRAME}`) {
     return pageHtml({ title: "inner", classic: false, user: USER, assistant: ASST });
   }
@@ -299,6 +373,11 @@ function route(url) {
   if (path === `/c/${SHADOW}`) return shadowPage("open");
   if (path === `/c/${CLOSED}`) return shadowPage("closed");
   if (path === `/c/${EMPTY}`) return emptyPage();
+  if (path === `/c/${BANNER}`) return bannerThread("Banner habitat");
+  if (path === `/c/${BANNER_FRAME}`) return archiveFramePage();
+  if (path === `/c/${BANNER_SHADOW}`) return shadowBannerPage("open");
+  if (path === `/c/${BANNER_CLOSED}`) return shadowBannerPage("closed");
+  if (path === "/settings/archived") return archiveListPage();
   if (path === `/c/${TITLE}`) {
     return phase.titleBody
       ? pageHtml({ title: "Seeded habitat title", classic: false, user: USER, assistant: ASST })
@@ -351,6 +430,8 @@ async function readDb(worker) {
         url: row.url,
         updatedAt: row.updatedAt,
         updatedAtSource: row.updatedAtSource,
+        archived: row.archived === true,
+        archiveSource: row.archiveSource || "",
       })),
       msgs: msgs.map((row) => ({
         id: row.id,
@@ -539,7 +620,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.0 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.1 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -547,6 +628,92 @@ async function main() {
     const classicMsgs = msgsOf(db, CLASSIC);
     assert(classicMsgs.some((row) => row.role === "user" && row.body.includes("classic user line")), "classic user missing");
     assert(classicMsgs.some((row) => row.role === "assistant" && row.body.includes("pangolin")), "classic assistant missing");
+
+    async function waitArchived(id, want) {
+      return until(async () => {
+        const snap = await readDb(probe);
+        const row = convOf(snap, id);
+        if (!row) return null;
+        return row.archived === want ? row : null;
+      }, `${id} archived=${want}`, 20000);
+    }
+
+    await openChat(`https://chatgpt.com/c/${BANNER}`);
+    const bannerRow = await waitArchived(BANNER, true);
+    assert(bannerRow.archiveSource === "chatgpt:banner", bannerRow.archiveSource);
+    await until(
+      async () => logs.some((line) => line.includes("[Chatseek] diag") && line.includes("archive=banner:") && !line.includes("archive=banner:0")),
+      "banner diag",
+      10000,
+    );
+    assert(!logs.some((line) => line.includes("[Chatseek] diag") && /southern forest ridge today/.test(line)), "banner diag leaked the thread");
+
+    await openChat(`https://chatgpt.com/c/${BANNER_FRAME}`);
+    const frameArchive = await waitArchived(BANNER_FRAME, true);
+    assert(frameArchive.archiveSource === "chatgpt:banner", `iframe archive ${frameArchive.archiveSource}`);
+    await until(
+      async () => logs.some((line) => line.includes("archive=banner:") && line.includes("frames=")),
+      "iframe archive diag",
+      10000,
+    );
+
+    await openChat(`https://chatgpt.com/c/${BANNER_SHADOW}`);
+    const shadowArchive = await waitArchived(BANNER_SHADOW, true);
+    assert(shadowArchive.archiveSource === "chatgpt:banner", `shadow archive ${shadowArchive.archiveSource}`);
+
+    await openChat(`https://chatgpt.com/c/${BANNER_CLOSED}`);
+    const closedArchive = await waitArchived(BANNER_CLOSED, true);
+    assert(closedArchive.archiveSource === "chatgpt:banner", `closed archive ${closedArchive.archiveSource}`);
+
+    await openChat("https://chatgpt.com/settings/archived");
+    const listed = await waitArchived(LISTED, true);
+    assert(listed.archiveSource === "chatgpt:archive-list", listed.archiveSource);
+    await until(
+      async () => logs.some((line) => /archive=banner:\d+,list:[1-9]/.test(line)),
+      "archive list diag",
+      10000,
+    );
+    const classicAfterList = convOf(await readDb(probe), CLASSIC);
+    assert(classicAfterList && classicAfterList.archived !== true, "the live sidebar link was not archived");
+
+    phase.banner = false;
+    const beforeRevisit = bannerRow.updatedAt;
+    const revisitMark = logs.length;
+    await openChat(`https://chatgpt.com/c/${BANNER}`);
+    await until(
+      async () => logs.slice(revisitMark).some((line) => line.includes("[Chatseek] diag") && line.includes("archive=banner:0")),
+      "revisit diag",
+      10000,
+    );
+    const revisited = convOf(await readDb(probe), BANNER);
+    assert(revisited && revisited.archived === true, "a later capture without a banner does not restore");
+    assert(revisited.updatedAt >= beforeRevisit, "revisit can move last activity without clearing archive");
+
+    await page.evaluate(() => {
+      const main = document.querySelector("main");
+      const div = document.createElement("div");
+      div.setAttribute("data-message-author-role", "assistant");
+      div.setAttribute("data-message-id", "a2");
+      const body = document.createElement("div");
+      body.className = "markdown";
+      const p = document.createElement("p");
+      p.textContent = "A new tail after the banner was gone.";
+      body.append(p);
+      div.append(body);
+      main.append(div);
+    });
+    const restored = await waitArchived(BANNER, false);
+    assert(restored.archiveSource === "" || restored.archiveSource == null || restored.archiveSource === "chatgpt:new-messages", restored.archiveSource);
+
+    await probe.bringToFront();
+    await probe.reload({ waitUntil: "domcontentloaded" });
+    await probe.waitForFunction(() => (document.getElementById("filterArchived")?.textContent || "").length > 0, { timeout: 10000 });
+    await probe.click("#filterArchived");
+    const restoreSelector = `button.restore[data-id="chatgpt:${BANNER_SHADOW}"]`;
+    await probe.waitForSelector(restoreSelector, { timeout: 10000 });
+    await probe.click(restoreSelector);
+    const manual = await waitArchived(BANNER_SHADOW, false);
+    assert(manual.archived === false, "manual restore clears the flag");
 
     await openChat(`https://chatgpt.com/c/${IFRAME}`);
     const iframeHits = await topMisses(page);

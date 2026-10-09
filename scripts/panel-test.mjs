@@ -421,6 +421,24 @@ await until(() => !rowFor(A.id) && document.querySelector(".empty"), "archived s
 q.value = "";
 q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(archivedId), "cleared archived search");
+const restore = rowFor(archivedId).parentElement.querySelector(".restore");
+assert(restore?.textContent === "恢复活跃", `zh-CN restore label ${restore?.textContent}`);
+restore.click();
+await until(() => !rowFor(archivedId), "manual restore leaves the archived tab");
+document.querySelector('[data-scope="active"]').click();
+await until(() => rowFor(archivedId) && !rowFor(archivedId).querySelector(".badge-archived"), "restored chat is active");
+await upsertConversations([{
+  ...chatgpt(77),
+  title: "Archived fern notes",
+  updatedAt: Date.now(),
+  updatedAtSource: "page-exact",
+  archived: true,
+  archiveSource: "chatgpt:banner",
+  archivedAt: Date.now(),
+}]);
+message({ type: "INDEX_UPDATED" });
+document.querySelector('[data-scope="archived"]').click();
+await until(() => rowFor(archivedId)?.parentElement?.querySelector(".restore"), "archived tab lists the chat again");
 
 document.querySelector('[data-platform="chatgpt"]').click();
 await until(() => rowFor(A.id) && !rowFor(archivedId), "ChatGPT tab is unarchived ChatGPT only");

@@ -145,7 +145,7 @@ function startServer(seedRows) {
   const bootstrap = `<!DOCTYPE html>
 <meta charset="utf-8" />
 <script type="module">
-import { upsertConversations, upsertMessages } from "/src/db.js";
+import { upsertConversations, upsertMessages, saveCaptureHealth } from "/src/db.js";
 const rows = ${JSON.stringify(seedRows)};
 for (const row of rows) {
   if (row.messages) {
@@ -157,6 +157,15 @@ for (const row of rows) {
     await upsertConversations([row.conv]);
   }
 }
+await saveCaptureHealth("chatgpt", {
+  pathKind: "conversation",
+  sidebarCount: 1,
+  messageCount: 2,
+  selector: "div",
+  warn: false,
+  at: Date.now(),
+  diag: "[Chatseek] diag v=1.7.1 platform=chatgpt path=conversation hits=none used=div user=1 assistant=1 chars=80 imgCache=0 imgHold=0 imgs=0/0/0 fail=tainted:0,too-big:0,timeout:0,not-loaded:0 archive=banner:1,list:2 health=ok err= at=2026-10-09T00:00:00.000Z",
+});
 location.replace("/sidepanel/index.html");
 </script>`;
 
@@ -270,6 +279,7 @@ async function main() {
     const shots = {
       active: join(docs, "panel-1.4.0-active.png"),
       archived: join(docs, "panel-1.4.0-archived.png"),
+      archivedDiag: join(docs, "panel-1.7.1-archived.png"),
       remove: join(docs, "panel-1.4.0-remove.png"),
       en: join(docs, "panel-1.4.0-en.png"),
       ja: join(docs, "panel-1.4.0-ja.png"),
@@ -286,6 +296,27 @@ async function main() {
       return badges.length >= 2 && badges.every((badge) => badge.textContent === "已封存");
     }, { timeout: 10000 });
     await page.screenshot({ path: shots.archived, fullPage: true });
+    await page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open("chatseek");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const row = await new Promise((resolve, reject) => {
+        const req = db.transaction("meta").objectStore("meta").get("health:chatgpt");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const box = document.getElementById("diagBox");
+      box.hidden = false;
+      box.value = row?.diag || "";
+    });
+    await page.waitForFunction(() => {
+      const box = document.getElementById("diagBox");
+      const titles = [...document.querySelectorAll(".item-title")].map((el) => el.textContent || "");
+      return box && !box.hidden && box.value.includes("archive=banner:1,list:2") && titles.some((title) => title.includes("舊相機"));
+    }, { timeout: 10000 });
+    await page.screenshot({ path: shots.archivedDiag, fullPage: true });
 
     await page.click(".remove");
     await page.waitForFunction(() => {
