@@ -77,12 +77,15 @@ npm run test:e2e-sync  # 需 xvfb-run
 
 - `docs/reader-1.7.2-image-progress.png`：閱讀頁的一則生圖回合（「生圖：楓葉與山脊」）只剩**一則** assistant 塊＋一張圖，畫面沒有出現 25%／38%／51%／80% 的進度文字。
 
-## 老闆實測（≤4 步）
+## 老闆實測（≤5 步）
 
 1. `chrome://extensions` 重新載入，確認版本 1.7.2，權限只有側邊欄。
-2. 開一則新的 ChatGPT 對話，請它生一張圖；生圖過程中不要動。
-3. 等圖出現後，打開 Chatseek 側欄（或把這則對話重新整理再回側欄看），這則生圖回合應該只有**一則** assistant 塊，不是十幾則重複。
-4. 回到原本那則舊的、之前已經存成很多重複塊的生圖對話，重新整理；側欄／閱讀頁應該已被整理成一則（第一次會跑一次性整理，log 印 `[Chatseek] progress repair merged=X dropped=Y`，數字而已）。
+2. 開一則新的 ChatGPT 對話，請它生一張圖；生圖過程中不要動。等圖出現後，打開 Chatseek 側欄（或把這則對話重新整理再回側欄看），這則生圖回合應該只有**一則** assistant 塊，不是十幾則重複。
+3. 回到原本那則舊的、之前已經存成很多重複塊的生圖對話，重新整理；側欄／閱讀頁應該已被整理成一則（第一次會跑一次性整理，log 印 `[Chatseek] progress repair merged=X dropped=Y`，數字而已），圖片頁籤（含縮圖）點了要跳到正確位置。
+4. 在側欄診斷區按「複製頁面結構」，確認狀態列顯示產出字元數（沒有權限提示就是成功）；貼回來給我們。
+5. 回到一則**已封存**的 ChatGPT 對話頁，再按一次「複製頁面結構」，把那份骨架貼回來（1.7.1 封存偵測在真機上選擇器全 0，要靠這份骨架修，這一項最重要）。
+
+> 第 4／5 步的骨架貼回時請確認裡面**沒有**對話內文、標題、網址、對話 id；若出現任何一句內文，請一併回報（屬於隱私 bug，優先修）。
 
 ## 已知限制
 
@@ -93,6 +96,8 @@ npm run test:e2e-sync  # 需 xvfb-run
 - 一次性整理是啟動時 best-effort；DB 版本維持 4，若之後要改結構仍需另寫遷移與 `test:upgrade`。
 
 ## PR #19 獨立複審（Codex，2026-10-09；與 CodeWhale 寫碼 session 分開）
+
+> **本節是第一輪複審當時的記錄，已由文末「Codex 複審第一輪 BLOCK 的修正（round 2）」取代。** 結尾的 `VERDICT: BLOCK` 指當時兩個 blocker，兩者已在 round 2 修正並 push。
 
 複審起點 `31965c9`，基準 `ad8f7d1`。以下修正留在工作目錄，**沒有 commit／push**。先前各節是寫碼者交接；本節記錄複審後的狀態，不是 STATUS READY。
 
@@ -119,3 +124,114 @@ npm run test:e2e-sync  # 需 xvfb-run
 完整索引案例可重現：`node scripts/progress-review-test.mjs --full-index`。保留為 opt-in 壓力測試，索引正確性另有小 fixture，沒有刪掉壓力案例來掩蓋耗時。需要以 Chrome 原生 IndexedDB 確認首次擷取／搜尋不被長時間阻塞，或把修復改成有界的事務與等待；在此之前複審 **VERDICT: BLOCK**。Chrome e2e／e2e-sync、瀏覽器效能重測及實機測試依老闆指示由老闆跑，本 session 沒跑，也沒有重新宣稱先前截圖與效能數據驗證了複審改動。
 
 剩餘保守限制：未涵蓋語系／與狀態完全同文的合法 assistant 短句仍無法單靠文字判別；無位置的舊列不合併。DOM 全換、無原生 id 又無鄰居證據時，不冒險跨窗口覆蓋舊訊息。旧 captureIndex 是分批内位置，不是全对话绝对位置；窗口／分批发生变化时，位置证据仍有限，需要实机样本验证。
+
+## Codex 複審第一輪 BLOCK 的修正（round 2，2026-10-09）
+
+> 上面「PR #19 獨立複審（Codex）」那節是第一輪複審當時的記錄，結尾的 **VERDICT: BLOCK** 與「修正未 commit」都已被本節取代；第一輪的四項回歸修正已 commit 為 `5e4527c`，其後兩個 BLOCK 在 `835947f` 修正。以下為 round 2。
+
+### BLOCK 1：首次全庫修復不得阻塞擷取／搜尋
+
+**原本的問題**：`background.js` 的 `CAPTURE_MESSAGES` 會 `await ensureProgressRepair()`，而 `ensureProgressRepair()` 是一次跑到完的 `while` 迴圈；在 Node fake-IndexedDB 加上完整倒排索引、3000 列／500 張縮圖的極端負載下，全庫修復約 **211 秒**，擷取就排隊等它，超過 content script 的 **15000 ms** 回應期限（`content/shared.js` 送 `CAPTURE_MESSAGES` 的 timeout）。
+
+**怎麼修**：
+
+- `src/db.js` 的修復改成**有界分批**：常數 `REPAIR_BATCH = { conversations: 2, drops: 64, budgetMs: 4000 }`。每次 `repairProgressDuplicates()` 最多處理 2 個對話、單一 readwrite 事務最多刪 64 則（`maxDrops`）、累計滿 4000 ms 就停；每次事務之間 `yieldToLoop()`（`setTimeout 0`）讓出事件迴圈。逐對話的 `repairConversationProgress` 若一個對話大於一批，會回 `remaining > 0` 並**保留同一對話的下次續做**，不是把整個對話塞進一個長事務。
+- **佇列與游標持久化在 `meta` 的 `progressRepair` 列**（`persistRepairState` 記 `queue / index / merged / dropped / done`），所以中斷後可續做、可重入、**冪等**：第二次跑沒有可合併的就 `merged=0`。
+- **失敗不標完成**：對話事務出錯會 `tx.abort()` 回滾，回 `done:false, stalled:true`，游標不前進，下次重試；只有全部對話跑完才寫 `done:true`。
+- `background.js` 的 `CAPTURE_MESSAGES` 改成 **fire-and-forget**：`ensureProgressRepair().catch(() => null)` 之後**立刻** `upsertMessages(...)`，擷取不等修復。`onInstalled`／`onStartup` 也一樣 fire-and-forget。
+
+**證據（`node scripts/progress-review-test.mjs --full-index`）**：
+
+```
+review capture during repair max ms 10346 full index true   # < 15000 ms 期限
+review migration 3000 rows / 500 thumbnails ms 229035 event loop max gap ms 232 full index true
+review PASS 3000 rows and 500 colliding thumbnails remain intact and jumpable
+progress-review ok
+```
+
+`--full-index` 是 opt-in 的極端壓力案例（Node fake-IndexedDB 的完整倒排索引，真實 Chrome 原生 IDB 快很多）；不帶旗標的標準負載是 `review capture during repair max ms ~500`、event-loop 最大間隔 ~40 ms。測試斷言 `captureMs < 15000`。**已知餘裕**：極端案例在 8–10 秒之間跳動（本 session 兩次為 8110 ms／10346 ms），仍在期限內，但餘裕不算大；若日後再收到真機回報阻塞，下一步是把掃描拆成唯讀掃描＋小型寫入事務，而不是加大 batch。
+
+### BLOCK 2：遷移合併需要「同位置」以外的證據
+
+**原本的問題**：`planProgressMerges` 只用相同 `captureIndex` 當位置證據。但 `captureIndex` 是**分批內的位置**，跨窗口／分批擷取時不同訊息可能拿到同一個 index，於是兩則不相干的進度列會被誤合併。
+
+**怎麼修**（`src/image-progress.js` `planProgressMerges`）：合併前要求**同一對話**、**相鄰**（依 `orderMessages(all, null)` 的時間序）、**同角色**、兩者都只差進度文字，**且** 另有位置證據：
+
+- `sameSlot(a,b)`＝同對話＋有效且相同的 `captureIndex`；
+- 額外證據＝`sameTurn(a,b)`（同一原生 turn id）**或** `anchorAt(i)`（往前找最近一則使用者訊息，其 id 當「這位置是誰的提問」的錨）；兩者都沒有就**不合併**。
+- 保留對象也要求同 slot 且（有 anchor 或同 turn）；條件不足時**寧可留重複，不可誤刪**。
+
+**證據**：`scripts/progress-review-test.mjs`
+
+```
+review PASS migration requires the same position and conversation   # 跨窗口不同位置不會被合併
+review PASS one DOM turn can rewrite arbitrary prose without a new row
+review PASS short legitimate replies and controls are not progress
+review PASS failed migration rolls back and retries
+review PASS migration preserves colliding thumbnails and their bytes
+```
+
+## 新增：側欄「複製頁面結構」診斷（P0）
+
+真機上 1.7.1 封存偵測完全沒作用、訊息選擇器全 0。**這次不猜選擇器**：改成讓老闆把真實頁面的骨架貼回來再修。
+
+**流程（不加任何權限）**：側欄診斷區按鈕「複製頁面結構」（九個 `_locales`：zh_TW／zh_CN／en／ja／ko／es／fr／de／pt_BR；`COPY_PAGE_SKELETON`）→ `sidepanel/panel.js` 沿用既有「複製診斷」模式，用 `chrome.tabs.query({active:true,windowId})`＋`chrome.tabs.sendMessage(tabId, {type:"COPY_PAGE_SKELETON"})` 找目前分頁（**沒有**加 `tabs`／`scripting`／`clipboardWrite`；`chrome.tabs.query`／`sendMessage` 在 `sidePanel` 權限下可用，與 1.7.1 `pingInjection()` 相同）→ content script 在頁面內用 `Chatseek.buildPageSkeleton(document)` 產生骨架，走既有 `chrome.runtime.onMessage` 管道回 `{ok,text,chars,nodes,truncated}` → `panel.js` `navigator.clipboard.writeText`，失敗時走既有手動複製退路（如實顯示骨架到可選取的 textarea）。狀態列顯示產出**字元數**。
+
+**骨架產生器（`content/shared.js` `Chatseek.buildPageSkeleton`，`SKELETON_NODES = 6000`、`SKELETON_DEPTH = 60`）**：
+
+- 涵蓋**頂層文件**、**開放與封閉 shadow**（`adoptedRoot(node, true)`；封閉 shadow 走 `chrome.dom.openOrClosedShadowRoot`，若可用；封閉根印 `#shadow`；開放根直接展開）、**同源 iframe**（印 `#same-origin-frame`）。**跨源 iframe** 只記網域：`#cross-origin host=<hostname>`。
+- 每個節點只記：**標籤名、深度、子節點數**、**屬性名**；屬性值只保留符合「≤32 字且只含 `[A-Za-z0-9_:-]`、不像 uuid／長雜湊」的**短列舉值**（例如 `role`、`data-testid`、`data-message-author-role`、`data-turn`），其餘一律 `x`；`aria-label`、`title`、`alt`、`placeholder`、`href`、`src`、`id`、`value`（以及 `name`、`content`、`srcdoc`、`style`、`data-*-id` 類）一律 `x`；`class` 只留每個 class 的前綴（第一個 `-`／`_` 前或前 20 字），最多 3 個、每個最多 20 字，像雜湊的 class 改成 `h`；文字節點只記**字數**（`#text(N)`），文字本身換成 `x`。
+- **保護**：輸出不含任何內文、標題、網址、對話 id、帳號資訊，也**不輸出 `location`**；連續同構兄弟節點收成一行 `×N`；上限 6000 節點、深度 60，超過在首行標 `truncated=true`。首行 `# chatseek page skeleton v1 nodes=N depth<=60 truncated=...`。
+
+**守門（`scripts/verify.mjs` 只加強）**：
+
+- 靜態：`buildPageSkeleton`／`COPY_PAGE_SKELETON`／`SKELETON_NODES=6000`／`SKELETON_DEPTH=60`／`#cross-origin`／`#same-origin-frame` 存在；骨架段禁 `location.(href|origin)`、`innerHTML`、`chrome.scripting|executeScript|insertCSS`；`panel.js`／`index.html` 有按鈕與 handler 且禁 `chrome.scripting`。
+- **執行期（jsdom 攻擊 fixture）**：一個塞滿網址／uuid／email／中英文內文／`aria-label` 帶句子／`title`／`alt`／`href`／`src`／`data-message-id` uuid／長雜湊 class／iframe `srcdoc` 內文／shadow 內文的 document，跑真骨架產生器，斷言輸出**完全不含**這些字串，且**保留**結構（`role=main`、`data-message-author-role=assistant`）。
+- `scripts/skeleton-test.mjs`（`test:skeleton`，掛進 `test:search`）：Part A/B/C 節點數與字元數、Part D 同構兄弟 `×N` 收斂與 6000／深度 60 截斷、Part E 監聽器載入路徑。
+
+**e2e**：`scripts/e2e-chatgpt.mjs` 在模擬**已歸檔**對話頁按側欄「複製頁面結構」（stub `navigator.clipboard.writeText`），斷言回傳骨架含 `# chatseek page skeleton v1`／`nodes=`／`data-message-author-role=assistant`，**不含** fixture 內文、uuid、任何 `://` 網址，且狀態列有字元數。
+
+**範例骨架與截圖（都是範例資料，不是真實對話）**：
+
+- `docs/skeleton-1.7.2-sample.txt`：由範例 fixture 產生的骨架，內含 `#shadow`（封閉 shadow）、`#cross-origin host=example.com`、`#same-origin-frame`。
+- `docs/panel-1.7.2-copy-structure.png`：側欄按完按鈕後顯示字元數的截圖。
+- `docs/reader-1.7.2-image-progress.png`：閱讀頁生圖回合只剩一則＋一張圖，沒有進度文字。
+
+## round 2 測試（全部實跑）
+
+```bash
+npm run verify         # verify ok；chatgpt-fixture ok { selector: '[data-turn]', messages: 2, emptyWarn: true }
+npm run test:search    # 全過；含 progress ok / progress-review ok / skeleton ok / sync-test ok
+npm run test:fixture   # chatgpt-fixture / markdown-capture / gemini-fixture / gemini-capture 全過
+npm run test:gemini    # 全過
+npm run test:upgrade   # 全過（含 test:progress 兩個腳本）
+npm run test:sync      # sync-test ok { merged: 3000, mergeMs: 20 }
+npm run test:progress  # progress ok / progress-review ok
+xvfb-run -a npm run test:e2e       # e2e chatgpt ok（含骨架診斷區塊）
+xvfb-run -a npm run test:e2e-sync  # 全過（userStayed: true）
+node scripts/progress-review-test.mjs --full-index  # 見 BLOCK 1
+```
+
+## round 2 效能（對 `ad8f7d1`）
+
+同一台機器、同一支 Chrome、headless；baseline worktree `/tmp/pre172`＝`git merge-base HEAD origin/main`＝`ad8f7d1`。
+
+| 指標 | 1.7.2 | ad8f7d1 |
+| --- | --- | --- |
+| 閱讀頁 3000 則掛上 | 592 ms | 528 ms |
+| 閱讀頁跳轉 | 5.49 ms | 4.95 ms |
+| 閱讀頁捲動 p50 / p95 / max | 4.0 / 7.8 / 28.1 ms | 3.7 / 6.7 / 17.9 ms |
+| 側欄 3000 則開啟（三次中位） | 453 ms（512 / 416 / 453） | 502 ms（515 / 461 / 502） |
+| 側欄捲動 p95 | 7 ms | 2 ms |
+| 圖片頁籤 500 張開啟 / 捲動 p95 | 46–56 ms / 3.9–4.4 ms | 45 ms / 3.2 ms（1.7.1 量） |
+| 首次修復進行中擷取回應（極端 full-index fake-IDB） | 8110–10346 ms（< 15000 期限） | 211000+ ms（會超期） |
+| 首次修復進行中擷取回應（標準負載） | ~500 ms | n/a |
+
+閱讀頁／側欄差異都在單次取樣的雜訊範圍（毫秒級抖動），1.7.2 沒有新增閱讀頁或側欄清單路徑。1.7.2 的主要新增成本是**啟動時一次性的背景修復**，已分批且有界，不阻塞擷取與搜尋。
+
+## round 2 已知限制
+
+- 遷移合併保守：證據不足（跨窗口／缺 captureIndex／缺 turn 與 anchor）**寧可留重複不合併**。
+- 骨架上限 6000 節點、深度 60，超過標 `truncated=true`；跨源 iframe 只記網域（`host=<hostname>`），路徑一律 `x`。
+- 首次全庫修復在極端 fake-IDB 負載下的擷取餘裕約 8–10 秒（< 15 秒但不大）；真實 Chrome 原生 IDB 快很多，仍需真機確認。
+- BLOCK 1 的修復是分小批事務；修復期間若同時擷取，兩者靠 IDB 事務排隊協調，不保證零等待。
