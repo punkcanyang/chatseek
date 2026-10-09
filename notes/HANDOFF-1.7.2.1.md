@@ -14,7 +14,7 @@
 - [x] SPA e2e／獨立截圖腳本、Searching 狀態列競態修正
 - [x] 1.7.2 實測文案與 ROADMAP 更新
 - [x] 外部 Chrome e2e（test:e2e、test:e2e-sync 各連跑 2 次全過）、截圖、效能對照（产品开发在 sandbox 外跑，2026-10-09 23:40–23:58）
-- [ ] Codex 複審（另開 session，gpt-6.1-sol high）
+- [ ] Codex 複審 session `01a12161-9f1f-7190-a0d3-2b221e06c49f`（gpt-6.1-sol high，非 Fast；與寫碼不同 session）進行中，PR #20
 - [ ] 合 main
 
 ## 根因（原初步判讀已由真實舊碼測試證實）
