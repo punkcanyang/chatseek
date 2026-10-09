@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "Esta pestaña no ha cargado Chatseek. Actualízala y confirma que la extensión puede acceder a este sitio."
+  },
+  "syncPlatform": {
+    "message": "Plataforma"
+  },
+  "syncStart": {
+    "message": "Empezar sincronización"
+  },
+  "syncPause": {
+    "message": "Pausar"
+  },
+  "syncResume": {
+    "message": "Continuar"
+  },
+  "syncStop": {
+    "message": "Detener"
+  },
+  "syncIdle": {
+    "message": "Sin empezar"
+  },
+  "syncWaiting": {
+    "message": "En espera"
+  },
+  "syncResting": {
+    "message": "En descanso"
+  },
+  "syncPaused": {
+    "message": "En pausa"
+  },
+  "syncRunning": {
+    "message": "Sincronizando"
+  },
+  "syncDone": {
+    "message": "Sincronización terminada"
+  },
+  "syncStopped": {
+    "message": "Detenida: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "Esta plataforma no tiene conversaciones para sincronizar"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · guardadas $ARG3$ · omitidas $ARG4$ · fallidas $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "menos de 1 min"
+  },
+  "syncEtaMin": {
+    "message": "unos $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "Captcha o comprobación de Cloudflare"
+  },
+  "syncReasonLogin": {
+    "message": "Página de inicio de sesión"
+  },
+  "syncReasonError": {
+    "message": "Página de error"
+  },
+  "syncReasonRate": {
+    "message": "Límite de solicitudes"
+  },
+  "syncReasonEmpty": {
+    "message": "Tres conversaciones seguidas sin mensajes"
+  },
+  "syncReasonTab": {
+    "message": "Se cerró la pestaña de sincronización"
+  },
+  "syncReasonPanel": {
+    "message": "Se cerró el panel lateral"
+  },
+  "syncReasonUser": {
+    "message": "La detuviste"
+  },
+  "syncReasonUncertain": {
+    "message": "No se pudo confirmar la página"
+  },
+  "syncReasonStartup": {
+    "message": "En pausa porque el navegador se reinició"
+  },
+  "syncHint": {
+    "message": "Solo sincroniza mientras este panel está abierto. Cerrar el panel pausa. Cerrar la pestaña de sincronización detiene."
   }
 }

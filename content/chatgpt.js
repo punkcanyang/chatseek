@@ -478,6 +478,23 @@
     healthFor,
   };
 
+  Chatseek.syncProbe = () => {
+    const signals = Chatseek.syncPageSignals(document, location);
+    const sidebar = extractSidebar(document);
+    const platformId = conversationIdFromLocation(location);
+    let messageCount = 0;
+    if (platformId) {
+      try {
+        const extracted = extractMessages(platformId, document);
+        messageCount = extracted?.messages?.length || 0;
+      } catch {
+        messageCount = 0;
+      }
+    }
+    const storedCount = platformId ? Chatseek.syncStoredCount(`${PLATFORM}:${platformId}`) : 0;
+    return Chatseek.syncProbeResult(signals, sidebar, messageCount, storedCount);
+  };
+
   if (Chatseek.autoStart !== false) {
     let child = false;
     try { child = window.top !== window; } catch { child = true; }

@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "このタブには Chatseek が読み込まれていません。タブを再読み込みし、拡張機能がこのサイトへのアクセスを許可されているか確認してください。"
+  },
+  "syncPlatform": {
+    "message": "プラットフォーム"
+  },
+  "syncStart": {
+    "message": "同期を開始"
+  },
+  "syncPause": {
+    "message": "一時停止"
+  },
+  "syncResume": {
+    "message": "再開"
+  },
+  "syncStop": {
+    "message": "停止"
+  },
+  "syncIdle": {
+    "message": "未開始"
+  },
+  "syncWaiting": {
+    "message": "待機中"
+  },
+  "syncResting": {
+    "message": "休憩中"
+  },
+  "syncPaused": {
+    "message": "一時停止中"
+  },
+  "syncRunning": {
+    "message": "同期中"
+  },
+  "syncDone": {
+    "message": "同期完了"
+  },
+  "syncStopped": {
+    "message": "停止：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "このプラットフォームに同期する会話がありません"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ 件 · 収録 $ARG3$ · スキップ $ARG4$ · 失敗 $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "1分未満"
+  },
+  "syncEtaMin": {
+    "message": "約 $ARG1$ 分",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "認証または Cloudflare の確認"
+  },
+  "syncReasonLogin": {
+    "message": "ログインページ"
+  },
+  "syncReasonError": {
+    "message": "エラーページ"
+  },
+  "syncReasonRate": {
+    "message": "レート制限"
+  },
+  "syncReasonEmpty": {
+    "message": "3件連続でメッセージがありません"
+  },
+  "syncReasonTab": {
+    "message": "同期タブが閉じられました"
+  },
+  "syncReasonPanel": {
+    "message": "サイドパネルが閉じられました"
+  },
+  "syncReasonUser": {
+    "message": "手動で停止しました"
+  },
+  "syncReasonUncertain": {
+    "message": "ページの状態を確認できません"
+  },
+  "syncReasonStartup": {
+    "message": "ブラウザ再起動のため一時停止"
+  },
+  "syncHint": {
+    "message": "このパネルが開いている間だけ同期します。パネルを閉じると一時停止、同期タブを閉じると停止します。"
   }
 }

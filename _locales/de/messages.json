@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "Dieser Tab hat Chatseek nicht geladen. Lade den Tab neu und prüfe, ob die Erweiterung auf diese Website zugreifen darf."
+  },
+  "syncPlatform": {
+    "message": "Plattform"
+  },
+  "syncStart": {
+    "message": "Sync starten"
+  },
+  "syncPause": {
+    "message": "Pause"
+  },
+  "syncResume": {
+    "message": "Weiter"
+  },
+  "syncStop": {
+    "message": "Stopp"
+  },
+  "syncIdle": {
+    "message": "Nicht gestartet"
+  },
+  "syncWaiting": {
+    "message": "Wartet"
+  },
+  "syncResting": {
+    "message": "Pause zwischen Stapeln"
+  },
+  "syncPaused": {
+    "message": "Pausiert"
+  },
+  "syncRunning": {
+    "message": "Synchronisiert"
+  },
+  "syncDone": {
+    "message": "Sync fertig"
+  },
+  "syncStopped": {
+    "message": "Gestoppt: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "Auf dieser Plattform gibt es keine Gespräche zum Synchronisieren"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · gespeichert $ARG3$ · übersprungen $ARG4$ · fehlgeschlagen $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "unter 1 Min."
+  },
+  "syncEtaMin": {
+    "message": "etwa $ARG1$ Min.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "Captcha oder Cloudflare-Prüfung"
+  },
+  "syncReasonLogin": {
+    "message": "Anmeldeseite"
+  },
+  "syncReasonError": {
+    "message": "Fehlerseite"
+  },
+  "syncReasonRate": {
+    "message": "Ratenlimit"
+  },
+  "syncReasonEmpty": {
+    "message": "Drei Gespräche hintereinander ohne Nachrichten"
+  },
+  "syncReasonTab": {
+    "message": "Sync-Tab wurde geschlossen"
+  },
+  "syncReasonPanel": {
+    "message": "Seitenleiste wurde geschlossen"
+  },
+  "syncReasonUser": {
+    "message": "Manuell gestoppt"
+  },
+  "syncReasonUncertain": {
+    "message": "Seitenstatus unklar"
+  },
+  "syncReasonStartup": {
+    "message": "Pausiert, weil der Browser neu startete"
+  },
+  "syncHint": {
+    "message": "Sync läuft nur, solange diese Seitenleiste offen ist. Schließen pausiert. Den Sync-Tab schließen stoppt."
   }
 }

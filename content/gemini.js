@@ -576,5 +576,23 @@
     capture,
   };
 
+  Chatseek.syncProbe = async () => {
+    const signals = Chatseek.syncPageSignals(document, location);
+    const sidebar = extractSidebar(document, location);
+    const parsed = parseConversationPath(location.pathname || "");
+    const platformId = parsed?.id || "";
+    let messageCount = 0;
+    if (platformId) {
+      try {
+        const extracted = await extractMessages(platformId, document, false);
+        messageCount = extracted?.messages?.length || 0;
+      } catch {
+        messageCount = 0;
+      }
+    }
+    const storedCount = platformId ? Chatseek.syncStoredCount(`${PLATFORM}:${platformId}`) : 0;
+    return Chatseek.syncProbeResult(signals, sidebar, messageCount, storedCount);
+  };
+
   if (Chatseek.autoStart !== false) Chatseek.observe(() => capture());
 })();

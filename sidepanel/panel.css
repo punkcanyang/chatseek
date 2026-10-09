@@ -599,6 +599,50 @@ body.is-images .image-pane {
   margin-top: 14px;
 }
 
+.sync {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin: 0 0 12px;
+  box-shadow: var(--shadow);
+}
+
+.sync-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.sync-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#syncPlatform {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 4px 6px;
+  min-width: 0;
+}
+
+.sync-status,
+.sync-progress,
+.sync-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sync-hint {
+  font-size: 11px;
+}
+
 .btn {
   border: 1px solid var(--line);
   background: transparent;
@@ -607,6 +651,12 @@ body.is-images .image-pane {
   padding: 6px 10px;
   font-size: 13px;
   cursor: pointer;
+}
+
+.sync-go {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
 }
 
 .btn-danger {

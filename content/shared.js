@@ -1138,7 +1138,10 @@ const Chatseek = {
       conversation.archiveSource || "",
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
-    if (msgFp === state.lastMsgFp) return ok;
+    if (msgFp === state.lastMsgFp) {
+      Chatseek.noteSyncStored(conversation.id, msgs.length);
+      return ok;
+    }
 
     if (!inSidebar) {
       const res = await Chatseek.send({
@@ -1167,6 +1170,7 @@ const Chatseek = {
     state.lastMsgFp = msgFp;
     state.lastMsgConvId = conversation.id;
     state.lastMsgKeys = new Set(keys);
+    Chatseek.noteSyncStored(conversation.id, msgs.length);
     // The sidebar was written before this anchor existed. Rewrite it now so
     // its neighbours are estimated from the new time, even if the order did not move.
     if (observed && inSidebar) {
@@ -3002,3 +3006,140 @@ Chatseek.formatStructure = (structure) => {
     `skeleton=${skeleton || "-"}`,
   ].join(" ");
 };
+
+const SYNC_TRANSCRIPT = [
+  "[data-message-author-role]",
+  "[data-testid='user-message']",
+  "[data-testid='assistant-message']",
+  "[data-testid='human-message']",
+  "[data-testid='ai-message']",
+  ".conversation-container",
+  "article",
+].join(", ");
+
+function syncBanner(root, pattern) {
+  if (!root?.querySelectorAll) return false;
+  let nodes = [];
+  try {
+    nodes = [...root.querySelectorAll("h1, h2, [role='alert']")];
+  } catch {
+    return false;
+  }
+  for (const node of nodes) {
+    try {
+      if (node.closest?.(SYNC_TRANSCRIPT)) continue;
+    } catch {
+      continue;
+    }
+    const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 240) continue;
+    if (pattern.test(text)) return true;
+  }
+  return false;
+}
+
+/** DOM flags for the sync stop check. The caller keeps the enum, not this text. */
+Chatseek.syncPageSignals = (doc, loc) => {
+  const root = doc || (typeof document !== "undefined" ? document : null);
+  const here = loc || (typeof location !== "undefined" ? location : null);
+  const href = String(here?.href || "");
+  const title = String(root?.title || "");
+  let hasChallengeNode = false;
+  let hasPassword = false;
+  let hasLoginForm = false;
+  try {
+    hasChallengeNode = !!root?.querySelector?.(
+      "#challenge-form, #cf-challenge-running, .cf-turnstile, iframe[src*='challenges.cloudflare']",
+    );
+    hasPassword = !!root?.querySelector?.("input[type='password']");
+    hasLoginForm = !!root?.querySelector?.("form[action*='login' i], [data-testid='login-button']");
+  } catch {
+    hasChallengeNode = false;
+  }
+  return {
+    href,
+    title,
+    hasChallengeNode,
+    hasPassword,
+    hasLoginForm,
+    hasRateBanner: syncBanner(root, /too many requests|rate limit|try again later|^429\b/i),
+    hasErrorBanner: syncBanner(root, /something went wrong|access denied|page not found|^404\b|^403\b/i),
+  };
+};
+
+/** How many messages this document already wrote for one conversation. */
+Chatseek.noteSyncStored = (id, count) => {
+  if (!id) return;
+  Chatseek._syncStoredId = String(id);
+  Chatseek._syncStoredCount = Math.max(0, Math.floor(Number(count) || 0));
+};
+
+Chatseek.syncStoredCount = (id) => {
+  if (!id || Chatseek._syncStoredId !== String(id)) return 0;
+  return Chatseek._syncStoredCount || 0;
+};
+
+/** Sidebar links only. No message text. */
+Chatseek.syncProbeResult = (signals, sidebar, messageCount, storedCount) => {
+  const links = [];
+  for (const row of sidebar || []) {
+    if (links.length >= 500) break;
+    if (!row?.url) continue;
+    links.push({
+      url: String(row.url),
+      updatedAt: typeof row.updatedAt === "number" ? row.updatedAt : null,
+      messageCount: Number.isFinite(row.messageCount) ? row.messageCount : null,
+    });
+  }
+  return {
+    ok: true,
+    href: signals?.href || "",
+    title: signals?.title || "",
+    hasChallengeNode: !!signals?.hasChallengeNode,
+    hasPassword: !!signals?.hasPassword,
+    hasLoginForm: !!signals?.hasLoginForm,
+    hasRateBanner: !!signals?.hasRateBanner,
+    hasErrorBanner: !!signals?.hasErrorBanner,
+    messageCount: Math.max(0, Math.floor(Number(messageCount) || 0)),
+    storedCount: Math.max(0, Math.floor(Number(storedCount) || 0)),
+    links,
+  };
+};
+
+function syncTopFrame() {
+  try {
+    return !window.top || window.top === window;
+  } catch {
+    return false;
+  }
+}
+
+try {
+  if (
+    syncTopFrame() &&
+    typeof chrome !== "undefined" &&
+    chrome.runtime?.onMessage?.addListener &&
+    !globalThis.__chatseekSyncInspect
+  ) {
+    globalThis.__chatseekSyncInspect = true;
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!msg || msg.type !== "SYNC_INSPECT") return;
+      const probe = Chatseek.syncProbe;
+      if (typeof probe !== "function") {
+        try { sendResponse({ ok: false }); } catch { /* the runner treats silence as uncertain */ }
+        return;
+      }
+      Promise.resolve()
+        .then(() => probe())
+        .then((report) => {
+          try { sendResponse(report || { ok: false }); } catch { /* channel closed */ }
+        })
+        .catch(() => {
+          try { sendResponse({ ok: false }); } catch { /* channel closed */ }
+        });
+      return true;
+    });
+  }
+} catch {
+  // Capture still runs when messaging is unavailable.
+}

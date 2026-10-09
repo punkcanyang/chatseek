@@ -86,7 +86,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.5") fail(`version should be 1.6.5, got ${manifest.version}`);
+if (manifest.version !== "1.7.0") fail(`version should be 1.7.0, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -281,8 +281,11 @@ for (const rel of [
   "src/markdown-dom.js",
   "src/sort-list.js",
   "src/image-cache.js",
+  "src/sync-policy.js",
+  "src/sync-runner.js",
   "reader/reader.js",
   "sidepanel/panel.js",
+  "sidepanel/sync-ui.js",
 ]) {
   const src = read(rel);
   if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts/.test(src)) {
@@ -290,8 +293,32 @@ for (const rel of [
   }
   if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
 }
+const syncPolicy = read("src/sync-policy.js");
+const syncRunner = read("src/sync-runner.js");
+const syncUi = read("sidepanel/sync-ui.js");
+if (!/export const SYNC_GAP_MIN_MS = 20000/.test(syncPolicy)) fail("sync gap minimum must stay 20 seconds");
+if (!/export const SYNC_GAP_MAX_MS = 40000/.test(syncPolicy)) fail("sync gap maximum must stay 40 seconds");
+if (!/export const SYNC_BATCH_SIZE = 30/.test(syncPolicy)) fail("sync batch must stay 30 conversations");
+if (!/export const SYNC_REST_MS = 10 \* 60 \* 1000/.test(syncPolicy)) fail("sync rest must stay 10 minutes");
+if (/process\.env|chrome\.alarms|\balarms\b/.test(syncPolicy + syncRunner + syncUi)) {
+  fail("sync must not read the environment or use alarms");
+}
+if (/\bsetTimeout\s*\(|\bsetInterval\s*\(/.test(syncRunner)) {
+  fail("the sync runner must not keep its own timer");
+}
+if (/active:\s*true/.test(syncRunner)) fail("the sync tab must not be activated");
+if (!/active:\s*false/.test(syncRunner)) fail("the sync tab must be created in the background");
+if (/tabs\.query|tab\.url|tab\.title|pendingUrl/.test(syncRunner)) {
+  fail("sync must not read other tabs' urls or titles");
+}
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(syncUi + syncPolicy + syncRunner)) {
+  fail("sync UI must not assign HTML");
+}
 
 const dbSrc = read("src/db.js");
+const syncList = dbSrc.split("export async function listSyncCandidates")[1]?.split("export async function")[0] || "";
+if (!syncList) fail("listSyncCandidates missing");
+if (/objectStore\(\s*["']messages["']/.test(syncList)) fail("listing sync candidates must not open messages");
 if (/messages["']?\)\.getAll|objectStore\(\s*["']messages["']\s*\)\.getAll/.test(dbSrc)) {
   fail("db.js must not getAll() the messages store");
 }

@@ -19,6 +19,7 @@ import { activeTabUrl, eventInWindow, injectionUnloaded, isChatTabUrl, locationF
 import { CATALOG, LOCALE_ORDER, fill, resolveLocale, text } from "../src/i18n.js";
 import { readerPageUrl } from "../src/reader-url.js";
 import { bookIcon, externalIcon } from "../src/icons.js";
+import { initSync, setSyncLocale } from "./sync-ui.js";
 import {
   BROWSE_FIELDS,
   SEARCH_FIELDS,
@@ -209,6 +210,7 @@ function platformLabel(id) {
 }
 
 function applyStatic() {
+  setSyncLocale(localeCode);
   t = bundle(localeCode);
   document.documentElement.lang = localeCode;
   tagEl.textContent = t.tag;
@@ -1122,6 +1124,7 @@ if (chrome.tabs?.onUpdated) {
 }
 
 applyStatic();
+initSync();
 resolvePanelWindow().then(syncActiveTab);
 refresh();
 

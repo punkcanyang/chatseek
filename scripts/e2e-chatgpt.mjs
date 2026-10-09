@@ -539,7 +539,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.5 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.0 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);

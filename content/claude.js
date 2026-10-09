@@ -199,5 +199,22 @@
     return result;
   }
 
+  Chatseek.syncProbe = async () => {
+    const signals = Chatseek.syncPageSignals(document, location);
+    const sidebar = extractSidebar();
+    const platformId = conversationIdFromLocation();
+    let messageCount = 0;
+    if (platformId) {
+      try {
+        const messages = await extractMessages(platformId);
+        messageCount = Array.isArray(messages) ? messages.length : 0;
+      } catch {
+        messageCount = 0;
+      }
+    }
+    const storedCount = platformId ? Chatseek.syncStoredCount(`${PLATFORM}:${platformId}`) : 0;
+    return Chatseek.syncProbeResult(signals, sidebar, messageCount, storedCount);
+  };
+
   Chatseek.observe(capture);
 })();

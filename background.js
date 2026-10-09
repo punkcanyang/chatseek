@@ -7,6 +7,7 @@ import {
 } from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
 import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
+import { handleSyncMessage, noteSyncTabClosed, pauseSyncForStartup } from "./src/sync-runner.js";
 
 const HOSTS = {
   chatgpt: [/^https:\/\/chatgpt\.com\//, /^https:\/\/chat\.openai\.com\//],
@@ -27,7 +28,10 @@ function openSidePanelOnClick() {
 }
 
 chrome.runtime.onInstalled.addListener(openSidePanelOnClick);
-chrome.runtime.onStartup.addListener(openSidePanelOnClick);
+chrome.runtime.onStartup.addListener(() => {
+  openSidePanelOnClick();
+  pauseSyncForStartup();
+});
 openSidePanelOnClick();
 
 function senderPageUrl(sender) {
@@ -104,6 +108,7 @@ function rememberSite(sender, url) {
 if (chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     siteTabs.delete(tabId);
+    noteSyncTabClosed(tabId);
   });
 }
 
@@ -213,6 +218,20 @@ function fitHealth(health) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
+  if (
+    msg.type === "SYNC_START" ||
+    msg.type === "SYNC_PAUSE" ||
+    msg.type === "SYNC_RESUME" ||
+    msg.type === "SYNC_STOP" ||
+    msg.type === "SYNC_TICK" ||
+    msg.type === "SYNC_STATUS"
+  ) {
+    if (!fromExtensionPage(sender)) return;
+    handleSyncMessage(msg).then((view) => sendResponse(view || { status: "idle" })).catch(() => {
+      sendResponse({ status: "idle" });
+    });
+    return true;
+  }
   if (msg.type === "ACTIVE_LOCATION") {
     rememberSite(sender, msg.url);
     return;
