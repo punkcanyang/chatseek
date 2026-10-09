@@ -366,9 +366,7 @@
   async function captureInner(doc, loc) {
     const root = doc || document;
     const here = loc || location;
-    const topHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
-    const anyTop = Object.values(topHits).some((count) => Number(count) > 0);
-    const signals = Chatseek.readArchiveSignals(root, here, PLATFORM, { closed: !anyTop });
+    const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
     const sidebar = extractSidebar(root, signals.archiveRoots);
     const archivedRows = [];
     const seenArchived = new Set();
@@ -408,7 +406,14 @@
       const listedHere = archivedRows.some((row) => row.platformId === platformId);
       if (signals.banner) markArchived(conversation, "chatgpt:banner");
       else if (listedHere) markArchived(conversation, "chatgpt:archive-list");
-      else restoreOnNewMessages = true;
+      else restoreOnNewMessages = () => {
+        // Extraction and storage yield to the page. Recheck immediately before
+        // restoring so a late banner/list or SPA navigation cannot clear it.
+        if (conversationIdFromLocation(here) !== platformId) return false;
+        const current = Chatseek.readArchiveSignals(root, here, PLATFORM);
+        return !current.banner && !current.archiveRoots.some((node) =>
+          Chatseek._archiveListIds(node).includes(platformId));
+      };
       extracted = await extractMessagesPaced(platformId, root);
     }
     const stats = Chatseek.messageStats(extracted.messages);

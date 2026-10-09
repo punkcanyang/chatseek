@@ -189,6 +189,20 @@ const shortBanner = await capture(`
 `, `https://chatgpt.com/c/${OPEN}`);
 assert(shortBanner.signals.banner === true, "a short 已封存 label counts");
 
+for (const label of ["Archived", "已封存", "已归档", "アーカイブ済み", "보관됨", "Archivada", "Archivée", "Archiviert", "Arquivada"]) {
+  const sample = load(`<main><p>${label}</p></main>`, `https://chatgpt.com/c/${OPEN}`);
+  assert(sample.api.readArchiveSignals(sample.dom.window.document, sample.dom.window.location, "chatgpt").banner, `localized banner ${label}`);
+}
+const roleButton = load('<main><label role="button">Unarchive</label></main>', `https://chatgpt.com/c/${OPEN}`);
+assert(roleButton.api.readArchiveSignals(roleButton.dom.window.document, roleButton.dom.window.location, "chatgpt").banner, "non-native unarchive control is read without clicking");
+for (const html of [
+  '<div><svg aria-hidden="true"></svg>This conversation is archived.</div>',
+  '<button><svg aria-hidden="true"></svg>Unarchive</button>',
+]) {
+  const sample = load(`<main>${html}</main>`, `https://chatgpt.com/c/${OPEN}`);
+  assert(sample.api.readArchiveSignals(sample.dom.window.document, sample.dom.window.location, "chatgpt").banner, "decorative hidden icon does not suppress a banner");
+}
+
 const settingsList = await capture(`
   <nav><a href="/c/${ACTIVE}">Active trip</a></nav>
   <div role="dialog" aria-label="Settings">
@@ -280,6 +294,123 @@ const closedDom = new JSDOM(`<!DOCTYPE html><html><body><div id="host"></div></b
 const closedLoaded = loadDom(closedDom);
 const closedSignals = closedLoaded.api.readArchiveSignals(closedDom.window.document, closedDom.window.location, "chatgpt");
 assert(closedSignals.banner === true, "closed shadow banner counts");
+
+// Archive-looking text in a transcript, editor, sidebar or their wrappers
+// must never become a page-level archive signal.
+for (const [name, html] of [
+  ["message wrapper", '<div><div data-turn="assistant"><p>This conversation is archived.</p></div></div>'],
+  ["turn id", '<div data-turn-id="t"><p>Archived</p></div>'],
+  ["turn container", '<div data-turn-id-container="t"><p>Archived</p></div>'],
+  ["message content", '<div data-message-content><p>Archived</p></div>'],
+  ["turn class", '<div class="conversation-turn"><p>Archived</p></div>'],
+  ["markdown", '<div class="markdown"><p>This conversation is archived.</p></div>'],
+  ["prose", '<div class="prose"><p>Archived</p></div>'],
+  ["density speaker", '<div><h2>ChatGPT</h2><p>This conversation is archived.</p></div>'],
+  ["editor", '<div><form><div contenteditable="true"><p>This conversation is archived.</p></div></form></div>'],
+  ["sidebar wrapper", `<div><nav><a href="/c/${OLD}">This conversation is archived.</a></nav></div>`],
+  ["hidden notice", '<div hidden><div>This conversation is archived.</div></div>'],
+  ["quoted sentence", '<p>The phrase This conversation is archived appears in a story.</p>'],
+  ["sentence continuation", '<p>This conversation is archived in the story only.</p>'],
+]) {
+  const sample = load(`<main>${html}</main>`, `https://chatgpt.com/c/${OPEN}`);
+  assert(!sample.api.readArchiveSignals(sample.dom.window.document, sample.dom.window.location, "chatgpt").banner, `${name} is not a banner`);
+}
+
+const composerOnly = load(`<main>${COMPOSER}</main>`, `https://chatgpt.com/c/${OPEN}`);
+assert(composerOnly.api.readArchiveSignals(composerOnly.dom.window.document, composerOnly.dom.window.location, "chatgpt").composer, "composer detection stays available");
+
+for (const context of ["data-turn='assistant'", "role='dialog'", "contenteditable='true'"]) {
+  const nested = new JSDOM(`<main><div ${context}><div id="host"></div></div></main>`, { url: `https://chatgpt.com/c/${OPEN}` });
+  const shadow = nested.window.document.getElementById("host").attachShadow({ mode: "open" });
+  const notice = nested.window.document.createElement("p");
+  notice.textContent = "This conversation is archived.";
+  shadow.append(notice);
+  const loaded = loadDom(nested);
+  assert(!loaded.api.readArchiveSignals(nested.window.document, nested.window.location, "chatgpt").banner, `shadow inside ${context} is not a banner`);
+}
+
+// A closed-shadow banner can coexist with light-DOM messages. Even an
+// observed tail must not restore this conversation.
+const lightTurn = closedDom.window.document.createElement("div");
+lightTurn.setAttribute("data-turn", "user");
+lightTurn.textContent = "a new light DOM message that is long enough to capture";
+closedDom.window.document.body.append(lightTurn);
+const mixedClosed = loadDom(closedDom, (payload) => payload.type === "CAPTURE_MESSAGES" ? { observed: true } : null);
+await mixedClosed.api.platforms.chatgpt.capture();
+assert(mixedClosed.sent.some((msg) => msg.conversation?.archiveSource === "chatgpt:banner"), "light DOM messages do not hide a closed banner");
+assert(!mixedClosed.sent.some((msg) => msg.conversations?.some((row) => row.archived === false)), "closed banner prevents observed restore");
+
+// jsdom does not attach iframe documents in shadow roots, so expose a local
+// document through contentDocument to model the same-origin browser tree.
+const nestedFrameDom = new JSDOM('<main><div id="host"></div></main>', { url: `https://chatgpt.com/c/${OPEN}` });
+const frameShadow = nestedFrameDom.window.document.getElementById("host").attachShadow({ mode: "open" });
+const shadowFrame = nestedFrameDom.window.document.createElement("iframe");
+const innerFrameDom = new JSDOM('<main><div>This conversation is archived.</div></main>');
+Object.defineProperty(shadowFrame, "contentDocument", { value: innerFrameDom.window.document });
+frameShadow.append(shadowFrame);
+const nestedFrame = loadDom(nestedFrameDom);
+assert(nestedFrame.api.readArchiveSignals(nestedFrameDom.window.document, nestedFrameDom.window.location, "chatgpt").banner, "iframe inside shadow is scanned");
+
+const emptyBanner = await capture(`
+  <nav><a href="/c/${OPEN}">Open trip</a></nav>
+  <main><div>This conversation is archived.</div></main>
+`, `https://chatgpt.com/c/${OPEN}`);
+assert(emptyBanner.rows.some((row) => row.archived === true), "banner archives a sidebar-listed thread before messages load");
+
+const lateBanner = load(`
+  <main><div data-turn="user">a new message that is long enough to capture</div></main>
+`, `https://chatgpt.com/c/${OPEN}`, (payload) => {
+  if (payload.type !== "CAPTURE_MESSAGES") return null;
+  const notice = lateBanner.dom.window.document.createElement("div");
+  notice.textContent = "This conversation is archived.";
+  lateBanner.dom.window.document.querySelector("main").append(notice);
+  return { observed: true };
+});
+await lateBanner.api.platforms.chatgpt.capture();
+assert(!lateBanner.sent.some((msg) => msg.conversations?.some((row) => row.archived === false)), "a banner appearing during storage prevents restore");
+
+const navigated = load(`
+  <main><div data-turn="user">a new message that is long enough to capture</div></main>
+`, `https://chatgpt.com/c/${OPEN}`, (payload) => {
+  if (payload.type !== "CAPTURE_MESSAGES") return null;
+  navigated.dom.window.history.replaceState(null, "", `/c/${OLD}`);
+  return { observed: true };
+});
+await navigated.api.platforms.chatgpt.capture();
+assert(!navigated.sent.some((msg) => msg.conversations?.some((row) => row.archived === false)), "SPA navigation during storage prevents restore");
+
+for (const lateArchive of [false, true]) {
+  let attempts = 0;
+  const retry = load(`
+    <main><div data-turn="user">a new message that is long enough to capture</div></main>
+  `, `https://chatgpt.com/c/${OPEN}`, (payload) => {
+    if (payload.type === "CAPTURE_MESSAGES") return { observed: true };
+    if (payload.conversations?.some((row) => row.archived === false)) {
+      attempts += 1;
+      return { ok: attempts > 1 };
+    }
+    return null;
+  });
+  assert(await retry.api.platforms.chatgpt.capture() === false, "failed restore asks for retry");
+  if (lateArchive) {
+    const notice = retry.dom.window.document.createElement("div");
+    notice.textContent = "This conversation is archived.";
+    retry.dom.window.document.querySelector("main").append(notice);
+  }
+  assert(await retry.api.platforms.chatgpt.capture() === true, "retry capture succeeds");
+  assert(attempts === (lateArchive ? 1 : 2), "retry preserves observed evidence and rechecks the banner");
+}
+
+const healthChange = load(`
+  <main><div data-turn="user">an unchanged message that is long enough to capture</div></main>
+`, `https://chatgpt.com/c/${OPEN}`);
+await healthChange.api.platforms.chatgpt.capture();
+const healthNotice = healthChange.dom.window.document.createElement("div");
+healthNotice.textContent = "This conversation is archived.";
+healthChange.dom.window.document.querySelector("main").append(healthNotice);
+await healthChange.api.platforms.chatgpt.capture();
+const healthReports = healthChange.sent.filter((msg) => msg.type === "CAPTURE_HEALTH");
+assert(healthReports.length === 2 && /archive=banner:1,list:0/.test(healthReports[1].health.diag), "archive-only change refreshes stored diag immediately");
 
 const observed = await capture(`
   <nav><a href="/c/${OPEN}">Open trip</a></nav>
@@ -432,7 +563,7 @@ const stampedArchive = conv("chatgpt", "7", "Scopeword sealed", {
 await db.upsertConversations([stampedArchive]);
 const activityAt = Date.now();
 await db.upsertConversations([{
-  ...stampedArchive,
+  ...conv("chatgpt", "7", "Scopeword sealed"),
   updatedAt: activityAt,
   updatedAtSource: "observed",
 }]);

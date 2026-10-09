@@ -37,6 +37,7 @@ const BANNER = "14141414-1414-4141-8141-141414141414";
 const BANNER_FRAME = "15151515-1515-4151-8151-151515151515";
 const BANNER_SHADOW = "16161616-1616-4161-8161-161616161616";
 const BANNER_CLOSED = "17171717-1717-4171-8171-171717171717";
+const BANNER_MIXED = "19191919-1919-4191-8191-191919191919";
 const LISTED = "18181818-1818-4181-8181-181818181818";
 const USER = "User asked about the pangolin habitat across the southern forest ridge today.";
 const ASST = "Assistant explained that a pangolin rolls into a ball when it feels threatened.";
@@ -118,8 +119,9 @@ function bannerThread(title) {
   </body></html>`;
 }
 
-function shadowBannerPage(mode) {
+function shadowBannerPage(mode, mixed = false) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${mode} shadow archive</title></head><body>
+    ${mixed ? `<main><div data-message-author-role="user" data-message-id="light-u1"><p>${USER}</p></div></main>` : ""}
     <div id="host"></div>
     <script>
       const root = document.getElementById("host").attachShadow({ mode: ${JSON.stringify(mode)} });
@@ -377,6 +379,7 @@ function route(url) {
   if (path === `/c/${BANNER_FRAME}`) return archiveFramePage();
   if (path === `/c/${BANNER_SHADOW}`) return shadowBannerPage("open");
   if (path === `/c/${BANNER_CLOSED}`) return shadowBannerPage("closed");
+  if (path === `/c/${BANNER_MIXED}`) return shadowBannerPage("closed", true);
   if (path === "/settings/archived") return archiveListPage();
   if (path === `/c/${TITLE}`) {
     return phase.titleBody
@@ -664,6 +667,12 @@ async function main() {
     await openChat(`https://chatgpt.com/c/${BANNER_CLOSED}`);
     const closedArchive = await waitArchived(BANNER_CLOSED, true);
     assert(closedArchive.archiveSource === "chatgpt:banner", `closed archive ${closedArchive.archiveSource}`);
+
+    await openChat(`https://chatgpt.com/c/${BANNER_MIXED}`);
+    const mixedHits = await topMisses(page);
+    assert(Object.values(mixedHits).some((n) => n > 0), "mixed fixture has light DOM messages");
+    const mixedArchive = await waitArchived(BANNER_MIXED, true);
+    assert(mixedArchive.archiveSource === "chatgpt:banner", "light DOM messages do not hide the closed-shadow archive banner");
 
     await openChat("https://chatgpt.com/settings/archived");
     const listed = await waitArchived(LISTED, true);
