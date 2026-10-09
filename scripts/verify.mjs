@@ -314,6 +314,15 @@ if (/tabs\.query|tab\.url|tab\.title|pendingUrl/.test(syncRunner)) {
 if (/innerHTML|insertAdjacentHTML|outerHTML/.test(syncUi + syncPolicy + syncRunner)) {
   fail("sync UI must not assign HTML");
 }
+const probeKeepsImages = [
+  ["content/chatgpt.js", /extractMessages\(platformId, document, false\)/],
+  ["content/claude.js", /extractMessages\(platformId, false\)/],
+  ["content/grok.js", /extractMessages\(platformId, false\)/],
+  ["content/gemini.js", /extractMessages\(platformId, document, false, false\)/],
+];
+for (const [rel, re] of probeKeepsImages) {
+  if (!re.test(read(rel))) fail(`${rel} sync probe must count messages without collecting images`);
+}
 
 const dbSrc = read("src/db.js");
 const syncList = dbSrc.split("export async function listSyncCandidates")[1]?.split("export async function")[0] || "";

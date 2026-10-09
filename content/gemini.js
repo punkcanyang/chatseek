@@ -374,8 +374,8 @@
   let imageHosts = [];
   const offsetMaps = new WeakMap();
 
-  function extractMessages(conversationId, doc, pace) {
-    imageHosts = [];
+  function extractMessages(conversationId, doc, pace, collectImages = true) {
+    if (collectImages) imageHosts = [];
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     try {
@@ -417,7 +417,7 @@
           role: item.role,
           body,
         });
-        imageHosts.push({
+        if (collectImages) imageHosts.push({
           el: item.el,
           messageId: id,
           role: item.role,
@@ -444,7 +444,7 @@
         return pack();
       })();
     } catch {
-      imageHosts = [];
+      if (collectImages) imageHosts = [];
       return {
         messages: [],
         selector: null,
@@ -584,7 +584,7 @@
     let messageCount = 0;
     if (platformId) {
       try {
-        const extracted = await extractMessages(platformId, document, false);
+        const extracted = await extractMessages(platformId, document, false, false);
         messageCount = extracted?.messages?.length || 0;
       } catch {
         messageCount = 0;

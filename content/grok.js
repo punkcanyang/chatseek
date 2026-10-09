@@ -141,8 +141,8 @@
 
   let imageHosts = [];
 
-  async function extractMessages(conversationId) {
-    imageHosts = [];
+  async function extractMessages(conversationId, collectImages = true) {
+    if (collectImages) imageHosts = [];
     const candidates = [];
     const pushUnique = (el, role) => {
       if (!el || blockedMessageNode(el)) return;
@@ -226,7 +226,7 @@
         role,
         body,
       });
-      imageHosts.push({ el: item.el, messageId: id, role, body, offsets: item.offsets });
+      if (collectImages) imageHosts.push({ el: item.el, messageId: id, role, body, offsets: item.offsets });
     }
     return messages;
   }
@@ -302,7 +302,7 @@
     let messageCount = 0;
     if (platformId) {
       try {
-        const messages = await extractMessages(platformId);
+        const messages = await extractMessages(platformId, false);
         messageCount = Array.isArray(messages) ? messages.length : 0;
       } catch {
         messageCount = 0;

@@ -1,6 +1,8 @@
 # Chatseek 1.7.0 交接
 
-版本 **1.7.0**。基準 `186d952`（1.6.3）。分支 `feat/manual-sync`。權限仍恰好是 `["sidePanel"]`。`host_permissions` 與 CSP 沒有改。沒有加 `tabs`、`alarms`、`storage`。擴充套件自己不發網路請求，不重新抓圖，不用 `innerHTML`。資料庫仍是版本 4。診斷與側欄進度不含對話內文、網址、對話 id。
+版本 **1.7.0**。複審把 `feat/manual-sync` rebase 到 `f54a740`（1.6.5 圖片頁籤，其下是 1.6.4 最後活動時間）。權限仍恰好是 `["sidePanel"]`。`host_permissions` 與 CSP 沒有改。沒有加 `tabs`、`alarms`、`storage`。擴充套件自己不發網路請求，不重新抓圖，不用 `innerHTML`。資料庫仍是版本 4。診斷與側欄進度不含對話內文、網址、對話 id。
+
+同步分頁只讀頁面來數訊息，不把那次計數寫進圖片清單。收錄進行中時，圖片快取仍用原本那份已畫出來的清單。
 
 ## 設計
 
