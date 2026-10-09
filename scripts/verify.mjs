@@ -217,6 +217,35 @@ if (!/const MIN_EDGE = 48/.test(read("content/images.js"))) {
 if (!/function byteList/.test(read("content/images.js")) || !/Array.isArray\(value\)/.test(read("src/image-cache.js"))) {
   fail("cached thumbnails must cross the extension message as a byte list");
 }
+if (!/view\.byteLength > MAX_BYTES/.test(read("content/images.js"))) {
+  fail("a thumbnail list must stay within 150KB before it is sent");
+}
+if (!/function inChildFrame/.test(read("content/images.js")) || !/window\.top !== window/.test(read("content/images.js"))) {
+  fail("a child frame must not capture images the top frame already walks");
+}
+if (!/paceDom/.test(read("content/images.js")) || !/MAX_TRIES/.test(read("content/images.js"))) {
+  fail("image walks must yield and image retries must be capped");
+}
+if (!/function scrubImageUrls/.test(read("src/image-cache.js"))) {
+  fail("image rows must scrub image urls before they are stored");
+}
+const { normalizeImageRecord: normalizeShot } = await import("../src/image-cache.js");
+const hiddenUrl = normalizeShot("chatgpt:c", {
+  messageId: "chatgpt:c:m",
+  index: 0,
+  status: "uncached",
+  alt: "https://cdn.example/secret.png",
+  prompt: "see https://files.oaiusercontent.com/gen.png",
+  url: "https://cdn.example/secret.png",
+  src: "blob:https://chatgpt.com/abc",
+  currentSrc: "https://cdn.example/secret.png",
+});
+if (/https?:|cdn\.example|oaiusercontent|blob:/i.test(JSON.stringify(hiddenUrl))) {
+  fail(`image record kept an address: ${JSON.stringify(hiddenUrl)}`);
+}
+if (!/status: "cleared"/.test(read("src/db.js")) || !/imageCleared/.test(read("src/reader-view.js"))) {
+  fail("clearing the image cache must leave a placeholder the reader can draw");
+}
 if (!/imgs=\$\{detected\}\/\$\{saved\}\/\$\{hold\} fail=tainted:/.test(read("content/shared.js"))) {
   fail("diag must include imgs= detected/saved/placeholder and fail counts");
 }

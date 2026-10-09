@@ -197,7 +197,9 @@ function imageSlot(doc, shot, locale, onOpen) {
       ? ["timeout", "imageTimeout"]
       : shot?.status === "not-loaded"
         ? ["not-loaded", "imageNotLoaded"]
-        : ["site", "imageUncached"];
+        : shot?.status === "cleared"
+          ? ["cleared", "imageCleared"]
+          : ["site", "imageUncached"];
   fig.dataset.reason = reason[0];
   const note = doc.createElement("p");
   note.className = "image-missing-text";

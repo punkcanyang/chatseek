@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "Image wasn’t cached (it hasn’t finished loading)"
   },
+  "imageCleared": {
+    "message": "Image wasn’t cached (cleared on this computer)"
+  },
   "copyDiag": {
     "message": "Copy diagnostics"
   },

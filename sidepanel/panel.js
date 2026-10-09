@@ -714,6 +714,8 @@ clearImagesBtn?.addEventListener("click", async () => {
     return;
   }
   await refreshImageCache();
+  const sent = chrome.runtime?.sendMessage?.({ type: "IMAGE_CACHE_UPDATED" });
+  if (sent && typeof sent.catch === "function") sent.catch(() => {});
 });
 
 removeCancel?.addEventListener("click", () => closeRemove(false));

@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "Image non mise en cache (chargement incomplet)"
   },
+  "imageCleared": {
+    "message": "Image non mise en cache (effacée sur cet ordinateur)"
+  },
   "copyDiag": {
     "message": "Copier le diagnostic"
   },

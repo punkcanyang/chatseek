@@ -23,6 +23,23 @@ function clampDim(value) {
   return Math.min(IMAGE_MAX_EDGE, n);
 }
 
+const IMAGE_URL = /blob:[^\s)]+|data:image\/[^\s)]+|https?:\/\/\S+/gi;
+
+function isImageUrl(url) {
+  return /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:[?#]|$)/i.test(url)
+    || /oaiusercontent|googleusercontent|ggpht\.com/i.test(url);
+}
+
+/** Alt and prompt stay, but an image address never does. */
+export function scrubImageUrls(value, limit, dropAllUrls = false) {
+  const text = clipText(value, limit).replace(IMAGE_URL, (url) => {
+    if (/^blob:|^data:image\//i.test(url)) return "";
+    if (dropAllUrls || isImageUrl(url)) return "";
+    return url;
+  });
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function asBytes(value) {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
@@ -48,7 +65,9 @@ function asBytes(value) {
  * alt only: `uncached` (the site tainted the canvas), `oversized` (still over
  * the byte cap after recompressing), `timeout` (encoding did not finish),
  * `not-loaded` (the picture had not finished painting; a later scan can
- * replace it). url / src / href on the input are ignored.
+ * replace it), `cleared` (the user dropped the bytes; the slot stays).
+ * url / src / href / currentSrc on the input are ignored, and image
+ * addresses inside alt or prompt are removed before the row is stored.
  */
 export function normalizeImageRecord(conversationId, raw) {
   if (!conversationId || !raw || typeof raw !== "object") return null;
@@ -57,8 +76,8 @@ export function normalizeImageRecord(conversationId, raw) {
   if (!Number.isInteger(raw.index) || raw.index < 0 || raw.index >= IMAGE_MAX_PER_MESSAGE) {
     return null;
   }
-  const alt = clipText(raw.alt, ALT_LIMIT);
-  const prompt = clipText(raw.prompt, PROMPT_LIMIT);
+  const alt = scrubImageUrls(raw.alt, ALT_LIMIT, true);
+  const prompt = scrubImageUrls(raw.prompt, PROMPT_LIMIT, false);
   const offset = Number.isFinite(Number(raw.offset))
     ? Math.max(0, Math.min(1_000_000, Math.floor(Number(raw.offset))))
     : 0;
@@ -70,7 +89,10 @@ export function normalizeImageRecord(conversationId, raw) {
     prompt,
     offset,
   };
-  if (raw.status === "uncached" || raw.status === "oversized" || raw.status === "timeout" || raw.status === "not-loaded") {
+  if (
+    raw.status === "uncached" || raw.status === "oversized" || raw.status === "timeout"
+    || raw.status === "not-loaded" || raw.status === "cleared"
+  ) {
     return { ...base, status: raw.status, bytes: 0, mime: "", width: 0, height: 0 };
   }
   if (raw.status !== "cached") return null;

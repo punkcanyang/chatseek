@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "Imagem não armazenada em cache (ainda não terminou de carregar)"
   },
+  "imageCleared": {
+    "message": "Imagem não armazenada em cache (apagada neste computador)"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

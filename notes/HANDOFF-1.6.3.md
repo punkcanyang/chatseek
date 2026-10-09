@@ -46,6 +46,18 @@
 - 九種語言補上「轉檔逾時」和「圖還沒載完」。
 - 縮圖的位元組改以數字陣列送進 service worker。只有 `saved > 0` 才算進診斷。
 
+## 複審再補
+
+同一條分支上又補了這些，根因仍是上面那兩段。
+
+- 清除快取若把整列刪掉，閱讀頁就沒有偏移可畫，圖片位置會變空白。現在只拿掉位元組，把已快取的列改成 `cleared`，閱讀頁顯示「已清除」佔位。側欄清除後會送 `IMAGE_CACHE_UPDATED`，開著的閱讀頁會換掉舊縮圖，晚載入的圖也能從 `not-loaded` 補上。
+- 按鈕和同源 iframe 在 Markdown 走訪時原本被整段跳過，圖的偏移會掉到文末。現在只記偏移、不把按鈕文字或網址寫進 Markdown。封閉 shadow 裡的圖記在宿主的位置。
+- 子頁框的內容腳本不再排程收圖，頂層走訪同源 iframe。若外層訊息和頁框裡的訊息都會看到同一張 `<img>`，留給含有該節點的那一則，不寫兩次。
+- 同一張圖送失敗最多 4 次，之後停止。走訪每 64 個節點讓出主執行緒，佇列一則一則處理。
+- `alt` 裡的網址會清掉，`prompt` 裡的圖片網址（含 blob、data:image、常見圖檔與 oaiusercontent）也清掉。`url` / `src` / `href` / `currentSrc` 仍不入庫。`verify.mjs` 會拿一筆帶網址的列來擋。
+
+數字陣列、base64、Blob URL：維持數字陣列。`ArrayBuffer` 過 `runtime.sendMessage` 會變成空物件，所以不能直接送位元組。150KB 的數字清單大約是十五萬個小整數，結構化複製大約 1MB 出頭，一次只送一張，service worker 會檢查是陣列、長度 ≤150KB、每個值是 0–255 的整數。base64 會短一點（大約 200KB 的字串），也不用新權限，但現有路徑已經過驗證，沒有換成它。Blob URL 屬於頁面來源，service worker 要讀它就得 fetch，這次不允許，所以不用。
+
 ## 測試與效能
 
 ```bash
@@ -59,7 +71,7 @@ node scripts/screenshot-images.mjs
 node scripts/reader-bench.mjs /workspace /tmp/chatseek-162
 ```
 
-以上都過。`scripts/verify.mjs` 只加嚴：版本 1.6.3、封閉 shadow、48px、`imgs=`、`0 KB`、清除按鈕停用、縮圖必須以位元組清單過訊息。i18n 九種語言、83 個鍵。
+以上都過。`scripts/verify.mjs` 只加嚴：版本 1.6.3、封閉 shadow、48px、`imgs=`、`0 KB`、清除按鈕停用、縮圖必須以位元組清單過訊息且不得超過 150KB、子頁框不得再收、重試有上限、走訪要讓出、圖片網址不得入庫、清除後要留佔位。i18n 九種語言、84 個鍵。
 
 端到端用 Chrome for Testing 155.0.8059.39，`--load-extension`，`--host-resolver-rules` 把 `chatgpt.com:443` 和 `files.oaiusercontent.com:443` 指到本機 HTTPS。沒有加 `host_permissions`。同一支腳本蓋過的案例：
 
@@ -71,7 +83,7 @@ node scripts/reader-bench.mjs /workspace /tmp/chatseek-162
 
 「檔案過大」在這台 Chrome 上要每一檔品質都超過 150KB 才會出現。512px 的雜訊圖壓到 webp q=0.2 大約 100KB，會變成縮圖，不會變成佔位。端到端為了走到這條路徑，在內容腳本的 isolated world 把寬高至少 400 的 canvas `toBlob` 換成 160KB。這不是放寬產品的上限。跨源的 ChatGPT 生圖會走「原網站限制」。同源、壓得下去的圖會變成縮圖。
 
-3000 則、沒有圖片的閱讀頁，同一台機器、同一個瀏覽器、各跑 3 次取中位數。這版掛載 34ms、跳轉 2.28ms、捲動 p50 1.4ms / p95 2.5ms / 最大 3.8ms。緊接著的 `530acd0` 是掛載 36ms、跳轉 2.37ms、捲動 p50 1.5ms / p95 2.6ms / 最大 4.0ms。兩邊都是命中 900、畫面上 3 則、136 個節點。沒有變慢。
+3000 則、沒有圖片的閱讀頁，同一台機器、Chrome 148、各跑 3 次取中位數。先跑 `530acd0` 再跑這版：兩邊掛載都是 43ms、跳轉都是 2.46ms；這版捲動 p50 1.6ms / p95 2.9ms / 最大 5.0ms，`530acd0` 是 p50 1.7ms / p95 3.0ms / 最大 6.9ms。兩邊都是命中 900、畫面上 3 則、136 個節點。沒有變慢。
 
 ## 截圖
 

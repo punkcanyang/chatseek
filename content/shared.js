@@ -1696,6 +1696,46 @@ function pushInline(state, text, pre) {
   if (piece) writeRaw(state, piece);
 }
 
+function closedShadowRoot(node) {
+  if (!node || node.nodeType !== 1 || node.shadowRoot || node.tagName === "IFRAME") return null;
+  try {
+    const dom = typeof chrome !== "undefined" ? chrome.dom : null;
+    return dom?.openOrClosedShadowRoot?.(node) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Record where a picture sits without copying its address or its chrome text.
+function stampImageNodes(root, state) {
+  if (!root || !state) return;
+  const at = state.out.length;
+  let images = [];
+  try {
+    if (root.tagName === "IMG") images = [root];
+    else if (root.querySelectorAll) images = [...root.querySelectorAll("img")].slice(0, 24);
+  } catch {
+    images = [];
+  }
+  for (const img of images) {
+    if (img && !state.offsets.has(img)) state.offsets.set(img, at);
+  }
+}
+
+function stampSkippedImages(node, state) {
+  if (!node || node.nodeType !== 1) return;
+  const tag = node.tagName || "";
+  const role = (node.getAttribute?.("role") || "").toLowerCase();
+  if (tag === "IFRAME") {
+    let doc = null;
+    try { doc = node.contentDocument; } catch { doc = null; }
+    const base = doc?.body || doc?.documentElement;
+    if (base) stampImageNodes(base, state);
+    return;
+  }
+  if (tag === "BUTTON" || role === "button") stampImageNodes(node, state);
+}
+
 function walkChildren(node, state, ctx) {
   const shadow = node?.shadowRoot;
   if (shadow && shadow.childNodes && shadow.childNodes.length) {
@@ -1703,8 +1743,11 @@ function walkChildren(node, state, ctx) {
     return;
   }
   const kids = node?.childNodes;
-  if (!kids) return;
-  for (const child of kids) walkNode(child, state, ctx);
+  if (kids) {
+    for (const child of kids) walkNode(child, state, ctx);
+  }
+  const closed = closedShadowRoot(node);
+  if (closed) stampImageNodes(closed, state);
 }
 
 function isSaidLine(node) {
@@ -1869,7 +1912,10 @@ function walkNode(node, state, ctx) {
     pushInline(state, node.nodeValue, ctx.pre || ctx.plainPre);
     return;
   }
-  if (node.nodeType !== 1 || domSkip(node)) return;
+  if (node.nodeType !== 1 || domSkip(node)) {
+    stampSkippedImages(node, state);
+    return;
+  }
   if (isSaidLine(node) || isCodeHeader(node) || isArtifactChrome(node) || isCitationCaption(node)) return;
   if (!ctx.plain && writeKatex(node, state)) return;
   const tag = node.tagName;

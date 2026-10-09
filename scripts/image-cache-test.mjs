@@ -196,6 +196,20 @@ const timed = normalizeImageRecord(convId, {
   src: "https://cdn.example/slow.png",
 });
 assert(timed?.status === "timeout" && !timed.src && timed.bytes === 0, "a timed-out encode keeps no bytes and no url");
+const dirty = normalizeImageRecord(convId, {
+  messageId: msgId,
+  index: 5,
+  status: "uncached",
+  alt: "https://cdn.example/secret.png",
+  prompt: "看 https://files.oaiusercontent.com/gen.png 這張",
+  url: "https://cdn.example/secret.png",
+  src: "https://cdn.example/secret.png",
+  href: "https://cdn.example/secret.png",
+  currentSrc: "https://cdn.example/secret.png",
+});
+const packed = JSON.stringify(dirty);
+assert(dirty?.status === "uncached" && !/https?:|cdn\.example|oaiusercontent|\.png|blob:/.test(packed), `image url leaked into a row: ${packed}`);
+assert(dirty.prompt.includes("看") && dirty.prompt.includes("這張"), dirty.prompt);
 
 await db.upsertConversations([{
   id: otherId,
@@ -224,7 +238,9 @@ await db.saveImageRecords(otherId, [{
 assert((await db.imageCacheUsage()) === tiny.byteLength, "usage returns after a new image");
 await db.clearImageCache();
 assert((await db.imageCacheUsage()) === 0, "clear image cache zeros the counter");
-assert((await db.readImagesForMessages([`${otherId}:u`])).length === 0, "clear image cache drops bitmaps");
+const clearedRows = await db.readImagesForMessages([`${otherId}:u`]);
+assert(clearedRows.length === 1 && clearedRows[0].status === "cleared" && !clearedRows[0].blob && !(clearedRows[0].bytes > 0), "clear keeps a placeholder and drops the bytes");
+assert(!JSON.stringify(clearedRows[0]).includes("http"), "a cleared row keeps no image url");
 const kept = await db.listRecent();
 assert(kept.some((row) => row.id === otherId), "clear image cache keeps conversations");
 
@@ -260,10 +276,9 @@ function mark(img, w, h) {
   Object.defineProperty(img, "naturalHeight", { configurable: true, get: () => h });
 }
 
-function readyImages(api, el, platform, role) {
-  return api.collectContentImages(el, { platform, role })
-    .filter((item) => item.ready)
-    .map((item) => item.img.id);
+async function readyImages(api, el, platform, role, peers) {
+  const found = await api.collectContentImages(el, { platform, role, peers });
+  return found.filter((item) => item.ready).map((item) => item.img.id);
 }
 
 const chatgpt = loadApi(`
@@ -277,7 +292,7 @@ for (const img of chatgpt.document.querySelectorAll("img")) {
   mark(img, img.id === "gen" ? 1024 : 24, img.id === "gen" ? 768 : 24);
 }
 assert(
-  readyImages(chatgpt.api, chatgpt.document.getElementById("turn"), "chatgpt", "assistant").join() === "gen",
+  (await readyImages(chatgpt.api, chatgpt.document.getElementById("turn"), "chatgpt", "assistant")).join() === "gen",
   "ChatGPT keeps the generated picture and skips the avatar and icon",
 );
 assert(
@@ -300,11 +315,11 @@ for (const img of claude.document.querySelectorAll("img")) {
   mark(img, img.id === "icon" ? 16 : 400, img.id === "icon" ? 16 : 300);
 }
 assert(
-  readyImages(claude.api, claude.document.getElementById("user"), "claude", "user").join() === "upload",
+  (await readyImages(claude.api, claude.document.getElementById("user"), "claude", "user")).join() === "upload",
   "Claude keeps the user upload and skips the artifact and icon",
 );
 assert(
-  readyImages(claude.api, claude.document.getElementById("user"), "claude", "assistant").length === 0,
+  (await readyImages(claude.api, claude.document.getElementById("user"), "claude", "assistant")).length === 0,
   "Claude does not cache assistant or artifact images",
 );
 
@@ -317,7 +332,7 @@ for (const img of gemini.document.querySelectorAll("img")) {
   mark(img, img.id === "flower" ? 800 : 32, 600);
 }
 assert(
-  readyImages(gemini.api, gemini.document.getElementById("reply"), "gemini", "assistant").join() === "flower",
+  (await readyImages(gemini.api, gemini.document.getElementById("reply"), "gemini", "assistant")).join() === "flower",
   "Gemini keeps the generated image",
 );
 
@@ -330,7 +345,7 @@ for (const img of grok.document.querySelectorAll("img")) {
   mark(img, img.id === "boost" ? 900 : 20, img.id === "boost" ? 500 : 20);
 }
 assert(
-  readyImages(grok.api, grok.document.getElementById("msg"), "grok", "assistant").join() === "boost",
+  (await readyImages(grok.api, grok.document.getElementById("msg"), "grok", "assistant")).join() === "boost",
   "Grok keeps the picture in the message",
 );
 
@@ -350,13 +365,13 @@ for (const img of ordered.document.querySelectorAll("img")) {
   mark(img, size, size);
 }
 assert(
-  readyImages(ordered.api, ordered.document.getElementById("turn"), "chatgpt", "assistant").join() === "lightbox,first,second,mid",
+  (await readyImages(ordered.api, ordered.document.getElementById("turn"), "chatgpt", "assistant")).join() === "lightbox,first,second,mid",
   "ChatGPT keeps a large button image and a 50px picture, skips the toolbar icon, and drops a duplicate source",
 );
 const loading = ordered.document.getElementById("first");
 Object.defineProperty(loading, "complete", { configurable: true, get: () => false });
 Object.defineProperty(loading, "naturalWidth", { configurable: true, get: () => 0 });
-const pendingList = ordered.api.collectContentImages(ordered.document.getElementById("turn"), {
+const pendingList = await ordered.api.collectContentImages(ordered.document.getElementById("turn"), {
   platform: "chatgpt",
   role: "assistant",
 });
@@ -365,10 +380,10 @@ assert(pendingList.some((item) => item.img.id === "second" && item.ready), "a lo
 Object.defineProperty(loading, "complete", { configurable: true, get: () => true });
 Object.defineProperty(loading, "naturalWidth", { configurable: true, get: () => 0 });
 assert(
-  !ordered.api.collectContentImages(ordered.document.getElementById("turn"), {
+  !(await ordered.api.collectContentImages(ordered.document.getElementById("turn"), {
     platform: "chatgpt",
     role: "assistant",
-  }).some((item) => item.img.id === "first"),
+  })).some((item) => item.img.id === "first"),
   "a finished image with no pixels is skipped instead of waited on",
 );
 
@@ -390,19 +405,19 @@ for (const img of claudeOrder.document.querySelectorAll("img")) {
   mark(img, 400, 280);
 }
 assert(
-  readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user").join() === "up,inside",
+  (await readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user")).join() === "up,inside",
   "Claude keeps the upload row before the bubble, in document order, once",
 );
 assert(
-  !readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user").includes("oldimg"),
+  !(await readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user")).includes("oldimg"),
   "Claude does not take the previous turn's image",
 );
 assert(
-  !readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user").includes("chart"),
+  !(await readyImages(claudeOrder.api, claudeOrder.document.getElementById("user"), "claude", "user")).includes("chart"),
   "Claude stops at the previous assistant message",
 );
 assert(
-  readyImages(claudeOrder.api, claudeOrder.document.getElementById("old"), "claude", "user").join() === "oldimg",
+  (await readyImages(claudeOrder.api, claudeOrder.document.getElementById("old"), "claude", "user")).join() === "oldimg",
   "the previous Claude turn keeps its own image",
 );
 
@@ -427,7 +442,7 @@ for (const img of [geminiShadow.document.getElementById("logo"), inner]) {
   mark(img, img.id === "flower" ? 800 : 32, 600);
 }
 assert(
-  readyImages(geminiShadow.api, geminiShadow.document.getElementById("reply"), "gemini", "assistant").join() === "flower",
+  (await readyImages(geminiShadow.api, geminiShadow.document.getElementById("reply"), "gemini", "assistant")).join() === "flower",
   "Gemini reads an open shadow root and skips the logo",
 );
 
@@ -444,7 +459,7 @@ shadowImg.alt = "舞台";
 openRoot.append(shadowImg);
 mark(shadowImg, 640, 480);
 assert(
-  readyImages(chatShadow.api, chatShadow.document.getElementById("turn"), "chatgpt", "assistant").join() === "shadowpic",
+  (await readyImages(chatShadow.api, chatShadow.document.getElementById("turn"), "chatgpt", "assistant")).join() === "shadowpic",
   "ChatGPT reads an image inside an open shadow root",
 );
 
@@ -467,7 +482,7 @@ closedRoot.append(closedImg);
 mark(closedImg, 700, 420);
 assert(closedHost.shadowRoot == null, "the closed root is not exposed as shadowRoot");
 assert(
-  readyImages(chatClosed.api, chatClosed.document.getElementById("turn"), "chatgpt", "assistant").join() === "closedpic",
+  (await readyImages(chatClosed.api, chatClosed.document.getElementById("turn"), "chatgpt", "assistant")).join() === "closedpic",
   "ChatGPT reads an image inside a closed shadow root",
 );
 
@@ -483,7 +498,7 @@ frameImg.alt = "頁框";
 frame.contentDocument.body.append(frameImg);
 mark(frameImg, 360, 240);
 assert(
-  readyImages(framed.api, framed.document.getElementById("turn"), "chatgpt", "assistant").join() === "framepic",
+  (await readyImages(framed.api, framed.document.getElementById("turn"), "chatgpt", "assistant")).join() === "framepic",
   "ChatGPT reads an image in a same-origin iframe",
 );
 
@@ -492,7 +507,7 @@ const beside = loadApi(`
   <div id="pic"><img id="besidepic" alt="旁邊的圖"></div>`, "https://chatgpt.com/c/x");
 mark(beside.document.getElementById("besidepic"), 500, 320);
 assert(
-  readyImages(beside.api, beside.document.getElementById("turn"), "chatgpt", "assistant").join() === "besidepic",
+  (await readyImages(beside.api, beside.document.getElementById("turn"), "chatgpt", "assistant")).join() === "besidepic",
   "a heuristic text block also takes the image-only sibling",
 );
 
@@ -507,9 +522,55 @@ const picked = pictured.document.getElementById("picked");
 Object.defineProperty(picked, "currentSrc", { configurable: true, get: () => "https://cdn.example/a.png" });
 mark(picked, 300, 200);
 assert(
-  readyImages(pictured.api, pictured.document.getElementById("turn"), "chatgpt", "assistant").join() === "picked",
+  (await readyImages(pictured.api, pictured.document.getElementById("turn"), "chatgpt", "assistant")).join() === "picked",
   "picture/srcset uses the image element the browser already selected",
 );
+
+const placed = loadApi(`
+  <article id="turn">
+    <div class="markdown">
+      <p>前文說明這張圖的位置。</p>
+      <button type="button"><img id="mid" alt="中間的圖"></button>
+      <p>後文還在這裡。</p>
+    </div>
+  </article>`, "https://chatgpt.com/c/x");
+const placedText = placed.api.domText(placed.document.querySelector(".markdown"));
+const placedAt = placedText.offsets.get(placed.document.getElementById("mid"));
+assert(
+  typeof placedAt === "number" && placedAt > 0 && placedAt <= placedText.text.indexOf("後文"),
+  `button image offset ${placedAt} in ${JSON.stringify(placedText.text)}`,
+);
+assert(!/https?:\/\//.test(placedText.text), "markdown text does not keep an image url");
+
+const framePlace = loadApi(`
+  <div id="turn">
+    <p>頁框前面的句子夠長。</p>
+    <iframe id="frame"></iframe>
+    <p>頁框後面的句子也在。</p>
+  </div>`, "https://chatgpt.com/c/x");
+const frameShot = framePlace.document.getElementById("frame").contentDocument.createElement("img");
+frameShot.id = "inside";
+framePlace.document.getElementById("frame").contentDocument.body.append(frameShot);
+const frameText = framePlace.api.domText(framePlace.document.getElementById("turn"));
+const frameAt = frameText.offsets.get(frameShot);
+assert(
+  typeof frameAt === "number" && frameAt <= frameText.text.indexOf("頁框後面"),
+  `iframe image offset ${frameAt} in ${JSON.stringify(frameText.text)}`,
+);
+
+const splitFrame = loadApi(`
+  <article id="outer">
+    <div class="markdown">外層這段文字已經夠長，不該再收頁框裡的圖。</div>
+    <iframe id="frame"></iframe>
+  </article>`, "https://chatgpt.com/c/x");
+const splitDoc = splitFrame.document.getElementById("frame");
+splitDoc.contentDocument.body.innerHTML = `<div id="inner"><p>內層文字也夠長，圖要留在這一則。</p><img id="inside" alt="內"></div>`;
+mark(splitDoc.contentDocument.getElementById("inside"), 400, 300);
+const splitPeers = [splitFrame.document.getElementById("outer"), splitDoc.contentDocument.getElementById("inner")];
+const outerIds = await readyImages(splitFrame.api, splitPeers[0], "chatgpt", "assistant", splitPeers);
+const innerIds = await readyImages(splitFrame.api, splitPeers[1], "chatgpt", "assistant", splitPeers);
+assert(outerIds.length === 0, `outer message also stored the frame image: ${outerIds.join()}`);
+assert(innerIds.join() === "inside", `inner message missed its image: ${innerIds.join()}`);
 
 function hooks({ taint = false, security = false, size = 80, empty = false, getImageDataError = false } = {}) {
   const bytes = new Uint8Array([7, 8, 9, 10]).buffer;
@@ -668,7 +729,18 @@ for (const code of LOCALE_ORDER) {
   assert(CATALOG[code].imageOversized && CATALOG[code].imageOversized !== CATALOG[code].imageUncached, `${code} distinguishes an oversized image`);
   assert(CATALOG[code].imageTimeout && CATALOG[code].imageTimeout !== CATALOG[code].imageUncached, `${code} distinguishes a timeout`);
   assert(CATALOG[code].imageNotLoaded && CATALOG[code].imageNotLoaded !== CATALOG[code].imageTimeout, `${code} distinguishes an image that is still loading`);
+  assert(CATALOG[code].imageCleared && CATALOG[code].imageCleared !== CATALOG[code].imageUncached, `${code} has a cleared-cache placeholder`);
 }
+view.setImages(new Map([[msgId, [{
+  messageId: msgId,
+  index: 0,
+  status: "cleared",
+  alt: "清水寺",
+  offset: "maple 之前\n\n".length,
+}]]]));
+assert(app.textContent.includes(text("zh-TW", "imageCleared")), "clearing the cache leaves a placeholder");
+assert(!app.querySelector(".cached-thumb"), "a cleared cache does not keep the thumbnail");
+assert(app.textContent.includes("maple 之前"), "a cleared placeholder keeps the surrounding text");
 
 const replaced = await db.saveImageRecords(convId, [{
   messageId: msgId,

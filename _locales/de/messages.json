@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "Bild nicht zwischengespeichert (noch nicht fertig geladen)"
   },
+  "imageCleared": {
+    "message": "Bild nicht zwischengespeichert (auf diesem Computer gelöscht)"
+  },
   "copyDiag": {
     "message": "Diagnose kopieren"
   },

@@ -275,7 +275,7 @@ function route(url) {
     return selectorImagePage(`
       <img id="same" alt="ridge" src="/red.png" width="96" height="64">
       <button type="button"><img id="light" alt="ridge button" src="/blue.png" width="120" height="80"></button>
-      <img id="cross" alt="cross ridge" src="https://files.oaiusercontent.com/gen.png" width="96" height="64">`);
+      <button type="button"><img id="cross" alt="cross ridge" src="https://files.oaiusercontent.com/gen.png" width="96" height="64"></button>`);
   }
   if (path === `/c/${BIG}`) return noisePage();
   if (path === `/c/${HEUR_IMG}`) return heuristicImagePage();
@@ -485,6 +485,7 @@ async function main() {
       args: [
         "--disable-gpu",
         "--no-sandbox",
+        "--disable-features=DisableLoadExtensionCommandLineSwitch",
         "--disable-dev-shm-usage",
         "--ignore-certificate-errors",
         "--allow-insecure-localhost",

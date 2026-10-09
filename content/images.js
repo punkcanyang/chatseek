@@ -5,6 +5,7 @@
   const QUALITIES = [0.82, 0.66, 0.48, 0.32, 0.2];
   const MIN_EDGE = 48;
   const BLOB_TIMEOUT_MS = 1500;
+  const MAX_TRIES = 4;
   const CLAUDE_MESSAGE = [
     "[data-testid='user-message']",
     "[data-testid='human-message']",
@@ -26,10 +27,18 @@
   const waiting = new WeakSet();
   // An <img> node belongs to the first message that claimed it.
   const ownerOf = new WeakMap();
-  // Same picture rendered twice in one message (two elements, one source).
-  // The key is a hash, not the URL, and it is not written to IndexedDB.
-  const srcOwner = new Map();
+  const tries = new Map();
   let pumping = false;
+
+  function inChildFrame() {
+    try {
+      if (typeof window === "undefined" || !window.top) return false;
+      return window.top !== window;
+    } catch {
+      // A cross-origin frame cannot read window.top. The top frame owns the scan.
+      return true;
+    }
+  }
 
   function clip(value, limit) {
     const text = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -56,14 +65,25 @@
   function claimImage(img, messageId) {
     const owner = ownerOf.get(img);
     if (owner && owner !== messageId) return false;
-    const key = srcKey(img);
-    if (key) {
-      const srcMessage = srcOwner.get(key);
-      if (srcMessage && srcMessage !== messageId) return false;
-      srcOwner.set(key, messageId);
-    }
     ownerOf.set(img, messageId);
     return true;
+  }
+
+  // A nested frame's own message is the closer host. The outer message must
+  // not store the same pixels again.
+  function closerPeer(img, messageEl, peers) {
+    if (!img || !messageEl || !peers) return false;
+    for (const other of peers) {
+      if (!other || other === messageEl) continue;
+      let holds = false;
+      try { holds = !!other.contains?.(img); } catch { holds = false; }
+      if (!holds) continue;
+      let nested = false;
+      try { nested = !!messageEl.contains?.(other); } catch { nested = false; }
+      const differentDoc = messageEl.ownerDocument !== other.ownerDocument;
+      if (nested || differentDoc) return true;
+    }
+    return false;
   }
 
   function isClaudeBoundary(node) {
@@ -174,35 +194,37 @@
 
   // Light DOM, open shadow, closed shadow, and same-origin frames.
   // Cross-origin frames have no contentDocument; they are not fetched.
-  function collectDeepImages(root, out, seenImg, seenRoot, depth) {
+  async function collectDeepImages(root, out, seenImg, seenRoot, depth) {
     if (!root || depth > 4 || seenRoot.has(root)) return;
     seenRoot.add(root);
     pushImgs(out, seenImg, root);
-    let nodes = [];
+    let list = [];
     try {
-      nodes = root.querySelectorAll ? [...root.querySelectorAll("*")] : [];
+      list = root.querySelectorAll ? root.querySelectorAll("*") : [];
     } catch {
-      nodes = [];
+      list = [];
     }
-    if (nodes.length > 800) nodes = nodes.slice(0, 800);
-    for (const node of nodes) {
+    const limit = Math.min(list.length || 0, 800);
+    for (let i = 0; i < limit; i += 1) {
+      if (i && (i & 63) === 0 && typeof Chatseek.paceDom === "function") await Chatseek.paceDom();
+      const node = list[i];
       if (!node || node.nodeType !== 1 || isArtifact(node)) continue;
       if (node.tagName === "IFRAME") {
         let doc = null;
         try { doc = node.contentDocument; } catch { doc = null; }
         const base = doc?.documentElement || doc?.body;
-        if (base) collectDeepImages(base, out, seenImg, seenRoot, depth + 1);
+        if (base) await collectDeepImages(base, out, seenImg, seenRoot, depth + 1);
         continue;
       }
       const shadow = adoptedShadow(node);
-      if (shadow) collectDeepImages(shadow, out, seenImg, seenRoot, depth + 1);
+      if (shadow) await collectDeepImages(shadow, out, seenImg, seenRoot, depth + 1);
     }
   }
 
-  function listedImages(root) {
+  async function listedImages(root) {
     const out = [];
     if (!root || root.nodeType !== 1) return out;
-    collectDeepImages(root, out, new Set(), new Set(), 0);
+    await collectDeepImages(root, out, new Set(), new Set(), 0);
     return out;
   }
 
@@ -240,18 +262,19 @@
     return false;
   }
 
-  function collectContentImages(el, { platform, role, messageId = "" } = {}) {
+  async function collectContentImages(el, { platform, role, messageId = "", peers = null } = {}) {
     if (!el || el.nodeType !== 1) return [];
     if (platform === "claude" && role !== "user") return [];
     const seen = new Set();
     const localSrc = new Set();
     const ready = [];
     for (const root of searchRoots(el, platform)) {
-      for (const img of listedImages(root)) {
+      for (const img of await listedImages(root)) {
         if (seen.has(img)) continue;
         seen.add(img);
         const why = blocked(img, platform);
         if (why === true) continue;
+        if (closerPeer(img, el, peers)) continue;
         if (messageId && !claimImage(img, messageId)) continue;
         const key = srcKey(img);
         if (key) {
@@ -426,7 +449,9 @@
     let view = null;
     if (value instanceof ArrayBuffer) view = new Uint8Array(value);
     else if (ArrayBuffer.isView(value)) view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    if (!view || !view.byteLength) return null;
+    // A number list survives structured clone. An ArrayBuffer arrives empty.
+    // 150KB of bytes is the cap; the list is one image, then it can be dropped.
+    if (!view || view.byteLength < 1 || view.byteLength > MAX_BYTES) return null;
     return Array.from(view);
   }
 
@@ -473,25 +498,30 @@
     try { Chatseek.refreshImageDiag(); } catch { /* diag must not break images */ }
   }
 
-  async function processJob(job) {
+  async function processJob(job, found) {
     const platform = platformOf(job.conversationId);
-    const found = collectContentImages(job.el, {
-      platform,
-      role: job.role,
-      messageId: job.messageId,
-    });
+    if (!found) {
+      found = await collectContentImages(job.el, {
+        platform,
+        role: job.role,
+        messageId: job.messageId,
+        peers: job.peers,
+      });
+    }
     let worked = false;
     for (let index = 0; index < found.length; index += 1) {
       const item = found[index];
       const img = item.img;
       const key = `${job.messageId}:${index}`;
+      const prev = String(done.get(key) || "");
+      if (prev.endsWith(":stop") || (tries.get(key) || 0) >= MAX_TRIES) continue;
       if (!item.ready) {
-        if (done.get(key) === "not-loaded") continue;
+        if (prev === "not-loaded") continue;
         await storeImage(job, img, index, { status: "not-loaded" }, "not-loaded");
         continue;
       }
       const fpBase = `${img.naturalWidth}x${img.naturalHeight}`;
-      if (String(done.get(key) || "").startsWith(`${fpBase}:`)) continue;
+      if (prev.startsWith(`${fpBase}:`)) continue;
       if (worked) await yieldToBrowser();
       let encoded;
       try {
@@ -542,10 +572,16 @@
       res = null;
     }
     if (res?.error === "quota") {
-      done.set(key, fp);
+      done.set(key, `${fp}:stop`);
       return;
     }
-    if (!res?.ok || !(res.saved > 0)) return;
+    if (!res?.ok || !(res.saved > 0)) {
+      const n = (tries.get(key) || 0) + 1;
+      tries.set(key, n);
+      if (n >= MAX_TRIES) done.set(key, `${fp}:stop`);
+      return;
+    }
+    tries.delete(key);
     done.set(key, fp);
     noteOutcome(job.conversationId, `${job.conversationId}:${key}`, status);
   }
@@ -580,40 +616,40 @@
   function pump() {
     if (pumping) return;
     pumping = true;
-    const step = () => {
-      let empty = 0;
-      const runEmpty = () => {
-        while (queue.length && empty < 30) {
-          const job = queue.shift();
-          const platform = platformOf(job.conversationId);
-          const found = collectContentImages(job.el, {
-            platform,
-            role: job.role,
-            messageId: job.messageId,
-          });
-          for (const item of found) {
-            if (!item.ready) watchUntilPainted(job, item.img);
-          }
-          if (found.length) {
-            Promise.resolve()
-              .then(() => processJob(job))
-              .catch(() => {})
-              .then(() => { setTimeout(step, 40); });
-            return;
-          }
-          empty += 1;
-        }
-        if (queue.length) setTimeout(step, 0);
-        else pumping = false;
-      };
+    const step = async () => {
+      if (!queue.length) {
+        pumping = false;
+        return;
+      }
+      const job = queue.shift();
+      let found = [];
       try {
-        runEmpty();
+        found = await collectContentImages(job.el, {
+          platform: platformOf(job.conversationId),
+          role: job.role,
+          messageId: job.messageId,
+          peers: job.peers,
+        });
       } catch {
+        found = [];
+      }
+      for (const item of found) {
+        if (!item.ready) watchUntilPainted(job, item.img);
+      }
+      try {
+        if (found.length) await processJob(job, found);
+      } catch {
+        // One message must not stall the rest of the queue.
+      }
+      if (queue.length) setTimeout(step, found.length ? 40 : 0);
+      else pumping = false;
+    };
+    setTimeout(() => {
+      step().catch(() => {
         pumping = false;
         if (queue.length) setTimeout(step, 40);
-      }
-    };
-    setTimeout(step, 0);
+      });
+    }, 0);
   }
 
   function scheduleMessageImages(job) {
@@ -625,6 +661,7 @@
   }
 
   function scheduleMessageImagesInner({ conversationId, items } = {}) {
+    if (inChildFrame()) return;
     if (!conversationId || !items?.length) return;
     const prompts = new Map();
     let lastUser = "";
@@ -639,6 +676,7 @@
       if (!item?.messageId || !item.el) continue;
       fresh.set(item.messageId, item);
     }
+    const peers = [...fresh.values()].map((item) => item.el);
     for (let i = queue.length - 1; i >= 0; i -= 1) {
       if (fresh.has(queue[i].messageId)) queue.splice(i, 1);
     }
@@ -651,6 +689,7 @@
         body: String(item.body || ""),
         offsets: item.offsets || null,
         prompt: prompts.get(item.messageId) || "",
+        peers,
       });
     }
     pump();

@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "图片未缓存（图片尚未载完）"
   },
+  "imageCleared": {
+    "message": "图片未缓存（已清除）"
+  },
   "copyDiag": {
     "message": "复制诊断"
   },

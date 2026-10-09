@@ -217,7 +217,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     rememberSite(sender, msg.url);
     return;
   }
-  if (msg.type === "INDEX_UPDATED") return;
+  if (msg.type === "INDEX_UPDATED" || msg.type === "IMAGE_CACHE_UPDATED") return;
   if (msg.type === "FOCUS_ORIGINAL" || msg.type === "FOCUS_READER") {
     if (!fromExtensionPage(sender)) return;
     focusRequest(msg).then(sendResponse);

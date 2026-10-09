@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "이미지를 캐시하지 못했습니다(아직 불러오는 중)"
   },
+  "imageCleared": {
+    "message": "이미지를 캐시하지 못했습니다(이 컴퓨터에서 지움)"
+  },
   "copyDiag": {
     "message": "진단 복사"
   },

@@ -344,6 +344,9 @@
   "imageNotLoaded": {
     "message": "Imagen no guardada en caché (aún no ha terminado de cargarse)"
   },
+  "imageCleared": {
+    "message": "Imagen no guardada en caché (se borró en este equipo)"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

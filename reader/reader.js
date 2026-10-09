@@ -80,8 +80,8 @@ async function load() {
   }
 }
 
-async function loadImages(ids) {
-  const need = (ids || []).filter((id) => id && !fetchedImages.has(id));
+async function loadImages(ids, replace = false) {
+  const need = (ids || []).filter((id) => id && (replace || !fetchedImages.has(id)));
   if (!need.length || !parsed.id) return;
   need.forEach((id) => fetchedImages.add(id));
   let found = [];
@@ -91,11 +91,17 @@ async function loadImages(ids) {
     need.forEach((id) => fetchedImages.delete(id));
     return;
   }
-  if (!found.length) return;
+  if (replace) {
+    for (const id of need) imageMap.delete(id);
+  } else if (!found.length) {
+    return;
+  }
   for (const shot of found) {
     if (shot?.conversationId && shot.conversationId !== parsed.id) continue;
     const list = imageMap.get(shot.messageId) || [];
-    if (!list.some((item) => item.index === shot.index)) list.push(shot);
+    const at = list.findIndex((item) => item.index === shot.index);
+    if (at >= 0) list[at] = shot;
+    else list.push(shot);
     imageMap.set(shot.messageId, list);
   }
   view?.setImages(imageMap);
@@ -140,10 +146,8 @@ show();
 if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type !== "IMAGE_CACHE_UPDATED") return;
-    for (const id of shownIds) {
-      if (!imageMap.has(id)) fetchedImages.delete(id);
-    }
-    loadImages(shownIds);
+    for (const id of shownIds) fetchedImages.delete(id);
+    loadImages(shownIds, true);
   });
 }
 

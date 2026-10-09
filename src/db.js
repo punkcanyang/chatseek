@@ -950,7 +950,27 @@ export async function imageCacheUsage() {
 export async function clearImageCache() {
   return withDb(async (db) => {
     const tx = db.transaction(["images", "meta"], "readwrite");
-    tx.objectStore("images").clear();
+    const store = tx.objectStore("images");
+    // Keep the slot. Dropping the row would leave a blank gap in the reader,
+    // because the message text does not store an image address.
+    await cursorEach(store, {}, (row, cursor) => {
+      if (!row || row.status === "cleared") return;
+      if (row.status !== "cached" && !row.blob && !(Number(row.bytes) > 0)) return;
+      const next = {
+        messageId: row.messageId,
+        index: row.index,
+        conversationId: row.conversationId,
+        alt: row.alt || "",
+        prompt: row.prompt || "",
+        offset: row.offset || 0,
+        status: "cleared",
+        bytes: 0,
+        mime: "",
+        width: 0,
+        height: 0,
+      };
+      cursor.update(next);
+    });
     tx.objectStore("meta").put({ key: IMAGE_BYTES_KEY, bytes: 0 });
     await txDone(tx);
   });
