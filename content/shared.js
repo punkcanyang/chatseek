@@ -969,7 +969,86 @@ const Chatseek = {
    *   { pathKind, selector, selectorsTried }
    * pathKind "conversation" + 0 messages raises the side-panel warning.
    */
-  async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health, restoreOnNewMessages }) {
+  // Body-only transcript signature. IDs and roles can change on heuristic
+  // extraction; JSON boundaries prevent concatenation ambiguities.
+  transcriptHash(messages) {
+    return Chatseek.hash(JSON.stringify(messages.map(m => String(m.body || ""))));
+  },
+
+  // A successful observation, not a successful write, owns this baseline.
+  // Keep all pre-switch nodes weakly, including across rapid B -> C switches.
+  pageIdentity(state, doc, href, platformId, extracted) {
+    const nodes = extracted.nodes || [];
+    const hash = Chatseek.transcriptHash(extracted.messages);
+    const now = Date.now();
+    let page = state.pageIdentity;
+    if (!page) {
+      page = state.pageIdentity = { href, nodes: new WeakSet(nodes), hash, at: now, pending: false };
+    } else if (page.href !== href) {
+      page.href = href;
+      page.pending = true;
+    }
+    const readMarkers = () => {
+      const ids = [];
+      for (const root of Chatseek.readScopes(doc).map(scope => scope.node)) {
+        for (const el of root.querySelectorAll(
+          'a[aria-current="page"], a[aria-current="true"], a[data-active="true"], ' +
+          '[data-active="true"] a[href], link[rel="canonical"], meta[property="og:url"]')) {
+          const id = Chatseek.conversationIdFromPath(el.getAttribute("href") || el.getAttribute("content"));
+          if (id) ids.push(id);
+        }
+      }
+      for (const node of nodes) {
+        for (let el = node; el; el = el.parentElement) {
+          const id = el.getAttribute?.("data-conversation-id");
+          if (id && Chatseek.UUID.test(id)) ids.push(id.toLowerCase());
+        }
+      }
+      return ids;
+    };
+    const check = () => {
+      if (doc.location?.href !== href || Chatseek.conversationIdFromPath(href) !== platformId) return false;
+      const markers = readMarkers();
+      if (markers.some(id => id !== platformId)) return false;
+      if (!nodes.length || nodes.some(n => !n.isConnected)) return false;
+      if (page.pending) {
+        // Even an updated sidebar/canonical link cannot authorize residual
+        // old turns. Mixed old/new DOM also stays held.
+        if (nodes.some(n => page.nodes.has(n))) return false;
+        if (!markers.length && hash === page.hash) return false;
+      } else if (!markers.length && now - page.at < 800) {
+        // On first load, allow one stable rescan without pretending we saw
+        // an earlier conversation. This also initializes before any write.
+        return false;
+      }
+      return true;
+    };
+    const accept = () => {
+      page.nodes = new WeakSet(nodes);
+      page.hash = hash;
+      page.pending = false;
+    };
+    return { check, accept, hash };
+  },
+
+  // Only explicit total/position evidence can authorize absence-based repair.
+  // A composer, visible first turn, or scroll height does not prove that a
+  // virtualized long chat rendered its ending.
+  completeTranscript(doc, extracted) {
+    const nodes = extracted.nodes || [];
+    if (!nodes.length || extracted.messages.some(m => m.progress) ||
+        doc.querySelector('[data-is-streaming="true"], [aria-busy="true"], [data-virtualized="true"]')) return false;
+    const sizes = nodes.map(n => Number(n.getAttribute("aria-setsize")));
+    const positions = nodes.map(n => Number(n.getAttribute("aria-posinset")));
+    return sizes.every(n => n === nodes.length) &&
+      positions.every((n, index) => n === index + 1);
+  },
+
+  async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health, restoreOnNewMessages, identity, completePage = false }) {
+    const captureHref = typeof location !== "undefined" ? location.href : "";
+    const stillHere = () => (!captureHref || location.href === captureHref) && (!identity || identity.check());
+    const hold = () => { state.spaHeld = (state.spaHeld || 0) + 1; return false; };
+    if (!stillHere()) return hold();
     let ok = true;
     const list = sidebar || [];
     // An archive-list row is explicit. A sidebar row does not cancel it.
@@ -986,6 +1065,14 @@ const Chatseek = {
     // observe() look again in a few seconds even if the DOM goes quiet.
     let settling = false;
     const now = Date.now();
+    const bodyHash = Chatseek.transcriptHash(msgs);
+    const recent = state.recentTranscripts || (state.recentTranscripts = new Map());
+    for (const [hash, row] of recent) if (now - row.at >= 5000) recent.delete(hash);
+    const duplicate = recent.get(bodyHash);
+    if (msgs.length && duplicate && duplicate.convId !== conversation?.id) {
+      state.spaDupe = (state.spaDupe || 0) + 1;
+      return false;
+    }
     if (health) {
       const zeroKey = health.pathKind === "conversation" && !msgs.length
         ? (conversation?.id || "conversation")
@@ -1130,22 +1217,6 @@ const Chatseek = {
       return ok;
     }
 
-    // SPA navigation changes the URL before the thread re-renders. If every
-    // message on screen belongs to the thread we just stored, wait for the
-    // next mutation instead of filing them under the new conversation id.
-    const prefix = `${platform}:${conversation.platformId}:`;
-    const keys = msgs.map((m) =>
-      m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id
-    );
-    if (
-      state.lastMsgConvId &&
-      state.lastMsgConvId !== conversation.id &&
-      state.lastMsgKeys &&
-      keys.every((k) => state.lastMsgKeys.has(k))
-    ) {
-      return ok;
-    }
-
     const canRestore = () => typeof restoreOnNewMessages === "function"
       ? restoreOnNewMessages()
       : !!restoreOnNewMessages;
@@ -1182,6 +1253,8 @@ const Chatseek = {
     ]);
     if (msgFp === state.lastMsgFp && state.lastMsgBodies &&
         msgs.every((m) => state.lastMsgBodies.get(m.id) === m.body)) {
+      if (!stillHere()) return hold();
+      identity?.accept();
       Chatseek.noteSyncStored(conversation.id, msgs.length);
       const restored = await restorePending();
       return ok && restored;
@@ -1199,7 +1272,9 @@ const Chatseek = {
     const captureId = `${conversation.id}:${msgs.length}:${msgs[msgs.length - 1]?.id || ""}:${Date.now()}`;
     const pageMessageIds = msgs.map((m) => m.id);
     let observed = false;
-    for (const chunk of Chatseek.chunkMessages(msgs)) {
+    const chunks = Chatseek.chunkMessages(msgs);
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      if (!stillHere()) return hold();
       const res = await Chatseek.send({
         type: "CAPTURE_MESSAGES",
         platform,
@@ -1207,8 +1282,14 @@ const Chatseek = {
         messages: chunk,
         pageMessageIds,
         captureId,
+        bodyHash,
+        identityVerified: !!identity,
+        completePage: completePage && chunks.length === 1,
       });
       if (!res || !res.ok) return false;
+      if (res.held) { state.spaDupe = (state.spaDupe || 0) + 1; return false; }
+      recent.set(bodyHash, { convId: conversation.id, at: Date.now() });
+      if (recent.size > 128) recent.delete(recent.keys().next().value);
       if (res.observed) observed = true;
     }
     state.lastMsgFp = msgFp;
@@ -1217,7 +1298,7 @@ const Chatseek = {
     // cannot hide that edit; this does not copy or hash entire transcripts.
     state.lastMsgBodies = new Map(msgs.map((m) => [m.id, m.body]));
     state.lastMsgConvId = conversation.id;
-    state.lastMsgKeys = new Set(keys);
+    identity?.accept();
     Chatseek.noteSyncStored(conversation.id, msgs.length);
     // The sidebar was written before this anchor existed. Rewrite it now so
     // its neighbours are estimated from the new time, even if the order did not move.

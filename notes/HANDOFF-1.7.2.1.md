@@ -14,3 +14,7 @@
 
 - `content/chatgpt.js` `messageIdFor`：沒有原生 `data-message-id` 的節點（真機選擇器全 0 → 走 heuristic）拿到 `chatgpt:<convId>:<hash>:dom<N>`，scope 帶新網址的 convId，所以 A 的殘留節點在 URL 換成 B 後拿到**新的** B 前綴 id。
 - `content/shared.js` `runCapture` 的 SPA 防護只比 id 後綴（`state.lastMsgKeys`）；dom 序號 id 每次都不同，防護失效 → A 的內文以 B 的 id 寫入。
+
+## 重現證據
+
+`node scripts/spa-switch-test.mjs --baseline-only` 載入 `git show 213dde2:content/{shared,chatgpt}.js` 與該 commit 的 DB 及依賴；selector、heuristic 均印出 `BUG reproduced, A body stored in B`（斷言資料庫 B 真的含 A 內文）。URL 改成 B，但訊息節點沒換；新 scope 導致 dom id 改變，原本 lastMsgKeys 後綴防護失效。防護依賴上次成功寫入，在 A 尚未寫入時同樣無保護。observe 的 1200ms URL 輪詢／800ms debounce 只延後擷取，不能證明頁面重繪。

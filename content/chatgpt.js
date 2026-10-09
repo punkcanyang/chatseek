@@ -285,7 +285,7 @@
       if (collectImages && !item.message.progress) imageHosts.push(item.host);
     }
     if (!selector && chosen[0]) selector = chosen[0].layer;
-    return { messages, selector, selectorsTried, selectorHits };
+    return { messages, nodes: chosen.map(item => item.node), selector, selectorsTried, selectorHits };
   }
 
   function scopeLabel(scope, got) {
@@ -433,6 +433,7 @@
   async function captureInner(doc, loc) {
     const root = doc || document;
     const here = loc || location;
+    const captureHref = here.href;
     const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
     const sidebar = extractSidebar(root, signals.archiveRoots);
     const archivedRows = [];
@@ -483,6 +484,11 @@
       };
       extracted = await extractMessagesPaced(platformId, root);
     }
+    // Record the DOM before further awaits, even if this capture is held or
+    // never written. A following URL transition must still compare against it.
+    if (here.href !== captureHref) return false;
+    const identity = platformId && extracted.messages.length
+      ? Chatseek.pageIdentity(state, root, captureHref, platformId, extracted) : null;
     const stats = Chatseek.messageStats(extracted.messages);
     const pathKind = Chatseek.pageKind(here, !!platformId);
     const selectorName = extracted.selector || "";
@@ -492,6 +498,7 @@
     if (typeof Chatseek.noteEmptyConversation === "function") {
       Chatseek.noteEmptyConversation(pathKind === "conversation" && !extracted.messages.length);
     }
+    if (here.href !== captureHref) return false;
     const result = await Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
@@ -510,9 +517,11 @@
         ...stats,
       },
       restoreOnNewMessages,
+      identity,
+      completePage: !!identity && Chatseek.completeTranscript(root, extracted),
     });
     // Text is already stored. An image error must not reject this capture.
-    if (conversation) {
+    if (conversation && result && identity?.check()) {
       Chatseek.safeScheduleImages({
         conversationId: conversation.id,
         items: imageHosts,
