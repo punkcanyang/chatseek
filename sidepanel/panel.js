@@ -132,6 +132,7 @@ let t = bundle(localeCode);
 
 const qEl = document.getElementById("q");
 const listEl = document.getElementById("list");
+let shownRows = [];
 const statusEl = document.getElementById("status");
 const countsEl = document.getElementById("counts");
 const hintEl = document.getElementById("hint");
@@ -233,8 +234,22 @@ function fillLanguageSelect() {
   langEl.value = current;
 }
 
+function paintActivityTimes(now = Date.now()) {
+  if (!listEl || !shownRows.length) return;
+  const nodes = listEl.querySelectorAll(".item time");
+  for (let i = 0; i < nodes.length; i += 1) {
+    const conv = shownRows[i];
+    const time = nodes[i];
+    if (!conv || !time) continue;
+    const label = formatActivityLabel(conv, now, localeCode);
+    if (time.textContent !== label.text) time.textContent = label.text;
+    if ((time.title || "") !== (label.title || "")) time.title = label.title || "";
+  }
+}
+
 function render(items, { emptyKind, error }) {
   listEl.replaceChildren();
+  shownRows = [];
   if (error) {
     const p = document.createElement("p");
     p.className = "error";
@@ -249,6 +264,7 @@ function render(items, { emptyKind, error }) {
     listEl.append(p);
     return;
   }
+  shownRows = items;
   for (const conv of items) {
     const li = document.createElement("li");
     const row = document.createElement("div");
@@ -971,3 +987,12 @@ if (chrome.tabs?.onUpdated) {
 applyStatic();
 resolvePanelWindow().then(syncActiveTab);
 refresh();
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) paintActivityTimes();
+});
+const activityClock = setInterval(() => {
+  if (document.hidden) return;
+  paintActivityTimes();
+}, 15000);
+activityClock.unref?.();

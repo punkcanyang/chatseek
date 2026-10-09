@@ -38,6 +38,34 @@ export function sourceRank(source) {
   return TIME_SOURCE_RANK[source] || 0;
 }
 
+/**
+ * Comparable prefix of a turn. Markdown markers the DOM walker adds are
+ * ignored so a re-key of the same sentence still matches the stored tail.
+ * Only the first 180 characters are used; a stable id plus tailBodyChanged
+ * covers growth past that.
+ */
+export function activityKey(body) {
+  const raw = String(body || "").replace(/\s+/g, " ").trim().slice(0, 400);
+  if (!raw) return "";
+  return raw
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/[*_`#[\]()>~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+/** True when two bodies are the same turn, a short trim of it, or that turn grown. */
+export function sameTailText(storedBody, pageBody) {
+  const storedKey = activityKey(storedBody);
+  const pageKey = activityKey(pageBody);
+  if (!storedKey || !pageKey) return false;
+  if (storedKey === pageKey || pageKey.startsWith(storedKey)) return true;
+  return storedKey.startsWith(pageKey) &&
+    pageKey.length >= Math.min(storedKey.length, 80) &&
+    pageKey.length >= storedKey.length * 0.8;
+}
+
 export function isValidPageMs(ts) {
   if (typeof ts !== "number" || !Number.isFinite(ts)) return false;
   return ts >= MIN_PAGE_MS && ts <= Date.now() + 86400000 * 366;
@@ -149,6 +177,66 @@ export function mergeActivityTime(existing, incoming, now = Date.now()) {
 
   // sidebar-rank / first-seen must not refresh the clock to "now".
   return { updatedAt: existingMs, updatedAtSource: existingSource, firstSeenAt };
+}
+
+/**
+ * The page ends later than the tail we already stored.
+ * A new ending is high-confidence activity: the caller stamps "observed" at
+ * now, and mergeActivityTime keeps the newer of that and an exact page time.
+ * The same ending, a shorter repaint, scrollback, or the first ingest is not.
+ *
+ * pageBodies are this chunk only. sawStoredTail is set when an earlier chunk
+ * of the same capture already showed the stored tail text (ids were re-keyed).
+ */
+export function pageShowsNewActivity({
+  baselineCount = 0,
+  baselineTail = "",
+  baselineTailBody = "",
+  pageIds = [],
+  pageBodies = [],
+  tailBodyChanged = false,
+  sawStoredTail = false,
+} = {}) {
+  if (!(Number(baselineCount) > 0) || !pageIds?.length) return false;
+  const pageTail = pageIds[pageIds.length - 1];
+  const byId = new Map();
+  for (const row of pageBodies || []) {
+    if (row?.id) byId.set(row.id, String(row.body || ""));
+  }
+  const hasEnding = byId.has(pageTail);
+  const ending = hasEnding ? String(byId.get(pageTail) || "") : "";
+  const storedKey = activityKey(baselineTailBody);
+  const endingKey = activityKey(ending);
+
+  if (baselineTail && pageIds.includes(baselineTail)) {
+    if (pageTail === baselineTail) return !!tailBodyChanged;
+    // The tail id moved. Wait for the chunk that actually carries the ending
+    // so a shorter repaint is not treated as a new message.
+    if (!hasEnding) return false;
+    if (storedKey && endingKey && (endingKey === storedKey ||
+      (storedKey.startsWith(endingKey) && endingKey.length < storedKey.length))) {
+      return false;
+    }
+    return true;
+  }
+
+  // The stored tail id is gone (hash, heuristic, shadow, iframe). Match text.
+  if (!storedKey || !hasEnding || !endingKey) return false;
+  if (endingKey === storedKey) return false;
+  if (storedKey.startsWith(endingKey) && endingKey.length < storedKey.length) return false;
+  if (endingKey.startsWith(storedKey) && endingKey.length > storedKey.length) return true;
+
+  let seen = !!sawStoredTail;
+  if (!seen) {
+    for (const id of pageIds) {
+      if (id === pageTail || !byId.has(id)) continue;
+      if (sameTailText(baselineTailBody, byId.get(id))) {
+        seen = true;
+        break;
+      }
+    }
+  }
+  return seen;
 }
 
 function isAnchor(item) {

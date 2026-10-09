@@ -1,4 +1,4 @@
-import { readConversation, readImagesForMessages } from "../src/db.js";
+import { readConversation, readConversationRow, readImagesForMessages } from "../src/db.js";
 import { CATALOG, resolveLocale, text } from "../src/i18n.js";
 import { parseReaderSearch, safeOriginalUrl } from "../src/reader-url.js";
 import { mountReader } from "../src/reader-view.js";
@@ -143,13 +143,44 @@ bootPlaceholder();
 await load();
 show();
 
+function applyClock(conv) {
+  if (!conv || !row?.conversation || !view?.setActivity) return;
+  row.conversation.updatedAt = conv.updatedAt;
+  row.conversation.updatedAtSource = conv.updatedAtSource;
+  if (conv.olderThanAt) row.conversation.olderThanAt = conv.olderThanAt;
+  else delete row.conversation.olderThanAt;
+  if (conv.firstSeenAt) row.conversation.firstSeenAt = conv.firstSeenAt;
+  view.setActivity(row.conversation);
+}
+
+async function refreshClock() {
+  if (!parsed.id || !view) return;
+  let conv = null;
+  try {
+    conv = await readConversationRow(parsed.id);
+  } catch {
+    return;
+  }
+  applyClock(conv);
+}
+
 if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "INDEX_UPDATED") refreshClock();
     if (msg?.type !== "IMAGE_CACHE_UPDATED") return;
     for (const id of shownIds) fetchedImages.delete(id);
     loadImages(shownIds, true);
   });
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) view?.setActivity?.(row?.conversation);
+});
+const readerClock = setInterval(() => {
+  if (document.hidden) return;
+  view?.setActivity?.(row?.conversation);
+}, 15000);
+readerClock.unref?.();
 
 window.addEventListener("storage", (event) => {
   if (event.key !== STORAGE_KEY && event.key !== null) return;

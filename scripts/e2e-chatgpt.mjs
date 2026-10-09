@@ -17,6 +17,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const docs = join(root, "docs");
 const chromePath = process.env.CHROME_PATH || "/tmp/chrome-for-testing/chrome-linux64/chrome";
 const CLASSIC = "11111111-1111-4111-8111-111111111111";
+const HEUR = "13131313-1313-4131-8131-131313131313";
 const IFRAME = "22222222-2222-4222-8222-222222222222";
 const SHADOW = "33333333-3333-4333-8333-333333333333";
 const CLOSED = "44444444-4444-4444-8444-444444444444";
@@ -283,6 +284,9 @@ function route(url) {
   if (path === `/c/${CLOSED_IMG}`) return shadowImagePage("closed");
   if (path === `/c/${FRAME_IMG}`) return frameImagePage();
   if (path === `/c/${LAZY}`) return lazyImagePage();
+  if (path === `/c/${HEUR}`) {
+    return pageHtml({ title: "Heuristic habitat", classic: false, user: USER, assistant: ASST });
+  }
   if (path === `/c/${CLASSIC}`) {
     return pageHtml({
       title: "Classic habitat",
@@ -345,6 +349,8 @@ async function readDb(worker) {
         title: row.title,
         messageCount: row.messageCount,
         url: row.url,
+        updatedAt: row.updatedAt,
+        updatedAtSource: row.updatedAtSource,
       })),
       msgs: msgs.map((row) => ({
         id: row.id,
@@ -533,7 +539,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.3 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.4 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -792,6 +798,105 @@ async function main() {
       return text.includes("pangolin") && text.includes("classic user line") ? text : "";
     }, "reader markdown", 10000);
 
+    const NEW_TAIL = "NEW_TAIL_TOKEN The pangolin asked what the ridge looks like after rain.";
+
+    async function clockOf(id) {
+      const snap = await readDb(probe);
+      return convOf(snap, id);
+    }
+
+    async function appendTail(mode) {
+      await page.evaluate((mode, text) => {
+        function prose(root) {
+          const wrap = document.createElement("div");
+          const heading = document.createElement("h2");
+          heading.textContent = "You";
+          const paragraph = document.createElement("p");
+          paragraph.textContent = text;
+          wrap.append(heading, paragraph);
+          root.append(wrap);
+        }
+        function classicTurn(root) {
+          for (const node of root.querySelectorAll("[data-message-id]")) node.removeAttribute("data-message-id");
+          const div = document.createElement("div");
+          div.setAttribute("data-message-author-role", "user");
+          const body = document.createElement("div");
+          body.className = "whitespace-pre-wrap";
+          body.textContent = text;
+          div.append(body);
+          root.append(div);
+        }
+        if (mode === "classic") classicTurn(document.querySelector("main"));
+        else if (mode === "heuristic") prose(document.querySelector("main"));
+        else if (mode === "iframe") prose(document.querySelector("iframe").contentDocument.querySelector("main"));
+        else if (mode === "shadow") prose(document.querySelector("#host").shadowRoot.querySelector("main"));
+      }, mode, NEW_TAIL);
+    }
+
+    async function exerciseClock(id, url, mode, { first = false } = {}) {
+      await openChat(url);
+      await waitMsgs(id, first ? 2 : 1);
+      const opened = await clockOf(id);
+      assert(opened && opened.updatedAtSource !== "observed", `${mode} first open ${opened && opened.updatedAtSource}`);
+      const frozenAt = opened.updatedAt;
+      const frozenSource = opened.updatedAtSource;
+      const frozenCount = opened.messageCount;
+      await sleep(400);
+      await openChat(url);
+      await sleep(2200);
+      const reopened = await clockOf(id);
+      assert(reopened.updatedAt === frozenAt, `${mode} reopen moved ${frozenAt} -> ${reopened.updatedAt}`);
+      assert(reopened.updatedAtSource === frozenSource, `${mode} reopen source ${reopened.updatedAtSource}`);
+      await appendTail(mode);
+      const next = await until(async () => {
+        const row = await clockOf(id);
+        return row && row.updatedAtSource === "observed" && row.updatedAt > frozenAt && row.messageCount > frozenCount ? row : null;
+      }, `${mode} new tail observed`, 20000);
+      assert(next.messageCount > frozenCount, `${mode} count ${frozenCount} -> ${next.messageCount}`);
+    }
+
+    await exerciseClock(CLASSIC, `https://chatgpt.com/c/${CLASSIC}`, "classic");
+    await exerciseClock(HEUR, `https://chatgpt.com/c/${HEUR}`, "heuristic", { first: true });
+    await exerciseClock(IFRAME, `https://chatgpt.com/c/${IFRAME}`, "iframe");
+    const closedBefore = await clockOf(CLOSED);
+    await openChat(`https://chatgpt.com/c/${CLOSED}`);
+    await sleep(2200);
+    const closedAfter = await clockOf(CLOSED);
+    assert(closedAfter.updatedAt === closedBefore.updatedAt, `closed reopen moved ${closedBefore.updatedAt} -> ${closedAfter.updatedAt}`);
+    assert(closedAfter.updatedAtSource !== "observed", `closed reopen ${closedAfter.updatedAtSource}`);
+    await exerciseClock(SHADOW, `https://chatgpt.com/c/${SHADOW}`, "shadow");
+
+    await panel.evaluate(() => localStorage.setItem("chatseek.uiLocale", "zh-TW"));
+    await panel.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, { waitUntil: "domcontentloaded" });
+    await panel.bringToFront();
+    const top = await until(async () => {
+      const item = await panel.$eval("#list .item", (el) => ({
+        id: el.dataset.id || "",
+        title: el.querySelector(".item-title")?.textContent || "",
+        time: el.querySelector("time")?.textContent || "",
+      })).catch(() => null);
+      return item && item.time === "剛剛" ? item : null;
+    }, "sidebar just now", 10000);
+    assert(top.id === `chatgpt:${SHADOW}`, `sidebar top ${JSON.stringify(top)}`);
+    assert(/open shadow/i.test(top.title), top.title);
+    const closedLabel = await panel.$eval(`[data-id="chatgpt:${CLOSED}"] time`, (el) => el.textContent || "");
+    assert(closedLabel !== "剛剛", `closed label ${closedLabel}`);
+    await panel.screenshot({ path: join(docs, "panel-1.6.4-just-now.png"), fullPage: true });
+
+    await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${SHADOW}`)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await until(async () => {
+      const text = await reader.$eval("#readerDate", (el) => el.textContent || "").catch(() => "");
+      return text === "剛剛" ? text : "";
+    }, "reader just now", 10000);
+    const readerTitle = await reader.$eval("#readerTitle", (el) => el.textContent || "");
+    assert(/open shadow/i.test(readerTitle), readerTitle);
+    await reader.screenshot({ path: join(docs, "reader-1.6.4-just-now.png"), fullPage: true });
+
+    await panel.evaluate(() => localStorage.removeItem("chatseek.uiLocale"));
+    await panel.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, { waitUntil: "domcontentloaded" });
+
     const emptyTab = page;
     await reader.close().catch(() => {});
     await silenceContentPing(emptyTab);
@@ -815,6 +920,7 @@ async function main() {
 
     const leaked = logs.join("\n");
     assert(!/southern forest ridge today/.test(leaked), "console diag included message text");
+    assert(!leaked.includes("NEW_TAIL_TOKEN"), "console diag included the new tail");
     writeFileSync("/tmp/chatseek-e2e-console.txt", logs.join("\n"));
     writeFileSync("/tmp/chatseek-e2e-health.txt", diag);
     console.log("e2e chatgpt ok", {

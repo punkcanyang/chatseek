@@ -1,6 +1,6 @@
 import { indexPlain } from "./markdown.js";
 import { queryTokens, titleContainsQuery, tokenSpans, tokenize } from "./tokenize.js";
-import { applySidebarEstimates, mergeActivityTime } from "./activity-time.js";
+import { applySidebarEstimates, mergeActivityTime, pageShowsNewActivity, sameTailText } from "./activity-time.js";
 import {
   buildPreview,
   clipPreviewSource,
@@ -360,19 +360,6 @@ export async function upsertMessages(conversation, messages, meta = {}) {
   return withDb((db) => writeMessages(db, row, messages, meta));
 }
 
-/**
- * A new tail id (or a longer tail body) on a conversation that already had
- * messages is observed activity. The first ingest — including later chunks of
- * that same capture — is not: those messages were already on the page.
- */
-function sawNewTail(baselineCount, baselineTail, pageMessageIds, tailBodyChanged) {
-  if (!baselineCount || !baselineTail || !pageMessageIds?.length) return false;
-  if (!pageMessageIds.includes(baselineTail)) return false;
-  const pageTail = pageMessageIds[pageMessageIds.length - 1];
-  if (pageTail !== baselineTail) return true;
-  return !!tailBodyChanged;
-}
-
 async function writeMessages(db, conversation, messages, meta = {}) {
   const tx = db.transaction(
     ["conversations", "messages", "tokenMap", "meta"],
@@ -405,6 +392,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     conv.captureToken = meta.captureId;
     conv.captureBaselineCount = baselineCount;
     conv.captureBaselineTail = baselineTail;
+    conv.captureSawTail = false;
   } else if (conv && meta.captureId && conv.captureToken === meta.captureId) {
     baselineCount = conv.captureBaselineCount ?? baselineCount;
     baselineTail = conv.captureBaselineTail || baselineTail;
@@ -470,7 +458,34 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   }
 
   if (replacedTitleOnly) changed += 1;
-  if (conv && (changed || (meta.captureId && conv.captureToken === meta.captureId))) {
+  const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
+  let activity = false;
+  if (conv && baselineCount > 0 && baselineTail && pageIds.length) {
+    let storedBody = "";
+    const tailMoved = !pageIds.includes(baselineTail) || pageIds[pageIds.length - 1] !== baselineTail;
+    if (tailMoved || tailBodyChanged) {
+      const storedTail = await requestDone(msgStore.get(baselineTail));
+      storedBody = storedTail?.body || "";
+    }
+    if (!pageIds.includes(baselineTail) && storedBody) {
+      for (const msg of messages) {
+        if (msg?.body && sameTailText(storedBody, msg.body)) {
+          conv.captureSawTail = true;
+          break;
+        }
+      }
+    }
+    activity = pageShowsNewActivity({
+      baselineCount,
+      baselineTail,
+      baselineTailBody: storedBody,
+      pageIds,
+      pageBodies: messages,
+      tailBodyChanged,
+      sawStoredTail: !!conv.captureSawTail,
+    });
+  }
+  if (conv && (changed || activity || (meta.captureId && conv.captureToken === meta.captureId))) {
     const fields = nextPreviewFields(conv, messages, meta.pageMessageIds, { freshIds });
     if (fields.firstUserPreview && !poorerPreview(conv.firstUserPreview, fields.firstUserPreview)) {
       conv.firstUserPreview = fields.firstUserPreview;
@@ -485,20 +500,26 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conversation.url) conv.url = conversation.url;
     const now = Date.now();
     const incomingUpdated = pageMs(conversation.updatedAt);
-    if (changed) {
-      const merged = mergeActivityTime(conv, {
-        updatedAt: incomingUpdated,
-        updatedAtSource: conversation.updatedAtSource,
-      }, now);
-      conv.updatedAt = merged.updatedAt;
-      conv.updatedAtSource = merged.updatedAtSource;
-      if (!isValidPageMs(conv.firstSeenAt)) conv.firstSeenAt = merged.firstSeenAt || now;
-      const incomingCreated = pageMs(conversation.createdAt);
-      if (incomingCreated && !isValidPageMs(conv.createdAt)) {
-        conv.createdAt = incomingCreated;
+    if (changed || activity) {
+      if (changed) {
+        const merged = mergeActivityTime(conv, {
+          updatedAt: incomingUpdated,
+          updatedAtSource: conversation.updatedAtSource,
+        }, now);
+        conv.updatedAt = merged.updatedAt;
+        conv.updatedAtSource = merged.updatedAtSource;
+        if (!isValidPageMs(conv.firstSeenAt)) conv.firstSeenAt = merged.firstSeenAt || now;
+        const incomingCreated = pageMs(conversation.createdAt);
+        if (incomingCreated && !isValidPageMs(conv.createdAt)) {
+          conv.createdAt = incomingCreated;
+        }
+        conv.messageCount = await requestDone(
+          msgStore.index("conversationId").count(conversation.id),
+        );
       }
-      const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
-      if (sawNewTail(baselineCount, baselineTail, pageIds, tailBodyChanged)) {
+      // A new ending is its own high-confidence time. It still cannot move
+      // the clock backward: mergeActivityTime keeps the newer stamp.
+      if (activity) {
         const observed = mergeActivityTime(conv, {
           updatedAt: now,
           updatedAtSource: "observed",
@@ -508,9 +529,6 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         observedNow = observed.updatedAtSource === "observed";
       }
       if (pageIds.length) conv.tailMessageId = pageIds[pageIds.length - 1];
-      conv.messageCount = await requestDone(
-        msgStore.index("conversationId").count(conversation.id),
-      );
     }
     if (prevTitle !== conv.title) {
       deleteTokens(tokenStore, tokenize(prevTitle), conv.id, "title");
@@ -519,8 +537,8 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conv.updatedAtSource !== "sidebar-rank" || !isValidPageMs(conv.olderThanAt)) {
       delete conv.olderThanAt;
     }
-    const orderIds = (Array.isArray(meta.pageMessageIds) && meta.pageMessageIds.length
-      ? meta.pageMessageIds
+    const orderIds = (pageIds.length
+      ? pageIds
       : messages.map((msg) => msg?.id).filter(Boolean)
     ).filter((id) => !skippedIds.has(id));
     const orderKey = ORDER_PREFIX + conv.id;
@@ -795,6 +813,15 @@ export async function attachPreviews(conversations, query = "") {
     ...conv,
     preview: buildPreview(conv, q, bodies.get(conv?.id) || []),
   }));
+}
+
+/** Conversation row only. The reader clock uses this so a 3000-message thread is not reread. */
+export async function readConversationRow(id) {
+  if (typeof id !== "string" || !id) return null;
+  return withDb(async (db) => {
+    const tx = db.transaction("conversations", "readonly");
+    return requestDone(tx.objectStore("conversations").get(id));
+  });
 }
 
 /**

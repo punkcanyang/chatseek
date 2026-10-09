@@ -330,6 +330,24 @@ export function mountReader(root, options = {}) {
   plat.className = `plat ${conversation?.platform || ""}`;
   const time = doc.createElement("time");
   time.id = "readerDate";
+  let clockConv = conversation;
+
+  function paintClock(conv, now = Date.now()) {
+    if (!conv) {
+      time.textContent = "";
+      time.title = "";
+      delete time.dataset.source;
+      time.classList.remove("is-approx", "is-unknown");
+      return;
+    }
+    const when = formatActivityLabel(conv, now, locale);
+    time.textContent = when.text;
+    time.title = when.title || "";
+    if (when.source) time.dataset.source = when.source;
+    else delete time.dataset.source;
+    time.classList.toggle("is-approx", !!when.approx);
+    time.classList.toggle("is-unknown", !!when.unknown);
+  }
   const badge = doc.createElement("span");
   badge.id = "archivedBadge";
   badge.className = "badge-archived";
@@ -403,12 +421,7 @@ export function mountReader(root, options = {}) {
       paintMarks(title, titleIds, hitIndex);
       plat.textContent = platformName(conversation.platform);
       plat.className = `plat ${conversation.platform || ""}`;
-      const when = formatActivityLabel(conversation, Date.now(), locale);
-      time.textContent = when.text;
-      time.title = when.title || "";
-      if (when.source) time.dataset.source = when.source;
-      time.classList.toggle("is-approx", !!when.approx);
-      time.classList.toggle("is-unknown", !!when.unknown);
+      paintClock(clockConv);
       if (conversation.title) doc.title = `${conversation.title} · Chatseek`;
     }
     openBtn.hidden = !original || mode === "missing" || mode === "error";
@@ -642,6 +655,17 @@ function focusHit() {
       renderedStart = -1;
       renderedEnd = -1;
       renderWindow({ force: true });
+    },
+    setActivity(conv, now = Date.now()) {
+      if (!clockConv || !conv) return;
+      if (conv.updatedAt != null) clockConv.updatedAt = conv.updatedAt;
+      if (conv.updatedAtSource) clockConv.updatedAtSource = conv.updatedAtSource;
+      if ("olderThanAt" in conv) {
+        if (conv.olderThanAt) clockConv.olderThanAt = conv.olderThanAt;
+        else delete clockConv.olderThanAt;
+      }
+      if (conv.firstSeenAt) clockConv.firstSeenAt = conv.firstSeenAt;
+      paintClock(clockConv, now);
     },
   };
 }
