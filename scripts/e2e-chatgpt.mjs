@@ -33,6 +33,7 @@ const SHADOW_IMG = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const CLOSED_IMG = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const FRAME_IMG = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const LAZY = "12121212-1212-4121-8121-121212121212";
+const PROGRESS = "1a2b3c4d-1a2b-4c3d-8e4f-1a2b3c4d5e6f";
 const BANNER = "14141414-1414-4141-8141-141414141414";
 const BANNER_FRAME = "15151515-1515-4151-8151-151515151515";
 const BANNER_SHADOW = "16161616-1616-4161-8161-161616161616";
@@ -316,6 +317,31 @@ function lazyImagePage() {
   return selectorImagePage(`<img id="late" alt="late ridge" src="/hold.png" width="96" height="64">`);
 }
 
+// 1.7.2: a single assistant turn rewritten with image-generation status text
+// plus a percentage. No data-message-id, exactly like the live ChatGPT bubble.
+// __setStep drives it from the test; step 99 settles it into an image.
+function progressPage() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Image progress habitat</title></head><body><main>
+    <div data-message-author-role="user" data-message-id="pu1"><div class="whitespace-pre-wrap">Draw a maple leaf on the southern forest ridge.</div></div>
+    <div id="live"><div data-message-author-role="assistant"><div class="markdown"><p id="status">正在建立圖像25%</p></div></div></div>
+  </main>
+  <script>
+    window.__steps = ["正在建立圖像25%", "正在勾勒草圖38%", "正在生成初稿51%", "正在打磨細節80%"];
+    window.__setStep = function (n) {
+      var status = document.getElementById("status");
+      if (n < window.__steps.length) { status.textContent = window.__steps[n]; return; }
+      status.textContent = "這是你要的樫葉圖。";
+      var img = document.createElement("img");
+      img.alt = "maple ridge";
+      img.width = 96;
+      img.height = 64;
+      img.src = "/red.png";
+      status.parentElement.append(img);
+    };
+  </script>
+  </body></html>`;
+}
+
 function noisePage() {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Large image</title></head><body><main>
     ${imageMessage({
@@ -360,6 +386,7 @@ function route(url) {
   if (path === `/c/${CLOSED_IMG}`) return shadowImagePage("closed");
   if (path === `/c/${FRAME_IMG}`) return frameImagePage();
   if (path === `/c/${LAZY}`) return lazyImagePage();
+  if (path === `/c/${PROGRESS}`) return progressPage();
   if (path === `/c/${HEUR}`) {
     return pageHtml({ title: "Heuristic habitat", classic: false, user: USER, assistant: ASST });
   }
@@ -623,7 +650,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.1 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.2 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -935,6 +962,39 @@ async function main() {
     releaseSlow();
     const lazyDone = await waitShots(LAZY, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "lazy image filled in");
     assert(lazyDone.some((row) => row.status === "cached"), "a late image was not filled in after it loaded");
+
+    // 1.7.2: one assistant bubble rewritten with image-generation progress must
+    // not become one stored row per percentage step. While only status text is
+    // on screen no assistant row exists and lastActivity does not move; the
+    // settled turn (image present) is written exactly once.
+    await openChat(`https://chatgpt.com/c/${PROGRESS}`);
+    const progressUser = await until(async () => {
+      const rows = msgsOf(await readDb(probe), PROGRESS);
+      return rows.some((row) => row.role === "user") ? rows : null;
+    }, "progress user row", 20000);
+    assert(progressUser.every((row) => row.role === "user"), `progress fixture stored an assistant row too early: ${JSON.stringify(progressUser.map((row) => row.role))}`);
+    const progressClock = convOf(await readDb(probe), PROGRESS);
+    for (const step of [0, 1, 2, 3]) {
+      await page.evaluate((n) => window.__setStep(n), step);
+      await sleep(1300);
+      const rows = msgsOf(await readDb(probe), PROGRESS);
+      const assistants = rows.filter((row) => row.role === "assistant");
+      assert(assistants.length === 0, `progress step ${step} stored ${assistants.length} assistant rows`);
+      const row = convOf(await readDb(probe), PROGRESS);
+      assert(row.updatedAt === progressClock.updatedAt, `progress step ${step} moved lastActivity to ${row.updatedAtSource}`);
+    }
+    await page.evaluate(() => window.__setStep(99));
+    const settledRows = await until(async () => {
+      const rows = msgsOf(await readDb(probe), PROGRESS);
+      return rows.filter((row) => row.role === "assistant").length === 1 ? rows : null;
+    }, "one settled assistant row", 20000);
+    const settledTurns = settledRows.filter((row) => row.role === "assistant");
+    assert(settledTurns.length === 1, `the settled turn must be stored once, got ${settledTurns.length}`);
+    assert(settledTurns[0].body.includes("樫葉圖"), `settled body missing: ${settledTurns[0].body}`);
+    const progressShifted = msgsOf(await readDb(probe), PROGRESS).filter((row) => /正在(建立圖像|勾勒草圖|生成初稿|打磨細節)/.test(row.body || ""));
+    assert(progressShifted.length === 0, `progress text was stored: ${progressShifted.length}`);
+    const progressShots = await waitShots(PROGRESS, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "progress settled image");
+    assert(progressShots.some((row) => row.status === "cached"), "the settled image was not cached");
 
     const reader = await browser.newPage();
     await reader.setViewport({ width: 900, height: 900 });
