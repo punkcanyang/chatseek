@@ -6,10 +6,11 @@
  *   node scripts/screenshot-panel.mjs
  */
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, copyFile } from "node:fs/promises";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
 import puppeteer from "puppeteer-core";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -286,9 +287,63 @@ async function prepare(page, origin) {
   await page.mouse.move(0, 0);
 }
 
+async function buildSampleSkeleton() {
+  const sharedSrc = readFileSync(join(root, "content/shared.js"), "utf8");
+  const uuid = "0f0f0f0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Kyoto maple itinerary</title></head><body class="light">
+<nav class="sidebar-nav"><a href="/c/${uuid}"><span class="truncate">Kyoto maple itinerary</span><time datetime="2026-10-08T02:11:00.000Z">2026-10-08</time></a></nav>
+<main class="conversation">
+  <div class="archived-notice">This conversation is archived.</div>
+  <div data-message-author-role="user" data-message-id="${uuid}" data-turn="user" class="group text-token">
+    <div class="whitespace-pre-wrap">Example user prompt about a maple itinerary.</div>
+  </div>
+  <div data-message-author-role="assistant" data-message-id="11111111-2222-4333-8444-555555555555" data-turn="assistant" class="group text-token">
+    <div class="markdown prose"><p>Example answer.</p></div>
+    <img alt="generated map" src="https://files.oaiusercontent.com/example.png" class="rounded-lg">
+  </div>
+</main>
+<div id="mount" data-kind="shadow-host"></div>
+<iframe id="embed" src="https://example.com/widget"></iframe>
+<iframe id="blank"></iframe>
+</body></html>`;
+  const dom = new JSDOM(html, { url: `https://chatgpt.com/c/${uuid}` });
+  const doc = dom.window.document;
+  const host = doc.getElementById("mount");
+  const shadow = host.attachShadow({ mode: "closed" });
+  shadow.innerHTML =
+    '<div data-message-author-role="assistant" data-turn="assistant"><div class="markdown"><p>Example shadow answer.</p></div></div>';
+  const clearGlobals = () => {
+    for (const key of ["__chatseekLoaded", "__chatseekPing", "__chatseekSkeleton", "__chatseekSyncInspect"]) {
+      delete globalThis[key];
+    }
+  };
+  clearGlobals();
+  const fn = new Function(
+    "document", "location", "window", "Node", "NodeFilter", "console", "chrome",
+    sharedSrc + "\nChatseek.autoStart = false;\nreturn Chatseek;",
+  );
+  const Chatseek = fn(
+    doc,
+    dom.window.location,
+    dom.window,
+    dom.window.Node,
+    dom.window.NodeFilter,
+    { warn() {}, log() {} },
+    {
+      runtime: { id: "shot", sendMessage() {}, onMessage: { addListener() {} } },
+      dom: { openOrClosedShadowRoot: (el) => (el === host ? shadow : null) },
+    },
+  );
+  const out = Chatseek.buildPageSkeleton(doc);
+  dom.window.close();
+  clearGlobals();
+  return out.text + "\n";
+}
+
 async function main() {
   const { server, port } = await startServer(rows(Date.now()));
   const origin = `http://127.0.0.1:${port}`;
+  const sampleSkeleton = await buildSampleSkeleton();
   const browser = await puppeteer.launch({
     executablePath: "/usr/bin/google-chrome",
     headless: true,
@@ -304,7 +359,7 @@ async function main() {
     const page = await browser.newPage();
     await page.setViewport({ width: 400, height: 920, deviceScaleFactor: 2 });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
-    await page.evaluateOnNewDocument((url) => {
+    await page.evaluateOnNewDocument((url, skeletonText) => {
       try {
         Object.defineProperty(navigator, "language", { get: () => "zh-CN" });
         Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh"] });
@@ -312,10 +367,22 @@ async function main() {
       try {
         if (!localStorage.getItem("chatseek.uiLocale")) localStorage.setItem("chatseek.uiLocale", "zh-TW");
       } catch { /* the panel falls back to the browser language */ }
+      try {
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: { writeText: async () => {} },
+        });
+      } catch { /* the manual-copy fallback is fine */ }
       window.chrome = {
         tabs: {
           async query() {
             return [{ id: 1, active: true, url }];
+          },
+          async sendMessage(_tabId, message) {
+            if (message && message.type === "COPY_PAGE_SKELETON") {
+              return { ok: true, text: skeletonText, chars: skeletonText.length, nodes: 0, truncated: false };
+            }
+            return undefined;
           },
           async update() {},
           async create() {},
@@ -329,7 +396,7 @@ async function main() {
         },
         action: { setBadgeText() { return Promise.resolve(); } },
       };
-    }, currentUrl);
+    }, currentUrl, sampleSkeleton);
 
     await prepare(page, origin);
     const docs = join(root, "docs");
@@ -351,7 +418,10 @@ async function main() {
       en: join(docs, "panel-1.4.0-en.png"),
       ja: join(docs, "panel-1.4.0-ja.png"),
       progressReader: join(docs, "reader-1.7.2-image-progress.png"),
+      copyStructure: join(docs, "panel-1.7.2-copy-structure.png"),
     };
+    const samplePath = join(docs, "skeleton-1.7.2-sample.txt");
+    writeFileSync(samplePath, sampleSkeleton);
     const order = await page.$$eval(".chip", (els) => els.map((el) => el.textContent));
     if (order.join("|") !== "活躍中|ChatGPT|Claude|Grok|Gemini|已封存|全部|圖片") {
       throw new Error(`tab order ${order.join("|")}`);
@@ -430,14 +500,24 @@ async function main() {
     }
     await page.screenshot({ path: shots.progressReader, fullPage: true });
 
+    // 1.7.2: the copy-page-structure button reports how much structure it read.
+    await page.goto(`${origin}/sidepanel/index.html`, { waitUntil: "networkidle0", timeout: 20000 });
+    await page.select("#lang", "zh-TW");
+    await page.waitForFunction(() => {
+      return (document.getElementById("copyStructureBtn")?.textContent || "").includes("複製頁面結構");
+    }, { timeout: 10000 });
+    await page.click("#copyStructureBtn");
+    await page.waitForFunction(() => /\d/.test(document.getElementById("status")?.textContent || ""), { timeout: 10000 });
+    await page.screenshot({ path: shots.copyStructure, fullPage: true });
+
     if (artifactsOk) {
-      for (const file of Object.values(shots)) {
+      for (const file of [...Object.values(shots), samplePath]) {
         try {
           await copyFile(file, join(artifacts, file.split("/").pop()));
         } catch { /* best-effort mirror only */ }
       }
     }
-    console.log("screenshots", Object.values(shots).join(" "));
+    console.log("screenshots", [...Object.values(shots), samplePath].join(" "));
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));
