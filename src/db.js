@@ -237,8 +237,10 @@ function deleteTokens(tokenStore, tokens, conversationId, source) {
 
 /**
  * archived true only when this observation explicitly says so.
- * archived false restores active (seen again outside an archive banner/list).
- * Omitted leaves the stored flag alone — leaving the sidebar is not a signal.
+ * archived false restores active. Callers may send it only for a conversation
+ * page with no archive banner and a new message, or for a manual restore.
+ * Omitted leaves the stored flag alone — a sidebar row, a sync visit, or a
+ * new last-activity time is not a signal.
  */
 function applyArchiveState(next, old, incoming, now) {
   if (incoming.archived === true) {
@@ -1374,6 +1376,30 @@ export async function clearImageCache() {
     });
     tx.objectStore("meta").put({ key: IMAGE_BYTES_KEY, bytes: 0 });
     await txDone(tx);
+  });
+}
+
+/**
+ * Manual restore from the side panel. Does not change last-activity time,
+ * messages, or the page. A later banner or archive-list capture can mark
+ * the chat archived again.
+ */
+export async function restoreConversation(id) {
+  if (typeof id !== "string" || !id) return false;
+  return withDb(async (db) => {
+    const tx = db.transaction("conversations", "readwrite");
+    const store = tx.objectStore("conversations");
+    const row = await requestDone(store.get(id));
+    if (!row || row.archived !== true) {
+      await txDone(tx);
+      return false;
+    }
+    const next = { ...row, archived: false };
+    delete next.archiveSource;
+    delete next.archivedAt;
+    store.put(next);
+    await txDone(tx);
+    return true;
   });
 }
 

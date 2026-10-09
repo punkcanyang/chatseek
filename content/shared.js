@@ -969,14 +969,11 @@ const Chatseek = {
    *   { pathKind, selector, selectorsTried }
    * pathKind "conversation" + 0 messages raises the side-panel warning.
    */
-  async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health }) {
+  async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health, restoreOnNewMessages }) {
     let ok = true;
     const list = sidebar || [];
-    const activeIds = new Set(
-      list.filter((row) => row && row.id && row.archived === false).map((row) => row.id),
-    );
-    // Archive-list rows never override a chat that is also in the live sidebar.
-    const archivedOnly = (archivedRows || []).filter((row) => row && row.id && !activeIds.has(row.id));
+    // An archive-list row is explicit. A sidebar row does not cancel it.
+    const archivedOnly = (archivedRows || []).filter((row) => row && row.id);
     const combined = list.concat(archivedOnly);
     const msgs = (messages || []).filter((m) => m && m.id && m.body);
     // A thread is empty for a moment after SPA navigation while it loads.
@@ -1028,6 +1025,8 @@ const Chatseek = {
         assistantCount: health.assistantCount,
         charCount: health.charCount,
         structure: health.structure || null,
+        archiveBanner: health.archiveBanner,
+        archiveList: health.archiveList,
         healthState: "settling",
         warn: false,
         at: Date.now(),
@@ -1055,6 +1054,8 @@ const Chatseek = {
         assistantCount: report.assistantCount,
         charCount: report.charCount,
         structure: health.structure || null,
+        archiveBanner: health.archiveBanner,
+        archiveList: health.archiveList,
         healthState: report.warn ? "warn" : "ok",
         warn: report.warn,
         at: report.at,
@@ -1069,6 +1070,8 @@ const Chatseek = {
         report.warn ? "1" : "0",
         report.userCount || 0,
         report.assistantCount || 0,
+        health.archiveBanner || 0,
+        health.archiveList || 0,
       ].join("|");
       const now = Date.now();
       if (healthFp !== state.lastHealthFp || now - (state.lastHealthAt || 0) >= 60000) {
@@ -1103,7 +1106,7 @@ const Chatseek = {
 
     const inSidebar = combined.some((c) => c.platformId === conversation.platformId);
     if (!msgs.length) {
-      if (!inSidebar) {
+      if (!inSidebar || conversation.archived === true) {
         const res = await Chatseek.send({
           type: "CAPTURE_CONVERSATIONS",
           platform,
@@ -1130,6 +1133,32 @@ const Chatseek = {
       return ok;
     }
 
+    const canRestore = () => typeof restoreOnNewMessages === "function"
+      ? restoreOnNewMessages()
+      : !!restoreOnNewMessages;
+    const restorePending = async () => {
+      if (state.pendingRestoreId !== conversation.id) return true;
+      if (!canRestore()) {
+        state.pendingRestoreId = "";
+        return true;
+      }
+      const res = await Chatseek.send({
+        type: "CAPTURE_CONVERSATIONS",
+        platform,
+        conversations: [{
+          id: conversation.id,
+          platform: conversation.platform,
+          platformId: conversation.platformId,
+          title: conversation.title,
+          url: conversation.url,
+          archived: false,
+          archiveSource: "chatgpt:new-messages",
+        }],
+      });
+      if (!res || !res.ok) return false;
+      state.pendingRestoreId = "";
+      return true;
+    };
     const msgFp = Chatseek.fingerprint([
       conversation.id,
       conversation.title,
@@ -1140,7 +1169,8 @@ const Chatseek = {
     ]);
     if (msgFp === state.lastMsgFp) {
       Chatseek.noteSyncStored(conversation.id, msgs.length);
-      return ok;
+      const restored = await restorePending();
+      return ok && restored;
     }
 
     if (!inSidebar) {
@@ -1177,6 +1207,13 @@ const Chatseek = {
       if (await Chatseek.sendConversations(platform, combined)) state.lastListFp = listFp;
       else ok = false;
     }
+    // A new tail on a page we already checked for a banner is the only
+    // capture-side restore. Opening the page, a sync visit, or a sidebar
+    // row does not reach this branch.
+    if (observed && canRestore()) state.pendingRestoreId = conversation.id;
+    // Retain the observed evidence if the restore write fails, but always
+    // recheck the page before retrying even when the messages are unchanged.
+    if (!await restorePending()) ok = false;
     return ok;
   },
 
@@ -1184,16 +1221,90 @@ const Chatseek = {
    * Explicit archive evidence only. Disappearing from a sidebar is not a signal.
    * ChatGPT: a dialog/region titled like "Archived chats" (localized), or a short
    * banner / Unarchive control on the open /c/ page outside the transcript,
-   * nav, and menus. Claude chats, Grok, and Gemini have no such surface, so
-   * they return supported:false and the caller must not change archived.
+   * nav, and menus. The same checks run in same-origin iframes and shadow
+   * roots. Claude chats, Grok, and Gemini have no such surface, so they return
+   * supported:false and the caller must not change archived.
+   *
+   * opts.closed false skips chrome.dom closed-shadow probes. Capture checks
+   * closed roots too: a light-DOM message does not locate the archive banner.
    */
-  readArchiveSignals(doc, _loc, platform) {
-    const empty = { supported: false, archiveRoot: null, banner: false, composer: false };
+  readArchiveSignals(doc, _loc, platform, opts) {
+    const empty = {
+      supported: false,
+      archiveRoot: null,
+      archiveRoots: [],
+      banner: false,
+      composer: false,
+      bannerHits: 0,
+      listHits: 0,
+    };
     if (platform !== "chatgpt" || !doc?.querySelectorAll) return empty;
-    const archiveRoot = Chatseek._archiveListRoot(doc);
-    const banner = Chatseek._archiveBanner(doc, archiveRoot);
-    const composer = !banner && Chatseek._hasComposer(doc, archiveRoot);
-    return { supported: true, archiveRoot, banner, composer };
+    const scopes = [doc];
+    for (const node of Chatseek.archiveScopes(doc, opts)) scopes.push(node);
+    const archiveRoots = [];
+    let bannerHits = 0;
+    let composer = false;
+    const seenRoots = new Set();
+    for (const scope of scopes) {
+      const root = Chatseek._archiveListRoot(scope);
+      if (root && !seenRoots.has(root)) {
+        seenRoots.add(root);
+        archiveRoots.push(root);
+      }
+      bannerHits += Chatseek._archiveBannerHits(scope, root);
+      if (!composer && Chatseek._hasComposer(scope, root)) composer = true;
+    }
+    const listIds = new Set();
+    for (const root of archiveRoots) {
+      for (const id of Chatseek._archiveListIds(root)) listIds.add(id);
+    }
+    bannerHits = Math.max(0, Math.min(40, bannerHits));
+    return {
+      supported: true,
+      archiveRoot: archiveRoots[0] || null,
+      archiveRoots,
+      banner: bannerHits > 0,
+      composer,
+      bannerHits,
+      listHits: listIds.size,
+    };
+  },
+
+  /**
+   * Same-origin documents the archive scan can read. Open shadow roots and
+   * iframes are always included. Closed roots are probed only when opts.closed
+   * is not false, and only through chrome.dom (no extra permission).
+   */
+  archiveScopes(doc, opts) {
+    const out = [];
+    const seen = new Set([doc]);
+    if (!doc) return out;
+    const closed = opts?.closed !== false;
+    const pending = [doc];
+    const add = (node) => {
+      if (!node || seen.has(node) || out.length >= 40) return;
+      seen.add(node);
+      out.push(node);
+      pending.push(node);
+    };
+    while (pending.length) {
+      const root = pending.shift();
+      // shadowHosts already visits nested shadows; queued shadow scopes only
+      // need their iframe scan, rather than probing the same hosts again.
+      if (root.nodeType !== 11) {
+        for (const entry of Chatseek.shadowHosts(root, { closed })) {
+          add(entry?.root);
+        }
+      }
+      let frames = [];
+      try { frames = root.querySelectorAll ? [...root.querySelectorAll("iframe")] : []; } catch { frames = []; }
+      for (const frame of frames) {
+        let child = null;
+        try { child = frame.contentDocument; } catch { child = null; }
+        add(child);
+      }
+    }
+    return out;
   },
 
   _normText(value) {
@@ -1202,11 +1313,38 @@ const Chatseek = {
 
   _TRANSCRIPT_SELECTOR:
     "[data-message-author-role], [data-turn], [data-message-id], article, " +
+    "[data-turn-id], [data-turn-id-container], [data-message-content], " +
+    "[class*='conversation-turn'], .markdown, .prose, " +
     "[data-testid*='conversation-turn'], [data-testid='user-message'], " +
     "[data-testid='human-message'], [data-testid='assistant-message'], [data-testid='ai-message']",
 
+  // closest() alone stops at a shadow boundary or an iframe document.
+  _archiveClosest(el, selector) {
+    let node = el;
+    const seen = new Set();
+    while (node && !seen.has(node)) {
+      seen.add(node);
+      const hit = node.closest?.(selector);
+      if (hit) return hit;
+      try {
+        node = node.getRootNode?.()?.host || node.ownerDocument?.defaultView?.frameElement;
+      } catch { node = null; }
+    }
+    return null;
+  },
+
   _inTranscript(el) {
-    return !!el?.closest?.(Chatseek._TRANSCRIPT_SELECTOR);
+    if (Chatseek._archiveClosest(el, Chatseek._TRANSCRIPT_SELECTOR)) return true;
+    // Density fallback turns can have only a speaker heading and prose.
+    let node = el;
+    while (node?.nodeType === 1) {
+      if (node.matches("div, section")) {
+        const heading = [...node.children].find((child) => child.matches("h1, h2, h3, h4, h5, h6"));
+        if (heading && /^(you|user|chatgpt|assistant)$/i.test(Chatseek._normText(heading.textContent))) return true;
+      }
+      node = node.parentElement || node.getRootNode?.()?.host;
+    }
+    return false;
   },
 
   /**
@@ -1226,17 +1364,23 @@ const Chatseek = {
     const text = Chatseek._normText(value).toLowerCase();
     if (!text || text.length > 80) return false;
     const phrases = [
+      "view archived chats",
       "archived chats",
       "archived conversations",
+      "archived",
       "已封存的聊天",
       "已封存聊天",
+      "已封存",
       "已封存的對話",
       "已封存對話",
       "封存的聊天",
       "已归档的聊天",
       "已归档聊天",
+      "已归档",
       "已歸檔的聊天",
       "已歸檔聊天",
+      "已歸檔對話",
+      "已歸檔",
       "归档的聊天",
       "アーカイブしたチャット",
       "アーカイブ済みチャット",
@@ -1261,30 +1405,80 @@ const Chatseek = {
   },
 
   _archiveListRoot(doc) {
-    const marked = doc.querySelector(
-      "[data-testid='archived-chats'], [data-testid='archived-conversations']",
-    );
-    if (marked && !Chatseek._inTranscript(marked)) return marked;
-    const regions = doc.querySelectorAll("[role='dialog'], [role='region']");
+    let marked = null;
+    try {
+      marked = doc.querySelector(
+        "[data-testid='archived-chats'], [data-testid='archived-conversations'], [data-testid*='archived-chat' i]",
+      );
+    } catch {
+      marked = null;
+    }
+    if (marked && !Chatseek._inTranscript(marked) && !marked.querySelector(Chatseek._TRANSCRIPT_SELECTOR)) {
+      return marked;
+    }
+    const regions = doc.querySelectorAll("[role='dialog'], [role='region'], [role='alertdialog'], [aria-modal='true']");
     for (const el of regions) {
       if (Chatseek._inTranscript(el) || el.querySelector(Chatseek._TRANSCRIPT_SELECTOR)) continue;
+      if (el.querySelector("nav, [role='navigation']")) continue;
       const label = el.getAttribute("aria-label") || "";
       if (Chatseek._matchesArchiveHeading(label)) return el;
-      const heading = el.querySelector("h1, h2, h3, h4, [role='heading']");
-      if (heading && Chatseek._matchesArchiveHeading(heading.textContent || "")) return el;
+      const headings = el.querySelectorAll("h1, h2, h3, h4, [role='heading']");
+      for (const heading of headings) {
+        if (!Chatseek._matchesArchiveHeading(heading.textContent || "")) continue;
+        const section = heading.closest("section, [role='region'], [role='group']");
+        if (
+          section &&
+          section !== el &&
+          el.contains(section) &&
+          !Chatseek._inTranscript(section) &&
+          !section.querySelector(Chatseek._TRANSCRIPT_SELECTOR) &&
+          !section.querySelector("nav, [role='navigation']")
+        ) {
+          return section;
+        }
+        return el;
+      }
+    }
+    // A heading that is not the dialog's first title (Settings → Archived chats).
+    const headings = doc.querySelectorAll("h1, h2, h3, h4, [role='heading']");
+    for (const heading of headings) {
+      if (Chatseek._inTranscript(heading) || heading.closest("nav, [role='navigation'], [role='menu']")) continue;
+      if (!Chatseek._matchesArchiveHeading(heading.textContent || "")) continue;
+      const section = heading.closest("section, [role='dialog'], [role='region'], [role='alertdialog'], [aria-modal='true']");
+      if (!section || Chatseek._inTranscript(section) || section.querySelector(Chatseek._TRANSCRIPT_SELECTOR)) continue;
+      if (section.querySelector("nav, [role='navigation']")) continue;
+      return section;
     }
     return null;
+  },
+
+  _archiveListIds(root) {
+    const ids = [];
+    if (!root?.querySelectorAll) return ids;
+    let anchors = [];
+    try { anchors = root.querySelectorAll('a[href*="/c/"]'); } catch { anchors = []; }
+    const seen = new Set();
+    anchors.forEach((a) => {
+      const id = Chatseek.conversationIdFromPath(a.getAttribute("href") || a.href);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    });
+    return ids;
   },
 
   _inArchiveChrome(el, archiveRoot) {
     if (!el || el.nodeType !== 1) return true;
     if (archiveRoot && archiveRoot.contains(el)) return true;
-    if (el.closest(
-      "nav, [role='navigation'], [role='menu'], [role='menuitem'], " +
-      "[role='dialog'], [role='alertdialog'], [aria-modal='true']",
-    )) return true;
+    if (Chatseek._archiveClosest(el, Chatseek._ARCHIVE_CHROME_SELECTOR + ", [hidden], [aria-hidden='true']")) return true;
     return Chatseek._inTranscript(el);
   },
+
+  _ARCHIVE_CHROME_SELECTOR:
+    "nav, aside, #history, [role='navigation'], [role='menu'], [role='menuitem'], " +
+    "[role='dialog'], [role='alertdialog'], [aria-modal='true']",
+
+  _ARCHIVE_EDITOR_SELECTOR: "form, textarea, input, [contenteditable='true']",
 
   /**
    * An archived ChatGPT thread shows the banner where the composer would be.
@@ -1308,22 +1502,34 @@ const Chatseek = {
   },
 
   _archiveBanner(doc, archiveRoot) {
+    return Chatseek._archiveBannerHits(doc, archiveRoot) > 0;
+  },
+
+  _archiveBannerHits(doc, archiveRoot) {
     const phrases = [
       "this conversation is archived",
       "this chat is archived",
       "this conversation has been archived",
       "this chat has been archived",
+      "conversation is archived",
+      "chat is archived",
       "此對話已封存",
       "此对话已归档",
       "此對話已歸檔",
       "此聊天已封存",
       "此聊天已归档",
+      "此聊天已歸檔",
       "本對話已封存",
       "本对话已归档",
-      "この会話はアーカイブ",
-      "このチャットはアーカイブ",
-      "이 대화는 보관",
-      "이 채팅은 보관",
+      "對話已封存",
+      "对话已归档",
+      "對話已歸檔",
+      "この会話はアーカイブされています",
+      "この会話はアーカイブされました",
+      "このチャットはアーカイブされています",
+      "このチャットはアーカイブされました",
+      "이 대화는 보관되었습니다",
+      "이 채팅은 보관되었습니다",
       "esta conversación está archivada",
       "este chat está archivado",
       "cette conversation est archivée",
@@ -1332,15 +1538,35 @@ const Chatseek = {
       "dieser chat ist archiviert",
       "esta conversa está arquivada",
     ];
+    const whole = new Set([
+      "archived",
+      "已封存",
+      "已归档",
+      "已歸檔",
+      "アーカイブ済み",
+      "보관됨",
+      "archivada",
+      "archivado",
+      "archivée",
+      "archiviert",
+      "arquivada",
+      "arquivado",
+    ]);
     const unarchive = new Set([
       "unarchive",
       "unarchive chat",
       "unarchive conversation",
+      "unarchive this chat",
+      "unarchive this conversation",
       "取消封存",
       "解除封存",
       "取消归档",
       "解除归档",
+      "取消歸檔",
       "取消封存聊天",
+      "取消封存對話",
+      "解除封存對話",
+      "取消归档对话",
       "アーカイブ解除",
       "アーカイブを解除",
       "보관 해제",
@@ -1353,25 +1579,37 @@ const Chatseek = {
     ]);
     let nodes = [];
     try {
-      nodes = doc.querySelectorAll(
-        "[role='status'], [role='note'], [data-testid*='archive' i], [data-testid*='banner' i], button, a",
-      );
+      // Selectors from 1.4.0, plus plain blocks so a banner without
+      // role/testid still counts. The text has to match; we never click.
+      nodes = [...doc.querySelectorAll(
+        "[role='status'], [role='note'], [role='alert'], [role='button'], [data-testid*='archive' i], [data-testid*='banner' i], button, a, p, h1, h2, h3, h4, span, div, section",
+      )];
     } catch {
       nodes = [];
     }
+    const matched = [];
     for (const el of nodes) {
+      if (matched.length >= 40) break;
       if (Chatseek._inArchiveChrome(el, archiveRoot)) continue;
+      if (Chatseek._archiveClosest(el, Chatseek._ARCHIVE_EDITOR_SELECTOR)) continue;
+      // Do not match a page wrapper using text aggregated from messages,
+      // sidebar titles, editors or dialogs. Sibling banner blocks still match.
+      if (el.querySelector(Chatseek._TRANSCRIPT_SELECTOR + ", " + Chatseek._ARCHIVE_CHROME_SELECTOR + ", " + Chatseek._ARCHIVE_EDITOR_SELECTOR)) continue;
+      // Decorative aria-hidden SVG icons have no text and must not suppress
+      // an otherwise valid banner or Unarchive control.
+      if ([...el.querySelectorAll("[hidden], [aria-hidden='true']")].some((node) => Chatseek._normText(node.textContent))) continue;
       const raw = Chatseek._normText(el.innerText || el.textContent || "");
       if (!raw || raw.length > 320) continue;
       const lower = raw.toLowerCase();
-      if (phrases.some((phrase) => lower.includes(phrase))) return true;
+      const wholeKey = lower.replace(/[.。!！]+$/g, "");
+      const phraseHit = phrases.some((phrase) => wholeKey === phrase ||
+        (lower.startsWith(phrase) && /^[.。!！]/.test(lower.slice(phrase.length)))) || whole.has(wholeKey);
       const tag = (el.tagName || "").toUpperCase();
       const role = (el.getAttribute("role") || "").toLowerCase();
-      if ((tag === "BUTTON" || tag === "A" || role === "button") && unarchive.has(lower)) {
-        return true;
-      }
+      const buttonHit = (tag === "BUTTON" || tag === "A" || role === "button") && unarchive.has(lower);
+      if (phraseHit || buttonHit) matched.push(el);
     }
-    return false;
+    return matched.filter((el) => !matched.some((other) => other !== el && el.contains(other))).length;
   },
 
   /**
@@ -2206,6 +2444,8 @@ Chatseek.diagFields = (fields) => {
     errorName: err.name || "",
     errorStack: err.stack || "",
     structure: src.structure || null,
+    archiveBanner: Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0))),
+    archiveList: Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0))),
     at: Number(src.at) || Date.now(),
   };
 };
@@ -2242,6 +2482,7 @@ Chatseek.formatDiag = (fields) => {
     `imgCache=${Number(src.imagesCached) || 0}`,
     `imgHold=${Number(src.imagesPlaceholder) || 0}`,
     imageCountLine(src),
+    `archive=banner:${Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0)))},list:${Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0)))}`,
     `health=${scrubDiag(src.healthState, 16) || "ok"}`,
     `err=${oneWord(src.errorName)}`,
     `at=${iso}`,

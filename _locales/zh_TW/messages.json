@@ -64,6 +64,9 @@
   "archivedBadge": {
     "message": "已封存"
   },
+  "restoreActive": {
+    "message": "恢復活躍"
+  },
   "remove": {
     "message": "從索引移除"
   },

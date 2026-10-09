@@ -64,6 +64,9 @@
   "archivedBadge": {
     "message": "アーカイブ済み"
   },
+  "restoreActive": {
+    "message": "元に戻す"
+  },
   "remove": {
     "message": "インデックスから外す"
   },

@@ -64,6 +64,9 @@
   "archivedBadge": {
     "message": "보관됨"
   },
+  "restoreActive": {
+    "message": "되돌리기"
+  },
   "remove": {
     "message": "색인에서 제거"
   },
