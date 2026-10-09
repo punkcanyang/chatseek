@@ -40,11 +40,13 @@ npm run test:search
 npm run test:e2e-sync
 ```
 
-`scripts/verify.mjs` 只加嚴：版本必須是 1.7.0；同步相關檔案不得有 `fetch`／XHR／`process.env`／`chrome.alarms`；正式常數必須是 20–40 秒、30 段、10 分鐘；權限仍是 `["sidePanel"]`；同步路徑不得 `tabs.query`、不得讀別的分頁網址、不得 `innerHTML`、不得 `active: true`。
+rebase 衝突只在版本號和測試腳本：`manifest.json`、`verify.mjs`、端到端橫幅改成 1.7.0；`package.json` 的 `test:search` 同時留下 `activity-test`、`image-grid-test` 和 `sync-test`；README 版本記錄補上 1.6.4 與 1.6.5。資料庫、側欄圖片頁籤、最後活動時間是自動合併，刪除對話的註解曾被接到圖片位元組計數上，已移回 `removeConversation`。
 
-`scripts/sync-test.mjs` 覆蓋網址形狀、跳過、合併佇列、3000 筆合併、啟動不導航、側欄 token 不符就暫停、關分頁即停、連續 3 段 0 則、驗證碼／登入／錯誤／限速／看不準都停且留下分頁、滿 30 段（測試把批大小縮成 2）會休息、看到訊息但還沒入庫會繼續等、等太久就停。3000 筆合併這次 17ms，上限 500ms。
+`scripts/verify.mjs` 只加嚴：版本必須是 1.7.0；同步相關檔案不得有 `fetch`／XHR／`process.env`／`chrome.alarms`；正式常數必須是 20–40 秒、30 段、10 分鐘；權限仍是 `["sidePanel"]`；同步路徑不得 `tabs.query`、不得讀別的分頁網址、不得 `innerHTML`、不得 `active: true`；四家的同步探測必須只數訊息，不得順便收集圖片。
 
-`scripts/e2e-sync.mjs` 用 Chrome for Testing（本機是 155.0.8059.39），`--load-extension`，`--host-resolver-rules` 把 `chatgpt.com:443` 指到本機 HTTPS fixture。間隔用環境變數縮短，正式常數不動。覆蓋：
+`scripts/sync-test.mjs` 覆蓋網址形狀、跳過、合併佇列、3000 筆合併、啟動不導航、側欄 token 不符就暫停、關分頁即停、連續 3 段 0 則、驗證碼／登入／錯誤／限速／看不準都停且留下分頁、滿 30 段（測試把批大小縮成 2）會休息、看到訊息但還沒入庫會繼續等、等太久就停。3000 筆合併這次 16ms，上限 500ms。
+
+`scripts/e2e-sync.mjs` 用 Chrome for Testing（這次複審是 148.0.7778.96），`--load-extension`，`--host-resolver-rules` 把 `chatgpt.com:443` 指到本機 HTTPS fixture。間隔用環境變數縮短，正式常數不動。覆蓋：
 
 - 正常同步：兩段都寫進 IndexedDB，使用者那一頁的網址不變
 - 側欄時間較舊的已收錄對話不打開
@@ -54,7 +56,7 @@ npm run test:e2e-sync
 - 連續 3 段 0 則停，第 4 段不打開
 - 同步分頁 `active === false`，文件沒有焦點
 
-閱讀頁 3000 則這次 8ms，上限 1500ms（`npm run test:search` 裡的 `reader-test`）。沒有退步。
+閱讀頁 3000 則這次 `reader-test` 10ms，上限 1500ms。和 `f54a740` 的 Chrome 計時：閱讀頁掛上 45ms 對 42ms；側欄 3000 則清單開啟 113ms 對 108ms，捲動 p95 都是 1ms；500 張縮圖開啟 34ms 對 29ms，捲動 p95 都是 1.7ms。差距在同一輪起伏裡。
 
 ## 截圖
 
