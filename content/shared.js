@@ -3521,3 +3521,201 @@ try {
 } catch {
   // Capture still runs when messaging is unavailable.
 }
+
+/* ---------------------------------------------------------------- page skeleton
+ * Diagnostic only. Reads the live DOM (top document, open/closed shadow roots,
+ * same-origin iframes) and returns a structure-only outline the owner can paste
+ * back when a selector stops matching. It never emits text, titles, urls,
+ * conversation ids, or account data: every node is reduced to its tag name,
+ * depth, child count and attribute names, and — only for a handful of short
+ * enumerated attributes — a value that is itself a plain enum. Everything else
+ * is `x`. Text nodes carry a character count, never their content.
+ */
+const SKELETON_NODES = 6000;
+const SKELETON_DEPTH = 60;
+
+function skeletonIndent(depth) {
+  return "  ".repeat(Math.max(0, Math.min(depth, SKELETON_DEPTH)));
+}
+
+// A value survives only when it is a short, plain enum. Anything that could be
+// an opaque token — a uuid, a long hex/base-ish run, a sentence — is dropped.
+function skeletonEnum(value) {
+  if (typeof value !== "string" || value === "") return null;
+  if (value.length > 32) return null;
+  if (!/^[A-Za-z0-9_:-]+$/.test(value)) return null;
+  if (Chatseek.UUID.test(value)) return null;
+  if (/^[0-9a-f]{16,}$/i.test(value)) return null;
+  if (/^[A-Za-z0-9_:-]{24,}$/.test(value)) return null;
+  return value;
+}
+
+// null means "this name always hides its value" (id-like, url-like, prose-like).
+function skeletonAttrValue(name, value) {
+  const key = String(name || "").toLowerCase();
+  if (
+    key === "id" || key === "value" || key === "name" || key === "content" ||
+    key === "srcdoc" || key === "style" || key === "title" || key === "alt" ||
+    key === "placeholder" || key === "href" || key === "src" ||
+    key === "aria-label" || key === "class" || /^on/.test(key) ||
+    /-id$/.test(key)
+  ) return null;
+  const en = skeletonEnum(value);
+  return en == null ? "x" : en;
+}
+
+// Keep up to three class tokens, each reduced to its prefix (before the first
+// -/_ or 20 chars); a hash-looking token becomes `h`.
+function skeletonClasses(value) {
+  const tokens = String(value || "").split(/\s+/).filter(Boolean).slice(0, 3);
+  const out = tokens.map((token) => {
+    let s = token;
+    const cut = s.search(/[-_]/);
+    if (cut > 0) s = s.slice(0, cut);
+    if (s.length > 20) s = s.slice(0, 20);
+    if (!s) return "x";
+    if (/[0-9a-f]{10,}/i.test(s) || /^\d{5,}$/.test(s)) return "h";
+    return s;
+  });
+  return out.join(".");
+}
+
+function skeletonAttrs(node) {
+  let attrs = [];
+  try { attrs = node.attributes ? [...node.attributes] : []; } catch { attrs = []; }
+  return attrs;
+}
+
+function skeletonElementLine(node, depth, childCount, note) {
+  const tag = String(node.tagName || "").toLowerCase() || "?";
+  let line = `${skeletonIndent(depth)}${tag} d${depth} c${childCount}`;
+  for (const attr of skeletonAttrs(node)) {
+    const name = String(attr.name || "").toLowerCase();
+    if (!name) continue;
+    if (name === "class") { line += ` class=${skeletonClasses(attr.value)}`; continue; }
+    const shown = skeletonAttrValue(name, attr.value);
+    line += ` ${name}=${shown == null ? "x" : shown}`;
+  }
+  return line + (note || "");
+}
+
+// Shallow signature: two consecutive siblings with the same signature collapse
+// to one line with "×N". Structure, not content, decides sameness.
+function skeletonSignature(node) {
+  if (!node) return null;
+  if (node.nodeType === 3) return `#text(${String(node.nodeValue || "").length})`;
+  if (node.nodeType !== 1) return null;
+  const tag = String(node.tagName || "").toLowerCase();
+  let sig = tag;
+  for (const attr of skeletonAttrs(node)) {
+    const name = String(attr.name || "").toLowerCase();
+    if (!name) continue;
+    if (name === "class") { sig += ` class=${skeletonClasses(attr.value)}`; continue; }
+    const shown = skeletonAttrValue(name, attr.value);
+    sig += ` ${name}=${shown == null ? "x" : shown}`;
+  }
+  let kids = 0;
+  let text = 0;
+  try {
+    kids = node.childNodes ? node.childNodes.length : 0;
+    for (const child of (node.childNodes || [])) {
+      if (child.nodeType === 3) text += String(child.nodeValue || "").length;
+    }
+  } catch { /* unreadable frame */ }
+  return `${sig}|${kids}|${text}`;
+}
+
+// Children to descend into: an open/closed shadow root replaces the light DOM
+// (like the extractor), a same-origin iframe exposes its document element, and a
+// cross-origin frame exposes only its host.
+function skeletonChildren(node) {
+  const tag = String(node.tagName || "").toLowerCase();
+  if (tag === "iframe" || tag === "frame") {
+    let doc = null;
+    try { doc = node.contentDocument; } catch { doc = null; }
+    if (doc && doc.documentElement) {
+      return { children: [doc.documentElement], note: " #same-origin-frame" };
+    }
+    let host = "";
+    try {
+      const src = node.getAttribute ? node.getAttribute("src") : "";
+      if (src) host = String(new URL(src, "https://x.invalid/").hostname || "");
+    } catch { host = ""; }
+    return { children: [], note: host ? ` #cross-origin host=${host}` : " #cross-origin" };
+  }
+  const adopted = adoptedRoot(node, true);
+  if (adopted) {
+    let kids = [];
+    try { kids = adopted.root?.childNodes ? [...adopted.root.childNodes] : []; } catch { kids = []; }
+    return { children: kids, note: adopted.mode === "open" ? "" : " #shadow" };
+  }
+  let kids = [];
+  try { kids = node.childNodes ? [...node.childNodes] : []; } catch { kids = []; }
+  return { children: kids, note: "" };
+}
+
+function skeletonGroups(nodes) {
+  const groups = [];
+  let i = 0;
+  while (i < nodes.length) {
+    const sig = skeletonSignature(nodes[i]);
+    if (sig == null) { groups.push({ node: nodes[i], count: 1 }); i += 1; continue; }
+    let j = i + 1;
+    while (j < nodes.length && skeletonSignature(nodes[j]) === sig) j += 1;
+    groups.push({ node: nodes[i], count: j - i });
+    i = j;
+  }
+  return groups;
+}
+
+function skeletonEmit(node, depth, lines, state, count) {
+  if (!node || state.nodes >= SKELETON_NODES) { state.truncated = true; return; }
+  if (node.nodeType === 3) {
+    state.nodes += 1;
+    const len = String(node.nodeValue || "").length;
+    lines.push(`${skeletonIndent(depth)}#text(${len})${count > 1 ? ` ×${count}` : ""}`);
+    return;
+  }
+  if (node.nodeType !== 1) return;
+  if (depth > SKELETON_DEPTH) { state.truncated = true; return; }
+  state.nodes += 1;
+  const { children, note } = skeletonChildren(node);
+  const times = count > 1 ? ` ×${count}` : "";
+  lines.push(skeletonElementLine(node, depth, children.length, note) + times);
+  if (count > 1) return; // isomorphic siblings share one outline
+  for (const group of skeletonGroups(children)) {
+    skeletonEmit(group.node, depth + 1, lines, state, group.count);
+  }
+}
+
+Chatseek.buildPageSkeleton = (doc) => {
+  const target = doc || (typeof document !== "undefined" ? document : null);
+  const state = { nodes: 0, truncated: false };
+  const body = [];
+  if (target && target.documentElement) skeletonEmit(target.documentElement, 0, body, state, 1);
+  const head = `# chatseek page skeleton v1 nodes=${state.nodes} depth<=${SKELETON_DEPTH} truncated=${state.truncated ? "true" : "false"}`;
+  const text = [head, ...body].join("\n");
+  return { text, chars: text.length, nodes: state.nodes, truncated: state.truncated };
+};
+
+try {
+  if (
+    syncTopFrame() &&
+    typeof chrome !== "undefined" &&
+    chrome.runtime?.onMessage?.addListener &&
+    !globalThis.__chatseekSkeleton
+  ) {
+    globalThis.__chatseekSkeleton = true;
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!msg || msg.type !== "COPY_PAGE_SKELETON") return;
+      try {
+        const result = Chatseek.buildPageSkeleton(document);
+        sendResponse({ ok: true, text: result.text, chars: result.chars, nodes: result.nodes, truncated: result.truncated });
+      } catch {
+        try { sendResponse({ ok: false, text: "", chars: 0 }); } catch { /* channel closed */ }
+      }
+    });
+  }
+} catch {
+  // The panel shows the manual-copy fallback when the channel is closed.
+}

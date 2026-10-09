@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "Noch keine Diagnose. Öffne ein Gespräch und lade die Seite neu."
   },
+  "copyStructure": {
+    "message": "Seitenstruktur kopieren"
+  },
+  "copyStructureDone": {
+    "message": "Seitenstruktur kopiert ($ARG1$ Zeichen)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "Die Zwischenablage ist nicht beschreibbar. Text unten markieren und kopieren."
+  },
+  "copyStructureEmpty": {
+    "message": "Noch keine Seitenstruktur. Öffne ein Gespräch und lade die Seite neu."
+  },
+  "copyStructureUnavailable": {
+    "message": "Kein ChatGPT-Tab gefunden, die Seitenstruktur ist nicht verfügbar."
+  },
   "injectMissing": {
     "message": "Dieser Tab hat Chatseek nicht geladen. Lade den Tab neu und prüfe, ob die Erweiterung auf diese Website zugreifen darf."
   },

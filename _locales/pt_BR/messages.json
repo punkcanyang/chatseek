@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "Ainda não há diagnóstico. Abra uma conversa e atualize a página."
   },
+  "copyStructure": {
+    "message": "Copiar estrutura da página"
+  },
+  "copyStructureDone": {
+    "message": "Estrutura da página copiada ($ARG1$ caracteres)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "Não foi possível gravar na área de transferência. Selecione o texto abaixo."
+  },
+  "copyStructureEmpty": {
+    "message": "Ainda não há estrutura da página. Abra uma conversa e atualize a página."
+  },
+  "copyStructureUnavailable": {
+    "message": "Nenhuma aba do ChatGPT encontrada, então a estrutura da página não pôde ser lida."
+  },
   "injectMissing": {
     "message": "Esta aba não carregou o Chatseek. Atualize a aba e confirme que a extensão pode acessar este site."
   },
