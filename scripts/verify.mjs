@@ -784,11 +784,16 @@ if (!gridSrc.includes("dataUrlFromBytes") || !gridSrc.includes("function release
   fail("thumbnails stay on data URLs, and an object URL must be revoked");
 }
 if (!gridSrc.includes("visibleRange")) fail("the image grid must virtualize");
+if (!gridSrc.includes('removeAttribute("src")')) fail("leaving a thumbnail must drop its data URL");
+if (!gridSrc.includes("ResizeObserver")) fail("the image grid must refit when the panel width changes");
 if (!/startsWith\("data:image\/"\)/.test(gridSrc)) fail("a thumbnail src must be a data URL");
 if (!read("src/reader-view.js").includes("is-target") || !read("src/reader-url.js").includes('params.set("m"')) {
   fail("the reader must be able to scroll to a chosen cached image");
 }
 if (!read("src/db.js").includes("listImageCards")) fail("image cards must be listed from IndexedDB");
+if (!read("src/db.js").includes('const IMAGE_BLOB_PREFIX = "imgb:"') || !read("src/db.js").includes("delete next.blob")) {
+  fail("thumbnail bytes must be stored apart from the image list row");
+}
 for (const folder of localeFolders) {
   const messages = JSON.parse(read(`_locales/${folder}/messages.json`));
   if (!messages.tabImages?.message || !messages.imageEmpty?.message || !messages.showUncached?.message) {

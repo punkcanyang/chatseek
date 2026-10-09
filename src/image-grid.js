@@ -177,6 +177,7 @@ export function mountImageGrid(scroller, options = {}) {
   scroller.append(spacer, pool);
 
   let cards = options.cards || [];
+  let gridLocale = locale;
   let generation = 0;
   const loaded = new Map();
   const cells = new Map();
@@ -218,15 +219,36 @@ export function mountImageGrid(scroller, options = {}) {
     });
   }
 
+  function dropCell(key, cell) {
+    const img = cell.querySelector("img");
+    if (img) img.removeAttribute("src");
+    releaseKey(key);
+    cell.remove();
+    cells.delete(key);
+  }
+
   function render() {
     const { width, viewHeight, cols, gap, rowHeight } = metrics();
-    const range = visibleRange({
-      scrollTop: scroller.scrollTop || 0,
+    let scrollTop = scroller.scrollTop || 0;
+    let range = visibleRange({
+      scrollTop,
       viewHeight,
       count: cards.length,
       cols,
       rowHeight,
     });
+    const maxScroll = Math.max(0, range.total - viewHeight);
+    if (scrollTop > maxScroll) {
+      scrollTop = maxScroll;
+      scroller.scrollTop = maxScroll;
+      range = visibleRange({
+        scrollTop,
+        viewHeight,
+        count: cards.length,
+        cols,
+        rowHeight,
+      });
+    }
     spacer.style.height = `${range.total}px`;
     const seen = new Set();
     const cellW = Math.max(40, (width - gap * (cols - 1)) / cols);
@@ -235,9 +257,12 @@ export function mountImageGrid(scroller, options = {}) {
       const key = cardKey(card);
       seen.add(key);
       let cell = cells.get(key);
+      if (cell && cell.dataset.status !== String(card.status || "")) {
+        dropCell(key, cell);
+        cell = null;
+      }
       if (!cell) {
-        cell = buildCell(doc, card, locale, options);
-        cell.dataset.key = String(i);
+        cell = buildCell(doc, card, gridLocale, options);
         cells.set(key, cell);
         const img = cell.querySelector("img");
         if (img) paintThumb(img, card, generation);
@@ -252,9 +277,7 @@ export function mountImageGrid(scroller, options = {}) {
     }
     for (const [key, cell] of cells) {
       if (seen.has(key)) continue;
-      releaseKey(key);
-      cell.remove();
-      cells.delete(key);
+      dropCell(key, cell);
     }
   }
 
@@ -262,26 +285,38 @@ export function mountImageGrid(scroller, options = {}) {
     render();
   }
   scroller.addEventListener("scroll", onScroll);
+  let lastWidth = scroller.clientWidth || 0;
+  const ResizeObserverImpl = doc.defaultView?.ResizeObserver;
+  const resizeObserver = typeof ResizeObserverImpl === "function"
+    ? new ResizeObserverImpl(() => {
+      const width = scroller.clientWidth || 0;
+      if (width === lastWidth) return;
+      lastWidth = width;
+      render();
+    })
+    : null;
+  resizeObserver?.observe(scroller);
   render();
 
   return {
     count: () => cards.length,
     mounted: () => pool.children.length,
-    setCards(next) {
-      generation += 1;
-      for (const key of [...loaded.keys()]) releaseKey(key);
-      for (const cell of cells.values()) cell.remove();
-      cells.clear();
+    setCards(next, opts = {}) {
+      const nextLocale = opts.locale || gridLocale;
+      if (nextLocale !== gridLocale) {
+        gridLocale = nextLocale;
+        generation += 1;
+        for (const [key, cell] of [...cells]) dropCell(key, cell);
+      }
       cards = next || [];
-      scroller.scrollTop = 0;
       render();
     },
     redraw: render,
     destroy() {
       generation += 1;
       scroller.removeEventListener("scroll", onScroll);
-      for (const key of [...loaded.keys()]) releaseKey(key);
-      cells.clear();
+      resizeObserver?.disconnect();
+      for (const [key, cell] of [...cells]) dropCell(key, cell);
       scroller.replaceChildren();
     },
   };

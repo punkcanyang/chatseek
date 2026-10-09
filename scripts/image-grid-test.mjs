@@ -1,6 +1,15 @@
 import "fake-indexeddb/auto";
 import { JSDOM } from "jsdom";
-import { clearImageCache, listImageCards, saveImageRecords, upsertMessages } from "../src/db.js";
+import {
+  clearImageCache,
+  listImageCards,
+  openDb,
+  readImageBytes,
+  saveImageRecords,
+  searchConversations,
+  upsertConversations,
+  upsertMessages,
+} from "../src/db.js";
 import {
   filterImageCards,
   gridLayout,
@@ -116,6 +125,11 @@ scroller.querySelector(".shot-open").click();
 assert(opened.length === 1 && opened[0].messageId.startsWith("chatgpt:many:"), "open passes the card, not an image address");
 scroller.querySelector(".shot-site").click();
 assert(sites.length === 1 && sites[0] === "https://chatgpt.com/c/many", `site icon ${sites[0]}`);
+const decoded = loads.length;
+view.setCards(many);
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert(scroller.scrollTop === 5000, `refresh keeps the scroll position ${scroller.scrollTop}`);
+assert(loads.length === decoded, `refresh decoded the same thumbs again (${loads.length - decoded})`);
 view.destroy();
 assert(scroller.children.length === 0, "destroy drops the grid");
 
@@ -159,5 +173,47 @@ assert(listed.length === 0, "clearing the cache removes thumbs from the default 
 const holes = filterImageCards(await listImageCards(), { showUncached: true });
 assert(holes.filter((row) => row.status === "cleared").length === 2, "cached rows become cleared placeholders");
 assert(holes.some((row) => row.status === "uncached"), "an existing placeholder stays");
+assert((await readImageBytes("chatgpt:old:a", 0)) == null, "clearing drops the bitmap, not only the list card");
+
+await upsertConversations([{ ...conv, archived: true, archiveSource: "chatgpt:banner" }]);
+await saveImageRecords(conv.id, [
+  { messageId: "chatgpt:old:a", index: 0, status: "cached", mime: "image/webp", width: 4, height: 4, offset: 1, bytes: [1, 2, 3, 4], alt: "still" },
+]);
+const active = await searchConversations({ query: "", scope: "active" });
+assert(!active.some((row) => row.id === conv.id), "the chat is archived");
+const archivedThumbs = filterImageCards(await listImageCards(), {});
+assert(archivedThumbs.some((row) => row.messageId === "chatgpt:old:a" && row.status === "cached"), "an archived chat still shows its cached thumb");
+
+const legacyDb = await openDb();
+const legacyTx = legacyDb.transaction(["images", "meta"], "readwrite");
+legacyTx.objectStore("meta").delete("imgb:chatgpt:old:a\u00010");
+legacyTx.objectStore("meta").delete("imgb:split");
+legacyTx.objectStore("images").put({
+  messageId: "chatgpt:old:a",
+  index: 0,
+  conversationId: "chatgpt:old",
+  status: "cached",
+  bytes: 4,
+  mime: "image/webp",
+  width: 4,
+  height: 4,
+  alt: "inline",
+  offset: 1,
+  blob: new Uint8Array([4, 3, 2, 1]).buffer,
+});
+await new Promise((resolve, reject) => {
+  legacyTx.oncomplete = () => resolve();
+  legacyTx.onerror = () => reject(legacyTx.error);
+});
+await listImageCards();
+const storedReq = legacyDb.transaction("images").objectStore("images").get(["chatgpt:old:a", 0]);
+const stored = await new Promise((resolve, reject) => {
+  storedReq.onsuccess = () => resolve(storedReq.result);
+  storedReq.onerror = () => reject(storedReq.error);
+});
+assert(stored && !("blob" in stored), "a legacy inline bitmap is detached from the list row");
+const detached = await readImageBytes("chatgpt:old:a", 0);
+const detachedBytes = new Uint8Array(detached?.blob || []);
+assert(detachedBytes.length === 4 && detachedBytes[0] === 4 && detachedBytes[3] === 1, "detached bytes still open for a visible thumb");
 
 console.log("image-grid-test ok");

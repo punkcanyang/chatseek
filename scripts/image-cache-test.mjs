@@ -174,6 +174,9 @@ assert(rows.every((row) => !row.url && !row.src), "stored rows have no image URL
 assert(rows.some((row) => row.status === "uncached" && row.alt === "清水寺" && row.prompt === "畫一座清水寺"), "uncached keeps prompt and alt");
 const cached = rows.find((row) => row.status === "cached");
 assert(cached && cached.bytes === tiny.byteLength && !cached.url, "cached row is the small bitmap");
+const rawImage = await requestDone(handle.transaction("images").objectStore("images").get([msgId, 1]));
+assert(rawImage && rawImage.status === "cached" && !("blob" in rawImage), "the list record keeps no bitmap");
+assert(cached.blob && cached.blob.byteLength === tiny.byteLength, "the reader still receives the bitmap");
 const url = dataUrlFromBytes(cached.blob, cached.mime);
 assert(url.startsWith("data:image/webp;base64,"), url.slice(0, 40));
 assert(formatByteSize(0) === "0 B" && formatByteSize(1536) === "1.5 KB", formatByteSize(1536));
@@ -790,7 +793,7 @@ assert(!(await db.listRecent()).some((row) => row.id === buriedId), "a tombstone
 
 const origPut = IDBObjectStore.prototype.put;
 IDBObjectStore.prototype.put = function put(value, key) {
-  if (value && value.status === "cached" && value.blob) {
+  if (value && value.blob) {
     const err = new DOMException("The quota has been exceeded.", "QuotaExceededError");
     throw err;
   }

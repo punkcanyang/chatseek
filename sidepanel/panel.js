@@ -650,9 +650,12 @@ function showImagePane(on) {
   if (searchWrap) searchWrap.hidden = on;
   if (searchLabel) searchLabel.hidden = on;
   if (on && statusEl) statusEl.hidden = true;
-  if (!on && imageView) {
-    imageView.destroy();
-    imageView = null;
+  if (!on) {
+    imageSeq += 1;
+    if (imageView) {
+      imageView.destroy();
+      imageView = null;
+    }
   }
 }
 
@@ -686,7 +689,7 @@ async function refreshImagePane() {
     }
     return;
   }
-  if (seq !== imageSeq) return;
+  if (seq !== imageSeq || scope !== "images") return;
   const cards = filterImageCards(rows, { platform: imagePlatform, showUncached });
   if (imageEmpty) {
     const filtered = !!imagePlatform && !cards.length && rows.some((row) => row.status === "cached" && row.bytes > 0);
@@ -694,23 +697,24 @@ async function refreshImagePane() {
     imageEmpty.textContent = filtered ? t.imageFilterEmpty : t.imageEmpty;
   }
   if (!imageGrid) return;
+  if (seq !== imageSeq || scope !== "images") return;
   if (imageView) {
-    imageView.destroy();
-    imageView = null;
+    imageView.setCards(cards, { locale: localeCode });
+  } else {
+    imageView = mountImageGrid(imageGrid, {
+      cards,
+      locale: localeCode,
+      width: imageGrid.clientWidth || 292,
+      viewHeight: imageGrid.clientHeight || 480,
+      loadThumb,
+      onOpenReader: (card) => openReader(
+        { id: card.conversationId },
+        { messageId: card.messageId, index: card.index },
+        "",
+      ),
+      onOpenSite: (url) => openChat(url),
+    });
   }
-  imageView = mountImageGrid(imageGrid, {
-    cards,
-    locale: localeCode,
-    width: imageGrid.clientWidth || 292,
-    viewHeight: imageGrid.clientHeight || 480,
-    loadThumb,
-    onOpenReader: (card) => openReader(
-      { id: card.conversationId },
-      { messageId: card.messageId, index: card.index },
-      "",
-    ),
-    onOpenSite: (url) => openChat(url),
-  });
   try {
     const s = await stats();
     if (seq !== imageSeq) return;
