@@ -338,6 +338,12 @@
   "imageOversized": {
     "message": "图片未缓存（文件过大）"
   },
+  "imageTimeout": {
+    "message": "图片未缓存（转档超时）"
+  },
+  "imageNotLoaded": {
+    "message": "图片未缓存（图片尚未载完）"
+  },
   "copyDiag": {
     "message": "复制诊断"
   },

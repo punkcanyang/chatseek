@@ -338,6 +338,12 @@
   "imageOversized": {
     "message": "Image wasn’t cached (the file is too large)"
   },
+  "imageTimeout": {
+    "message": "Image wasn’t cached (conversion timed out)"
+  },
+  "imageNotLoaded": {
+    "message": "Image wasn’t cached (it hasn’t finished loading)"
+  },
   "copyDiag": {
     "message": "Copy diagnostics"
   },

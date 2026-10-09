@@ -338,6 +338,12 @@
   "imageOversized": {
     "message": "Imagen no guardada en caché (el archivo es demasiado grande)"
   },
+  "imageTimeout": {
+    "message": "Imagen no guardada en caché (se agotó el tiempo de conversión)"
+  },
+  "imageNotLoaded": {
+    "message": "Imagen no guardada en caché (aún no ha terminado de cargarse)"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

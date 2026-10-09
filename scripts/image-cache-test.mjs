@@ -74,7 +74,7 @@ assert(v3.version === 3 && !v3.objectStoreNames.contains("images"), "fixture sho
 v3.close();
 
 const db = await import("../src/db.js");
-const { normalizeImageRecord, formatByteSize, dataUrlFromBytes, IMAGE_MAX_BYTES } = await import("../src/image-cache.js");
+const { normalizeImageRecord, formatByteSize, formatCacheSize, dataUrlFromBytes, IMAGE_MAX_BYTES } = await import("../src/image-cache.js");
 const { text, CATALOG, LOCALE_ORDER } = await import("../src/i18n.js");
 const { mountReader } = await import("../src/reader-view.js");
 
@@ -155,6 +155,25 @@ assert(cached && cached.bytes === tiny.byteLength && !cached.url, "cached row is
 const url = dataUrlFromBytes(cached.blob, cached.mime);
 assert(url.startsWith("data:image/webp;base64,"), url.slice(0, 40));
 assert(formatByteSize(0) === "0 B" && formatByteSize(1536) === "1.5 KB", formatByteSize(1536));
+assert(formatCacheSize(0) === "0 KB" && formatCacheSize(1536) === "1.5 KB", formatCacheSize(0));
+const pendingRow = normalizeImageRecord(convId, {
+  messageId: msgId,
+  index: 3,
+  status: "not-loaded",
+  alt: "還沒好",
+  prompt: "等一下",
+  url: "https://cdn.example/late.png",
+});
+assert(pendingRow?.status === "not-loaded" && !pendingRow.url, "a picture that has not loaded is a placeholder without a url");
+const timed = normalizeImageRecord(convId, {
+  messageId: msgId,
+  index: 4,
+  status: "timeout",
+  alt: "太慢",
+  prompt: "轉檔",
+  src: "https://cdn.example/slow.png",
+});
+assert(timed?.status === "timeout" && !timed.src && timed.bytes === 0, "a timed-out encode keeps no bytes and no url");
 
 await db.upsertConversations([{
   id: otherId,
@@ -190,7 +209,7 @@ assert(kept.some((row) => row.id === otherId), "clear image cache keeps conversa
 const sharedSrc = readFileSync(join(root, "content/shared.js"), "utf8");
 const imagesSrc = readFileSync(join(root, "content/images.js"), "utf8");
 
-function loadApi(html, pageUrl) {
+function loadApi(html, pageUrl, chrome = { runtime: { id: "test" } }) {
   const dom = new JSDOM(html, { url: pageUrl });
   const fn = new Function(
     "document",
@@ -208,9 +227,9 @@ function loadApi(html, pageUrl) {
     dom.window.Node,
     dom.window.NodeFilter,
     { warn() {}, log() {} },
-    { runtime: { id: "test" } },
+    chrome,
   );
-  return { api, document: dom.window.document };
+  return { api, document: dom.window.document, window: dom.window };
 }
 
 function mark(img, w, h) {
@@ -296,17 +315,21 @@ assert(
 const ordered = loadApi(`
   <article id="turn" data-message-author-role="assistant">
     <button type="button"><img id="tool" alt="copy"></button>
+    <button type="button"><img id="lightbox" alt="清水寺"></button>
     <img id="first" alt="第一張">
     <img id="dup" alt="第一張">
     <img id="second" alt="第二張">
+    <img id="mid" alt="中等">
+    <img id="small" alt="小裝飾">
   </article>`, "https://chatgpt.com/c/x");
 for (const img of ordered.document.querySelectorAll("img")) {
   img.setAttribute("src", img.id === "first" || img.id === "dup" ? "blob:same" : `blob:${img.id}`);
-  mark(img, 400, 300);
+  const size = img.id === "tool" || img.id === "small" ? 16 : (img.id === "mid" ? 50 : 400);
+  mark(img, size, size);
 }
 assert(
-  readyImages(ordered.api, ordered.document.getElementById("turn"), "chatgpt", "assistant").join() === "first,second",
-  "ChatGPT keeps document order, skips the toolbar icon, and drops a duplicate source",
+  readyImages(ordered.api, ordered.document.getElementById("turn"), "chatgpt", "assistant").join() === "lightbox,first,second,mid",
+  "ChatGPT keeps a large button image and a 50px picture, skips the toolbar icon, and drops a duplicate source",
 );
 const loading = ordered.document.getElementById("first");
 Object.defineProperty(loading, "complete", { configurable: true, get: () => false });
@@ -386,6 +409,86 @@ assert(
   "Gemini reads an open shadow root and skips the logo",
 );
 
+const chatShadow = loadApi(`
+  <article id="turn" data-message-author-role="assistant">
+    <div class="markdown">京都的紅葉很晚</div>
+    <div id="host"></div>
+  </article>`, "https://chatgpt.com/c/x");
+const shadowHost = chatShadow.document.getElementById("host");
+const openRoot = shadowHost.attachShadow({ mode: "open" });
+const shadowImg = chatShadow.document.createElement("img");
+shadowImg.id = "shadowpic";
+shadowImg.alt = "舞台";
+openRoot.append(shadowImg);
+mark(shadowImg, 640, 480);
+assert(
+  readyImages(chatShadow.api, chatShadow.document.getElementById("turn"), "chatgpt", "assistant").join() === "shadowpic",
+  "ChatGPT reads an image inside an open shadow root",
+);
+
+const closedRoots = new WeakMap();
+const chatClosed = loadApi(`
+  <article id="turn" data-message-author-role="assistant">
+    <div class="markdown">京都的紅葉很晚才紅</div>
+    <div id="closed"></div>
+  </article>`, "https://chatgpt.com/c/x", {
+  runtime: { id: "test" },
+  dom: { openOrClosedShadowRoot: (el) => closedRoots.get(el) || null },
+});
+const closedHost = chatClosed.document.getElementById("closed");
+const closedRoot = closedHost.attachShadow({ mode: "closed" });
+closedRoots.set(closedHost, closedRoot);
+const closedImg = chatClosed.document.createElement("img");
+closedImg.id = "closedpic";
+closedImg.alt = "夜景";
+closedRoot.append(closedImg);
+mark(closedImg, 700, 420);
+assert(closedHost.shadowRoot == null, "the closed root is not exposed as shadowRoot");
+assert(
+  readyImages(chatClosed.api, chatClosed.document.getElementById("turn"), "chatgpt", "assistant").join() === "closedpic",
+  "ChatGPT reads an image inside a closed shadow root",
+);
+
+const framed = loadApi(`
+  <article id="turn" data-message-author-role="assistant">
+    <div class="markdown">同源頁框裡的圖也要收到</div>
+    <iframe id="frame"></iframe>
+  </article>`, "https://chatgpt.com/c/x");
+const frame = framed.document.getElementById("frame");
+const frameImg = frame.contentDocument.createElement("img");
+frameImg.id = "framepic";
+frameImg.alt = "頁框";
+frame.contentDocument.body.append(frameImg);
+mark(frameImg, 360, 240);
+assert(
+  readyImages(framed.api, framed.document.getElementById("turn"), "chatgpt", "assistant").join() === "framepic",
+  "ChatGPT reads an image in a same-origin iframe",
+);
+
+const beside = loadApi(`
+  <div id="turn"><p>這段備援文字夠長，所以圖在旁邊的區塊也要算進這一則。</p></div>
+  <div id="pic"><img id="besidepic" alt="旁邊的圖"></div>`, "https://chatgpt.com/c/x");
+mark(beside.document.getElementById("besidepic"), 500, 320);
+assert(
+  readyImages(beside.api, beside.document.getElementById("turn"), "chatgpt", "assistant").join() === "besidepic",
+  "a heuristic text block also takes the image-only sibling",
+);
+
+const pictured = loadApi(`
+  <article id="turn" data-message-author-role="assistant">
+    <picture>
+      <source srcset="https://cdn.example/a.png 1x">
+      <img id="picked" alt="選中的圖">
+    </picture>
+  </article>`, "https://chatgpt.com/c/x");
+const picked = pictured.document.getElementById("picked");
+Object.defineProperty(picked, "currentSrc", { configurable: true, get: () => "https://cdn.example/a.png" });
+mark(picked, 300, 200);
+assert(
+  readyImages(pictured.api, pictured.document.getElementById("turn"), "chatgpt", "assistant").join() === "picked",
+  "picture/srcset uses the image element the browser already selected",
+);
+
 function hooks({ taint = false, security = false, size = 80, empty = false, getImageDataError = false } = {}) {
   const bytes = new Uint8Array([7, 8, 9, 10]).buffer;
   return {
@@ -440,7 +543,7 @@ const hung = await chatgpt.api.encodeContentImage(painted, {
   blobTimeout: 40,
   toBlob() { return new Promise(() => {}); },
 });
-assert(hung.status === "uncached", "a toBlob that never calls back does not stall encoding");
+assert(hung.status === "timeout", "a toBlob that never calls back is a timeout placeholder");
 const brokenEncode = await chatgpt.api.encodeContentImage(
   { complete: false, naturalWidth: 0, naturalHeight: 0 },
   hooks(),
@@ -496,6 +599,20 @@ const view = mountReader(dom.window.document.getElementById("app"), {
       alt: "<img src=x onerror=alert(1)>",
       prompt: "<script>alert(1)</script>",
       offset: 99,
+    }, {
+      messageId: `${convId}:m3`,
+      index: 1,
+      status: "timeout",
+      alt: "轉太久",
+      prompt: "慢",
+      offset: 0,
+    }, {
+      messageId: `${convId}:m3`,
+      index: 2,
+      status: "not-loaded",
+      alt: "還沒畫完",
+      prompt: "等",
+      offset: 0,
     }]],
   ]),
   onOpenOriginal: (next) => opened.push(next),
@@ -510,6 +627,8 @@ assert(!app.querySelector("script"), "prompt and alt are not parsed as HTML");
 assert(app.textContent.includes(text("zh-TW", "imageUncached")), "site-limit placeholder uses the zh-TW sentence");
 assert(app.textContent.includes(text("zh-TW", "imageOversized")), "oversized placeholder uses the zh-TW sentence");
 assert(app.querySelector("[data-reason='site']") && app.querySelector("[data-reason='oversized']"), "the two placeholders are distinct");
+assert(app.querySelector("[data-reason='timeout']") && app.textContent.includes(text("zh-TW", "imageTimeout")), "timeout placeholder uses the zh-TW sentence");
+assert(app.querySelector("[data-reason='not-loaded']") && app.textContent.includes(text("zh-TW", "imageNotLoaded")), "not-loaded placeholder uses the zh-TW sentence");
 assert(!app.textContent.includes("https://cdn.example/secret.png"), "a cached image replaces the matching Markdown placeholder");
 assert(app.textContent.includes("https://cdn.example/other.png"), "a different Markdown image stays as text");
 assert(app.textContent.includes("maple 之前") && app.textContent.includes("maple 之後"), "text around the thumbnail stays");
@@ -525,6 +644,8 @@ app.querySelector("[data-reason='oversized'] .image-open").click();
 assert(opened.length === 3 && opened.every((item) => item === "https://chatgpt.com/c/aaaa1111-1111-4111-8111-111111111111"), `opened ${opened.join(",")}`);
 for (const code of LOCALE_ORDER) {
   assert(CATALOG[code].imageOversized && CATALOG[code].imageOversized !== CATALOG[code].imageUncached, `${code} distinguishes an oversized image`);
+  assert(CATALOG[code].imageTimeout && CATALOG[code].imageTimeout !== CATALOG[code].imageUncached, `${code} distinguishes a timeout`);
+  assert(CATALOG[code].imageNotLoaded && CATALOG[code].imageNotLoaded !== CATALOG[code].imageTimeout, `${code} distinguishes an image that is still loading`);
 }
 
 const replaced = await db.saveImageRecords(convId, [{

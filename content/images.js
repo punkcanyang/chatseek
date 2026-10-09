@@ -3,7 +3,7 @@
   const MAX_EDGE = 512;
   const MAX_BYTES = 150 * 1024;
   const QUALITIES = [0.82, 0.66, 0.48, 0.32, 0.2];
-  const MIN_EDGE = 64;
+  const MIN_EDGE = 48;
   const BLOB_TIMEOUT_MS = 1500;
   const CLAUDE_MESSAGE = [
     "[data-testid='user-message']",
@@ -15,8 +15,14 @@
 
   const queue = [];
   const done = new Map();
-  const counted = new Set();
-  const outcomes = { conversationId: "", cached: 0, placeholder: 0 };
+  const outcomes = {
+    conversationId: "",
+    detected: 0,
+    cached: 0,
+    placeholder: 0,
+    fail: { tainted: 0, tooBig: 0, timeout: 0, notLoaded: 0 },
+  };
+  const statusOf = new Map();
   const waiting = new WeakSet();
   // An <img> node belongs to the first message that claimed it.
   const ownerOf = new WeakMap();
@@ -83,8 +89,51 @@
    * and single-image, plus open shadow roots inside that message.
    * Grok: img / figure img inside the message bubble.
    */
+  function textBesideImages(el) {
+    if (!el) return "";
+    try {
+      const clone = el.cloneNode(true);
+      clone.querySelectorAll?.("img, picture, svg, canvas").forEach((node) => node.remove());
+      return String(clone.textContent || "").replace(/\s+/g, " ").trim();
+    } catch {
+      return String(el.textContent || "").replace(/\s+/g, " ").trim();
+    }
+  }
+
+  function isArtifact(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const blob = `${classText(el)} ${el.getAttribute?.("data-testid") || ""}`;
+    return /artifact/i.test(blob);
+  }
+
+  function isChromeBox(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (/^(NAV|HEADER|FOOTER|FORM|TEXTAREA|INPUT)$/.test(el.tagName || "")) return true;
+    const role = (el.getAttribute?.("role") || "").toLowerCase();
+    return role === "navigation" || role === "contentinfo";
+  }
+
+  // Image-only rows next to a heuristic text block are not part of that block.
+  function adjacentImageRoots(el, platform) {
+    if (platform === "claude" || !el) return [];
+    const out = [];
+    for (const dir of ["previousElementSibling", "nextElementSibling"]) {
+      let sib = el[dir];
+      let steps = 0;
+      while (sib && steps < 2) {
+        if (isChromeBox(sib) || isArtifact(sib)) break;
+        if (textBesideImages(sib).length >= 24) break;
+        out.push(sib);
+        sib = sib[dir];
+        steps += 1;
+      }
+    }
+    return out;
+  }
+
   function searchRoots(el, platform) {
-    if (platform !== "claude" || !el) return [el];
+    const extra = adjacentImageRoots(el, platform);
+    if (platform !== "claude" || !el) return [el, ...extra];
     const before = [];
     let sib = el.previousElementSibling;
     let steps = 0;
@@ -99,35 +148,61 @@
     return [...before, el];
   }
 
-  function pushImgs(out, root) {
+  function pushImgs(out, seen, root) {
     if (!root?.querySelectorAll) return;
     try {
-      root.querySelectorAll("img").forEach((img) => out.push(img));
+      root.querySelectorAll("img").forEach((img) => {
+        if (seen.has(img)) return;
+        seen.add(img);
+        out.push(img);
+      });
     } catch {
-      // A closed root is not readable.
+      // A root the page will not let us read stays empty.
     }
   }
 
-  function collectShadowImages(root, out, depth) {
-    if (!root?.querySelectorAll || depth > 4) return;
+  function adoptedShadow(node) {
+    if (!node || node.nodeType !== 1 || node.tagName === "IFRAME") return null;
+    if (node.shadowRoot) return node.shadowRoot;
+    try {
+      const dom = typeof chrome !== "undefined" ? chrome.dom : null;
+      return dom?.openOrClosedShadowRoot?.(node) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Light DOM, open shadow, closed shadow, and same-origin frames.
+  // Cross-origin frames have no contentDocument; they are not fetched.
+  function collectDeepImages(root, out, seenImg, seenRoot, depth) {
+    if (!root || depth > 4 || seenRoot.has(root)) return;
+    seenRoot.add(root);
+    pushImgs(out, seenImg, root);
     let nodes = [];
     try {
-      nodes = root.querySelectorAll("*");
+      nodes = root.querySelectorAll ? [...root.querySelectorAll("*")] : [];
     } catch {
-      return;
+      nodes = [];
     }
+    if (nodes.length > 800) nodes = nodes.slice(0, 800);
     for (const node of nodes) {
-      if (!node.shadowRoot || node.tagName === "IFRAME") continue;
-      pushImgs(out, node.shadowRoot);
-      collectShadowImages(node.shadowRoot, out, depth + 1);
+      if (!node || node.nodeType !== 1 || isArtifact(node)) continue;
+      if (node.tagName === "IFRAME") {
+        let doc = null;
+        try { doc = node.contentDocument; } catch { doc = null; }
+        const base = doc?.documentElement || doc?.body;
+        if (base) collectDeepImages(base, out, seenImg, seenRoot, depth + 1);
+        continue;
+      }
+      const shadow = adoptedShadow(node);
+      if (shadow) collectDeepImages(shadow, out, seenImg, seenRoot, depth + 1);
     }
   }
 
-  function listedImages(root, platform) {
+  function listedImages(root) {
     const out = [];
     if (!root || root.nodeType !== 1) return out;
-    pushImgs(out, root);
-    if (platform === "gemini") collectShadowImages(root, out, 0);
+    collectDeepImages(root, out, new Set(), new Set(), 0);
     return out;
   }
 
@@ -142,7 +217,7 @@
   function blocked(img, platform) {
     if (!img || img.tagName !== "IMG") return true;
     if (img.closest?.(
-      "iframe, nav, header, footer, button, [role='button'], [role='navigation'], svg, " +
+      "nav, header, footer, [role='navigation'], svg, " +
       "[data-testid*='artifact' i], [class*='artifact' i]",
     )) return true;
     const blob = `${classText(img)} ${classText(img.parentElement)} ${img.getAttribute?.("data-testid") || ""}`.toLowerCase();
@@ -153,8 +228,13 @@
     if (platform === "claude" && img.closest?.(
       "[data-testid='assistant-message'], [data-testid='ai-message'], .font-claude-message",
     )) return true;
-    // Not painted yet: wait. Already settled with no pixels: skip, don't wait.
-    if (!img.complete) return "later";
+    const inButton = !!img.closest?.("button, [role='button']");
+    // Not painted yet: a placeholder now, and a later scan can fill it in.
+    // A finished image with no pixels is decorative or broken, not a picture.
+    if (!img.complete) {
+      if (inButton && /avatar|profile|logo|emoji|\bicon\b|copy/.test(`${blob} ${alt}`)) return true;
+      return "later";
+    }
     if (!(img.naturalWidth > 0) || !(img.naturalHeight > 0)) return true;
     if (Math.max(img.naturalWidth, img.naturalHeight) < MIN_EDGE) return true;
     return false;
@@ -167,7 +247,7 @@
     const localSrc = new Set();
     const ready = [];
     for (const root of searchRoots(el, platform)) {
-      for (const img of listedImages(root, platform)) {
+      for (const img of listedImages(root)) {
         if (seen.has(img)) continue;
         seen.add(img);
         const why = blocked(img, platform);
@@ -292,7 +372,7 @@
         } catch {
           return { status: "uncached" };
         }
-        if (blob === BLOB_TIMEOUT) return { status: "uncached" };
+        if (blob === BLOB_TIMEOUT) return { status: "timeout" };
         if (!blob) continue;
         produced = true;
         const size = Number(blob.size ?? blob.byteLength) || 0;
@@ -343,9 +423,46 @@
   }
 
   function storedStatus(encoded) {
-    if (encoded?.status === "cached" || encoded?.status === "oversized") return encoded.status;
-    if (encoded?.status === "uncached") return "uncached";
+    if (encoded?.status === "cached" || encoded?.status === "oversized" || encoded?.status === "uncached") {
+      return encoded.status;
+    }
+    if (encoded?.status === "timeout" || encoded?.status === "not-loaded") return encoded.status;
     return "";
+  }
+
+  function failBucket(status) {
+    if (status === "uncached") return "tainted";
+    if (status === "oversized") return "tooBig";
+    if (status === "timeout") return "timeout";
+    if (status === "not-loaded") return "notLoaded";
+    return "";
+  }
+
+  function noteOutcome(conversationId, countKey, status) {
+    if (outcomes.conversationId !== conversationId) {
+      outcomes.conversationId = conversationId;
+      outcomes.detected = 0;
+      outcomes.cached = 0;
+      outcomes.placeholder = 0;
+      outcomes.fail = { tainted: 0, tooBig: 0, timeout: 0, notLoaded: 0 };
+      statusOf.clear();
+    }
+    const prev = statusOf.get(countKey) || "";
+    if (prev === status) return;
+    if (prev) {
+      outcomes.detected -= 1;
+      if (prev === "cached") outcomes.cached -= 1;
+      else outcomes.placeholder -= 1;
+      const prevBucket = failBucket(prev);
+      if (prevBucket) outcomes.fail[prevBucket] -= 1;
+    }
+    statusOf.set(countKey, status);
+    outcomes.detected += 1;
+    if (status === "cached") outcomes.cached += 1;
+    else outcomes.placeholder += 1;
+    const bucket = failBucket(status);
+    if (bucket) outcomes.fail[bucket] += 1;
+    try { Chatseek.refreshImageDiag(); } catch { /* diag must not break images */ }
   }
 
   async function processJob(job) {
@@ -358,11 +475,15 @@
     let worked = false;
     for (let index = 0; index < found.length; index += 1) {
       const item = found[index];
-      if (!item.ready) continue;
       const img = item.img;
-      const fp = `${img.naturalWidth}x${img.naturalHeight}:${clip(img.getAttribute?.("alt"), 80)}`;
       const key = `${job.messageId}:${index}`;
-      if (done.get(key) === fp) continue;
+      if (!item.ready) {
+        if (done.get(key) === "not-loaded") continue;
+        await storeImage(job, img, index, { status: "not-loaded" }, "not-loaded");
+        continue;
+      }
+      const fpBase = `${img.naturalWidth}x${img.naturalHeight}`;
+      if (String(done.get(key) || "").startsWith(`${fpBase}:`)) continue;
       if (worked) await yieldToBrowser();
       let encoded;
       try {
@@ -370,50 +491,54 @@
       } catch {
         encoded = { status: "uncached" };
       }
-      if (encoded.status === "pending") continue;
+      if (encoded.status === "pending") {
+        await storeImage(job, img, index, { status: "not-loaded" }, "not-loaded");
+        continue;
+      }
       const status = storedStatus(encoded);
       if (!status) continue;
-      if (outcomes.conversationId !== job.conversationId) {
-        outcomes.conversationId = job.conversationId;
-        outcomes.cached = 0;
-        outcomes.placeholder = 0;
-      }
-      const countKey = `${job.conversationId}:${key}`;
-      if (!counted.has(countKey)) {
-        counted.add(countKey);
-        if (status === "cached") outcomes.cached += 1;
-        else outcomes.placeholder += 1;
-        try { Chatseek.refreshImageDiag(); } catch { /* diag must not break images */ }
-      }
-      const preset = job.offsets && typeof job.offsets.get === "function" && job.offsets.has(img)
-        ? job.offsets.get(img)
-        : null;
-      const record = {
-        messageId: job.messageId,
-        index,
-        alt: clip(img.getAttribute?.("alt"), 500),
-        prompt: clip(job.prompt, 1000),
-        offset: Number.isFinite(preset) ? preset : imageTextOffset(job.el, img, job.body),
-        status,
-        mime: encoded.mime || "",
-        width: encoded.width || 0,
-        height: encoded.height || 0,
-        bytes: status === "cached" ? encoded.bytes : null,
-      };
-      let res = null;
-      try {
-        res = await Chatseek.send({
-          type: "CAPTURE_IMAGES",
-          conversationId: job.conversationId,
-          images: [record],
-        });
-      } catch {
-        res = null;
-      }
-      if (res?.ok || res?.error === "quota") done.set(key, fp);
+      await storeImage(job, img, index, encoded, `${fpBase}:${status}`);
       worked = true;
     }
     return worked;
+  }
+
+  async function storeImage(job, img, index, encoded, fp) {
+    const key = `${job.messageId}:${index}`;
+    const status = storedStatus(encoded);
+    if (!status) return;
+    const preset = job.offsets && typeof job.offsets.get === "function" && job.offsets.has(img)
+      ? job.offsets.get(img)
+      : null;
+    const record = {
+      messageId: job.messageId,
+      index,
+      alt: clip(img.getAttribute?.("alt"), 500),
+      prompt: clip(job.prompt, 1000),
+      offset: Number.isFinite(preset) ? preset : imageTextOffset(job.el, img, job.body),
+      status,
+      mime: encoded.mime || "",
+      width: encoded.width || 0,
+      height: encoded.height || 0,
+      bytes: status === "cached" ? encoded.bytes : null,
+    };
+    let res = null;
+    try {
+      res = await Chatseek.send({
+        type: "CAPTURE_IMAGES",
+        conversationId: job.conversationId,
+        images: [record],
+      });
+    } catch {
+      res = null;
+    }
+    if (res?.error === "quota") {
+      done.set(key, fp);
+      return;
+    }
+    if (!res?.ok) return;
+    done.set(key, fp);
+    noteOutcome(job.conversationId, `${job.conversationId}:${key}`, status);
   }
 
   function watchUntilPainted(job, img) {
@@ -433,6 +558,8 @@
           role: job.role,
           el: job.el,
           body: job.body,
+          offsets: job.offsets,
+          prompt: job.prompt,
         }],
       });
     };
@@ -458,7 +585,7 @@
           for (const item of found) {
             if (!item.ready) watchUntilPainted(job, item.img);
           }
-          if (found.some((item) => item.ready)) {
+          if (found.length) {
             Promise.resolve()
               .then(() => processJob(job))
               .catch(() => {})
@@ -495,7 +622,8 @@
     for (const item of items) {
       if (!item?.messageId) continue;
       if (item.role === "user" && item.body) lastUser = clip(item.body, 1000);
-      prompts.set(item.messageId, item.role === "user" ? clip(item.body, 1000) : lastUser);
+      const carried = typeof item.prompt === "string" ? clip(item.prompt, 1000) : "";
+      prompts.set(item.messageId, carried || (item.role === "user" ? clip(item.body, 1000) : lastUser));
     }
     const fresh = new Map();
     for (const item of items) {
@@ -520,8 +648,15 @@
   }
 
   Chatseek.imageDiagCounts = () => ({
+    detected: outcomes.detected,
     cached: outcomes.cached,
     placeholder: outcomes.placeholder,
+    fail: {
+      tainted: outcomes.fail.tainted,
+      tooBig: outcomes.fail.tooBig,
+      timeout: outcomes.fail.timeout,
+      notLoaded: outcomes.fail.notLoaded,
+    },
   });
   Chatseek.collectContentImages = collectContentImages;
   Chatseek.encodeContentImage = encodeContentImage;

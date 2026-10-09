@@ -116,11 +116,63 @@ await saveImageRecords(conv.id, [
 location.replace("/reader/index.html?id=" + encodeURIComponent(conv.id));
 </script>`;
 
+  const statesId = "34343434-3434-4343-8343-343434343434";
+  const statesConv = `chatgpt:${statesId}`;
+  const states = `<!DOCTYPE html>
+<meta charset="utf-8" />
+<script type="module">
+import { upsertMessages, saveImageRecords, saveCaptureHealth } from "/src/db.js";
+const conv = {
+  id: ${JSON.stringify(statesConv)},
+  platform: "chatgpt",
+  platformId: ${JSON.stringify(statesId)},
+  title: "四種圖片狀態",
+  url: ${JSON.stringify(`https://chatgpt.com/c/${statesId}`)},
+  updatedAt: Date.now() - 1200000,
+  updatedAtSource: "page-exact",
+};
+const botId = conv.id + ":a";
+const story = "清水寺的舞台伸向山坡，紅葉沿著欄杆一路排開，對面的楓樹剛轉成深紅。".repeat(6);
+await upsertMessages(conv, [
+  { id: conv.id + ":u", role: "user", body: "畫一座京都清水寺，秋天的紅葉剛轉紅。" },
+  { id: botId, role: "assistant", body: story },
+], { pageMessageIds: [conv.id + ":u", botId], captureId: conv.id });
+const canvas = document.createElement("canvas");
+canvas.width = 480;
+canvas.height = 320;
+const ctx = canvas.getContext("2d");
+ctx.fillStyle = "#2f6b45";
+ctx.fillRect(0, 0, 480, 320);
+ctx.fillStyle = "#e25b45";
+ctx.beginPath();
+ctx.arc(360, 80, 36, 0, Math.PI * 2);
+ctx.fill();
+const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.8));
+const bytes = await blob.arrayBuffer();
+const prompt = "畫一座京都清水寺，秋天的紅葉剛轉紅。";
+await saveImageRecords(conv.id, [
+  { messageId: botId, index: 0, status: "cached", mime: "image/webp", width: 480, height: 320, bytes, alt: "清水寺紅葉", prompt, offset: 0 },
+  { messageId: botId, index: 1, status: "uncached", alt: "參考照片", prompt, offset: 32 },
+  { messageId: botId, index: 2, status: "oversized", alt: "原始大圖", prompt, offset: 64 },
+  { messageId: botId, index: 3, status: "timeout", alt: "轉檔中的圖", prompt, offset: 96 },
+  { messageId: botId, index: 4, status: "not-loaded", alt: "還沒載完的圖", prompt, offset: 128 },
+]);
+await saveCaptureHealth("chatgpt", {
+  pathKind: "c",
+  messageCount: 2,
+  selector: "role",
+  warn: false,
+  at: Date.now(),
+  diag: "[Chatseek] diag v=1.6.3 platform=chatgpt path=c hits=role:2 used=role user=1 assistant=1 chars=80 imgCache=1 imgHold=4 imgs=5/1/4 fail=tainted:1,too-big:1,timeout:1,not-loaded:1 health=ok err=- at=2026-10-09T00:00:00.000Z",
+});
+location.replace("/reader/index.html?id=" + encodeURIComponent(conv.id));
+</script>`;
+
   const server = createServer((req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (url.pathname === "/__shot/bootstrap.html") {
+    if (url.pathname === "/__shot/bootstrap.html" || url.pathname === "/__shot/states.html") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(bootstrap);
+      res.end(url.pathname.endsWith("states.html") ? states : bootstrap);
       return;
     }
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -180,6 +232,18 @@ async function main() {
         action: { setBadgeText() { return Promise.resolve(); } },
       };
     });
+    await page.setViewport({ width: 420, height: 860, deviceScaleFactor: 2 });
+    await page.goto(`${origin}/sidepanel/index.html`, { waitUntil: "networkidle0", timeout: 20000 });
+    await page.waitForFunction(() => {
+      const usage = document.getElementById("imageCache")?.textContent || "";
+      const button = document.getElementById("clearImagesBtn");
+      return usage.includes("圖片快取 0 KB") && button?.disabled === true;
+    }, { timeout: 10000 });
+    await page.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
+    const docsEarly = join(root, "docs");
+    await mkdir(docsEarly, { recursive: true });
+    await page.screenshot({ path: join(docsEarly, "panel-1.6.3-image-cache-zero.png"), fullPage: true });
+
     await page.setViewport({ width: 760, height: 920, deviceScaleFactor: 2 });
     await page.goto(`${origin}/__shot/bootstrap.html`, { waitUntil: "networkidle0", timeout: 20000 });
     await page.waitForFunction(() => {
@@ -230,7 +294,45 @@ async function main() {
       };
     });
     await page.screenshot({ path: panelPath, clip: footClip });
-    console.log("screenshots", { thumbPath, placeholderPath, panelPath });
+
+    await page.setViewport({ width: 760, height: 1100, deviceScaleFactor: 2 });
+    await page.goto(`${origin}/__shot/states.html`, { waitUntil: "networkidle0", timeout: 20000 });
+    await page.waitForFunction(() => {
+      const notes = [...document.querySelectorAll(".image-missing-text")].map((node) => node.textContent || "").join("\n");
+      const thumb = document.querySelector(".cached-thumb");
+      return thumb?.getAttribute("src")?.startsWith("data:image/")
+        && notes.includes("原網站限制")
+        && notes.includes("檔案過大")
+        && notes.includes("轉檔逾時")
+        && notes.includes("圖還沒載完");
+    }, { timeout: 10000 });
+    await page.evaluate(() => document.fonts?.ready);
+    const statesReader = join(docs, "reader-1.6.3-placeholders.png");
+    const statesThumb = join(docs, "reader-1.6.3-thumb.png");
+    await page.screenshot({ path: statesReader, fullPage: true });
+    await page.screenshot({ path: statesThumb, clip: await clipOf(".cached-thumb") });
+
+    await page.setViewport({ width: 420, height: 860, deviceScaleFactor: 2 });
+    await page.goto(`${origin}/sidepanel/index.html`, { waitUntil: "networkidle0", timeout: 20000 });
+    await page.waitForFunction(() => {
+      const usage = document.getElementById("imageCache")?.textContent || "";
+      const button = document.getElementById("clearImagesBtn");
+      return /圖片快取\s+\d/.test(usage) && !usage.includes("0 KB") && button && button.disabled === false;
+    }, { timeout: 10000 });
+    await page.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
+    const cachePath = join(docs, "panel-1.6.3-image-cache.png");
+    await page.screenshot({ path: cachePath, fullPage: true });
+    await page.evaluate(() => {
+      if (navigator.clipboard) navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
+    });
+    await page.click("#copyDiagBtn");
+    await page.waitForFunction(() => {
+      const box = document.getElementById("diagBox");
+      return box && !box.hidden && /imgs=5\/1\/4 fail=tainted:1,too-big:1,timeout:1,not-loaded:1/.test(box.value || "");
+    }, { timeout: 10000 });
+    const diagPath = join(docs, "panel-1.6.3-diag-imgs.png");
+    await page.screenshot({ path: diagPath, fullPage: true });
+    console.log("screenshots", { thumbPath, placeholderPath, panelPath, statesReader, statesThumb, cachePath, diagPath, zero: join(docs, "panel-1.6.3-image-cache-zero.png") });
   } finally {
     await browser.close();
     server.close();

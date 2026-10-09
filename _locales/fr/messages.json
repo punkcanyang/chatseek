@@ -338,6 +338,12 @@
   "imageOversized": {
     "message": "Image non mise en cache (fichier trop volumineux)"
   },
+  "imageTimeout": {
+    "message": "Image non mise en cache (délai de conversion dépassé)"
+  },
+  "imageNotLoaded": {
+    "message": "Image non mise en cache (chargement incomplet)"
+  },
   "copyDiag": {
     "message": "Copier le diagnostic"
   },
