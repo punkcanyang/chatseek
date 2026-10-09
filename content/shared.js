@@ -720,7 +720,7 @@ const Chatseek = {
    * modifyTime keyed by conversation UUID. No network — static page content only.
    * Returns Map<uuidLower, ms>.
    */
-  pageTimesFromDocument() {
+  pageTimesFromDocument(doc = document) {
     const map = new Map();
     const put = (id, raw) => {
       if (!id) return;
@@ -754,7 +754,7 @@ const Chatseek = {
     };
 
     // Inline JSON / application/json / __NEXT_DATA__ style scripts
-    const scripts = document.querySelectorAll(
+    const scripts = doc.querySelectorAll(
       'script[type="application/json"], script[type="application/ld+json"], script#__NEXT_DATA__',
     );
     for (const script of scripts) {
@@ -769,7 +769,7 @@ const Chatseek = {
 
     // Light regex over a capped slice of body/scripts for embedded conversation blobs
     const chunks = [];
-    for (const script of document.scripts) {
+    for (const script of doc.scripts) {
       const text = script.textContent || "";
       if (text.length < 40) continue;
       if (text.length > 2_000_000) continue;
@@ -980,10 +980,9 @@ const Chatseek = {
   pageIdentity(state, doc, href, platformId, extracted) {
     const nodes = extracted.nodes || [];
     const hash = Chatseek.transcriptHash(extracted.messages);
-    const now = Date.now();
     let page = state.pageIdentity;
     if (!page) {
-      page = state.pageIdentity = { href, baselineHref: href, nodes: new WeakSet(nodes), hash, at: now, pending: false };
+      page = state.pageIdentity = { href, baselineHref: href, nodes: new WeakSet(nodes), hash, pending: false };
     } else if (page.href !== href) {
       page.href = href;
       page.pending = true;
@@ -1033,8 +1032,9 @@ const Chatseek = {
   // virtualized long chat rendered its ending.
   completeTranscript(doc, extracted, platformId) {
     const nodes = extracted.nodes || [];
+    const unstable = '[data-is-streaming="true"], [aria-busy="true"], [data-virtualized="true"]';
     if (!nodes.length || extracted.messages.some(m => m.progress) ||
-        doc.querySelector('[data-is-streaming="true"], [aria-busy="true"], [data-virtualized="true"]')) return false;
+        nodes.some(n => n.closest?.(unstable)) || doc.querySelector(unstable)) return false;
     const sizes = nodes.map(n => Number(n.getAttribute("aria-setsize")));
     const positions = nodes.map(n => Number(n.getAttribute("aria-posinset")));
     if (sizes.every(n => n === nodes.length) && positions.every((n, index) => n === index + 1)) return true;
@@ -1277,7 +1277,10 @@ const Chatseek = {
       state.pendingRestoreId = "";
       return true;
     };
+    const chunks = Chatseek.chunkMessages(msgs);
+    const completeNow = chunks.length === 1 && (typeof completePage === "function" ? completePage() : !!completePage);
     const msgFp = Chatseek.fingerprint([
+      completeNow ? "complete" : "partial",
       conversation.id,
       conversation.title,
       conversation.updatedAt || "",
@@ -1286,7 +1289,7 @@ const Chatseek = {
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
     if (msgFp === state.lastMsgFp && state.lastMsgBodies &&
-        msgs.every((m) => state.lastMsgBodies.get(m.id) === m.body)) {
+        (!completeNow || state.lastCaptureComplete === true) && msgs.every((m) => state.lastMsgBodies.get(m.id) === m.body)) {
       if (!stillHere()) return hold();
       identity?.accept();
       Chatseek.noteSyncStored(conversation.id, msgs.length);
@@ -1306,9 +1309,10 @@ const Chatseek = {
     const captureId = `${conversation.id}:${msgs.length}:${msgs[msgs.length - 1]?.id || ""}:${Date.now()}`;
     const pageMessageIds = msgs.map((m) => m.id);
     let observed = false;
-    const chunks = Chatseek.chunkMessages(msgs);
+    let completeSent = false;
     for (const chunk of chunks) {
       if (!stillHere()) return hold();
+      completeSent = chunks.length === 1 && (typeof completePage === "function" ? completePage() : !!completePage);
       const res = await Chatseek.send({
         type: "CAPTURE_MESSAGES",
         platform,
@@ -1318,18 +1322,18 @@ const Chatseek = {
         captureId,
         bodyHash,
         identityVerified: !!identity,
-        completePage: completePage && chunks.length === 1,
+        completePage: completeSent,
       });
       if (!res || !res.ok) return false;
       if (res.held) { state.spaDupe = (state.spaDupe || 0) + 1; return false; }
       recent.set(bodyHash, { convId: conversation.id, at: Date.now() });
-      if (recent.size > 128) recent.delete(recent.keys().next().value);
       if (res.observed) observed = true;
     }
+    state.lastCaptureComplete = completeSent;
     state.lastMsgFp = msgFp;
     // A stable turn id can also rewrite the beginning at the same length.
     // Keep string references so a matching length/tail fingerprint alone
-    // cannot hide that edit; this does not copy or hash entire transcripts.
+    // cannot hide that edit; these entries keep the existing string references.
     state.lastMsgBodies = new Map(msgs.map((m) => [m.id, m.body]));
     state.lastMsgConvId = conversation.id;
     identity?.accept();

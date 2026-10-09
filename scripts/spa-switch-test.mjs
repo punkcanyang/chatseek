@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { createContext, runInContext } from 'node:vm';
 import * as db from '../src/db.js';
+import { formatActivityLabel } from '../src/activity-time.js';
 const ids = ['a','b','c'].map(c => `${c.repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`);
 const url = n => `https://chatgpt.com/c/${ids[n]}`;
 const body = n => `Sample conversation ${n}: ${['maple forest and quiet tea garden','ocean creatures beneath a silver moon','a telescope on the mountain'][n]}.`;
@@ -22,12 +23,14 @@ function paint(dom, n, heuristic = false) {
   dom.window.document.body.innerHTML = `<main>${heuristic ? `<section><p>${body(n)}</p></section>` : `<div data-turn="user"><div class="markdown">${body(n)}</div></div>`}</main>`;
 }
 function api(dom, database, baseline = false) {
+  const sent = [];
   let now = Date.now();
   class Clock extends Date { static now() { return now; } }
   const ctx = createContext({ window: dom.window, document: dom.window.document, location: dom.window.location,
     Date: Clock, Node: dom.window.Node, NodeFilter: dom.window.NodeFilter, URL, console: { log() {}, warn() {} },
     setTimeout: (f, ms) => { const t = setTimeout(f, ms); t.unref(); return t; }, clearTimeout, setInterval, clearInterval,
     chrome: { runtime: { id: 'test', sendMessage: (p, cb) => {
+      sent.push(p);
       const run = async () => {
         if (p.type === 'CAPTURE_MESSAGES') return {ok:true, ...await database.upsertMessages(p.conversation,p.messages,p)};
         if (p.type === 'CAPTURE_CONVERSATIONS') await database.upsertConversations(p.conversations);
@@ -36,6 +39,7 @@ function api(dom, database, baseline = false) {
     } } } });
   const source = path => baseline ? baselineSources.get(path) : readFileSync(path,'utf8');
   runInContext(`${source('content/shared.js')}\nChatseek.autoStart=false; Chatseek.safeScheduleImages=()=>{};\n${source('content/chatgpt.js')}\nglobalThis.api=Chatseek;`,ctx);
+  ctx.api.sent = sent;
   ctx.api.advance = ms => { now += ms; };
   return ctx.api;
 }
@@ -61,6 +65,16 @@ try {
     console.log(`baseline 213dde2 ${heuristic?'heuristic':'selector'}: BUG reproduced, A body stored in B`);
     dom.window.close();
   }
+  {
+    const dom=new JSDOM('',{url:url(0)});paint(dom,0);const a=api(dom,oldDb,true);await a.platforms.chatgpt.capture();
+    dom.window.history.pushState({},'',url(1));paint(dom,1);
+    const script=dom.window.document.createElement('script');script.type='application/json';
+    script.textContent=JSON.stringify({conversation_id:ids[1],update_time:(Date.now()-86400000)/1000});dom.window.document.head.append(script);
+    await a.platforms.chatgpt.capture();
+    assert.equal((await oldDb.readConversation(`chatgpt:${ids[1]}`)).conversation.updatedAtSource,'first-seen','old 15-second cache misses newly painted B JSON date');
+    console.log('baseline 213dde2 date: B JSON time missed by cross-URL 15-second cache');
+    dom.window.close();
+  }
   (await oldDb.openDb()).close();
 } finally { rmSync(dir,{recursive:true,force:true}); }
 if (process.argv.includes('--baseline-only')) process.exit(0);
@@ -82,6 +96,9 @@ for (const heuristic of [false,true]) {
   assert.equal(await a.platforms.chatgpt.capture(),false,'rapid B -> C retains A baseline');
   paint(dom,2,heuristic); await capture(a);
   assert.deepEqual((await rows(2)).map(m=>m.body),[body(2)]);
+  const undated=(await db.readConversation(`chatgpt:${ids[2]}`)).conversation;
+  assert.equal(undated.updatedAtSource,'first-seen','no page/JSON/bucket date keeps capture-only source');
+  assert(formatActivityLabel(undated,Date.now(),'zh-TW').text.startsWith('收錄於 '),'capture date explicitly labelled');
   dom.window.history.pushState({},'',url(0)); paint(dom,0,heuristic); await capture(a);
   dom.window.history.pushState({},'',url(1));
   await a.platforms.chatgpt.capture(); assert.equal((await rows(1)).length,0,'A residue must not become B');
@@ -156,7 +173,7 @@ for (const partial of [false,true]) {
   await reset();
   const c={id:`chatgpt:${ids[1]}`,platform:'chatgpt',platformId:ids[1],url:url(1),title:'Correct B'};
   const stale={id:`${c.id}:dead:dom999`,role:'user',body:body(0)};
-  const stable={id:`${c.id}:native-old`,role:'user',body:'A legitimate older stable native message.'};
+  const stable={id:`${c.id}:dom123`,role:'user',body:'A legitimate older stable native message.'};
   await db.upsertMessages(c,[stale,stable],{});
   await db.saveImageRecords(c.id, [{messageId:stale.id,index:0,status:'cached',mime:'image/webp',bytes:[1,2],width:1,height:1},
     {messageId:stable.id,index:0,status:'cached',mime:'image/webp',bytes:[3],width:1,height:1}]);
@@ -211,4 +228,57 @@ console.log('native cross-conversation transcript repair conservative and source
   dom.window.close();
 }
 console.log('JSON full-transcript proof; partial/streaming/virtualized/other-chat evidence rejected');
+await reset();
+{
+  const dom=new JSDOM('',{url:url(0)});paint(dom,0);const a=api(dom,db);await capture(a);
+  dom.window.history.pushState({},'',url(1));dom.window.document.querySelector('main').replaceChildren();
+  const before=a.sent.length;
+  assert.equal(await a.platforms.chatgpt.capture(),false);
+  a.advance(20000); assert.equal(await a.platforms.chatgpt.capture(),false);
+  assert(!a.sent.slice(before).some(p=>p.type==='CAPTURE_HEALTH' && p.health.warn),'held empty switch must not trigger zero-message warning');
+  paint(dom,1); assert.equal(await a.platforms.chatgpt.capture(),true);
+  dom.window.close();
+}
+console.log('empty DOM during switch held without zero-message warning');
+await reset();
+{
+  const dom=new JSDOM('',{url:url(0)});paint(dom,0);const a=api(dom,db);await capture(a);
+  paint(dom,0);dom.window.document.querySelector('p, .markdown').textContent=body(0)+' Updated on the same page before a failed write.';
+  const send=a.send;a.send=payload=>payload.type==='CAPTURE_MESSAGES'?Promise.resolve(null):send(payload);
+  assert.equal(await a.platforms.chatgpt.capture(),false,'simulate a failed A write');
+  a.send=send;dom.window.history.pushState({},'',url(1));
+  assert.equal(await a.platforms.chatgpt.capture(),false,'latest observed A nodes must stay protected even when their write failed');
+  assert.equal((await rows(1)).length,0);
+  dom.window.close();
+}
+console.log('latest safe observation retained across failed write');
+await reset();
+{
+  const c={id:`chatgpt:${ids[1]}`,platform:'chatgpt',platformId:ids[1],url:url(1),title:'Sample'};
+  const stale={id:`${c.id}:badcafe:dom555`,role:'user',body:body(0)};
+  await db.upsertMessages(c,[stale]);
+  const dom=new JSDOM('',{url:url(1)});paint(dom,1);
+  const node=dom.window.document.querySelector('[data-turn]');node.setAttribute('aria-setsize','1');node.setAttribute('aria-posinset','1');
+  const a=api(dom,db),send=a.send;
+  a.send=p=>{if(p.type==='CAPTURE_HEALTH') node.setAttribute('aria-busy','true'); return send(p);};
+  await a.platforms.chatgpt.capture();
+  assert((await rows(1)).some(m=>m.id===stale.id),'completeness lost during health await must cancel repair');
+  a.send=send;node.removeAttribute('aria-busy'); await a.platforms.chatgpt.capture();
+  assert(!(await rows(1)).some(m=>m.id===stale.id),'partial -> full must retry repair even with unchanged bodies/ids');
+  dom.window.close();
+}
+console.log('completeness revalidated at send; partial -> full repairs unchanged transcript');
+await reset();
+{
+  const dom=new JSDOM('',{url:url(0)});paint(dom,0);const a=api(dom,db);await capture(a);
+  dom.window.history.pushState({},'',url(1));paint(dom,1);
+  const script=dom.window.document.createElement('script');script.type='application/json';
+  const stamp=Date.now()-86400000;script.textContent=JSON.stringify({conversation_id:ids[1],update_time:stamp/1000});dom.window.document.head.append(script);
+  await a.platforms.chatgpt.capture();
+  const c=(await db.readConversation(`chatgpt:${ids[1]}`)).conversation;
+  assert.equal(c.updatedAtSource,'page-exact','SPA cache must reread B JSON within 15 seconds');
+  assert.equal(c.updatedAt,stamp,'B JSON timestamp preserved exactly');
+  dom.window.close();
+}
+console.log('date source fallback explicit; SPA JSON time cache invalidated');
 console.log('spa-switch ok');

@@ -545,12 +545,13 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     const ids = new Set(pageIds);
     const bodies = new Set(messages.map(m => m.body));
     const rows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+    const isDomIdentity = row => row.id.startsWith(conversation.id + ":") && /:[0-9a-f]{1,8}:dom\d+$/.test(row.id);
     const obsolete = rows.filter(row => !ids.has(row.id) && !bodies.has(row.body));
     let duplicatedTranscript = false;
     // Stable ids require stronger evidence: the ENTIRE stored transcript is
     // an exact copy of another conversation, while the verified full page
     // differs. Bound candidate lookup through the existing token index.
-    if (obsolete.some(row => !/:dom\d+$/.test(row.id)) && rows.length >= 2) {
+    if (obsolete.some(row => !isDomIdentity(row)) && rows.length >= 2) {
       const longest = rows.reduce((a, b) => a.body.length >= b.body.length ? a : b);
       const token = tokenize(longest.body).at(-1);
       const candidates = new Set();
@@ -571,7 +572,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         if (signature(orderMessages(other, order?.ids)) === own) { duplicatedTranscript = true; break; }
       }
     }
-    const drops = obsolete.filter(row => /:dom\d+$/.test(row.id) || duplicatedTranscript);
+    const drops = obsolete.filter(row => isDomIdentity(row) || duplicatedTranscript);
     if (drops.length) {
       for (const row of drops) await deleteStoredMessage(row.id);
       const dropped = new Set(drops.map(row => row.id));
@@ -838,7 +839,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
 
   if (meta.bodyHash) {
     gateRows[gateRows.length - 1].at = Date.now();
-    metaStore.put({ key: "spa:recent", rows: gateRows.slice(-128) });
+    metaStore.put({ key: "spa:recent", rows: gateRows });
   }
   await txDone(tx);
   return { observed: observedNow };

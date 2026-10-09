@@ -182,7 +182,6 @@ function captureMeta(msg) {
   return { pageMessageIds: ids, captureId, bodyHash,
     identityVerified: msg.identityVerified === true,
     completePage: msg.completePage === true };
-
 }
 
 function validHealth(health) {

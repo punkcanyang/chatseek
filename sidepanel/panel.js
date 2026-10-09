@@ -770,7 +770,7 @@ function showImagePane(on) {
   const searchWrap = qEl?.closest(".search");
   if (searchWrap) searchWrap.hidden = on;
   if (searchLabel) searchLabel.hidden = on;
-  if (on && statusEl) if (Date.now() >= statusNoticeUntil) statusEl.hidden = true;
+  if (on && statusEl && Date.now() >= statusNoticeUntil) statusEl.hidden = true;
   if (!on) {
     imageSeq += 1;
     if (imageView) {
