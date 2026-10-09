@@ -675,5 +675,13 @@ document.getElementById("copyStructureBtn").click();
 await until(() => copiedStructure === structureText && document.getElementById("diagBox").hidden, "clipboard structure copy");
 assert(document.getElementById("status").textContent.includes(String(structureText.length)), "clipboard success reports chars");
 
+// An index refresh used to replace the copy result with Searching….
+q.value = "maple";
+q.dispatchEvent(new window.Event("input"));
+message({type:"INDEX_UPDATED"});
+await sleep(500);
+assert(document.getElementById("status").textContent.includes(String(structureText.length)), "refresh must preserve the copy character count");
+assert(!document.getElementById("status").hidden, "copy confirmation remains visible during refresh");
+
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

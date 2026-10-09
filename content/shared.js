@@ -983,7 +983,7 @@ const Chatseek = {
     const now = Date.now();
     let page = state.pageIdentity;
     if (!page) {
-      page = state.pageIdentity = { href, nodes: new WeakSet(nodes), hash, at: now, pending: false };
+      page = state.pageIdentity = { href, baselineHref: href, nodes: new WeakSet(nodes), hash, at: now, pending: false };
     } else if (page.href !== href) {
       page.href = href;
       page.pending = true;
@@ -1011,19 +1011,16 @@ const Chatseek = {
       const markers = readMarkers();
       if (markers.some(id => id !== platformId)) return false;
       if (!nodes.length || nodes.some(n => !n.isConnected)) return false;
-      if (page.pending) {
+      if (page.pending && !(href === page.baselineHref && hash === page.hash && nodes.every(n => page.nodes.has(n)))) {
         // Even an updated sidebar/canonical link cannot authorize residual
         // old turns. Mixed old/new DOM also stays held.
         if (nodes.some(n => page.nodes.has(n))) return false;
         if (!markers.length && hash === page.hash) return false;
-      } else if (!markers.length && now - page.at < 800) {
-        // On first load, allow one stable rescan without pretending we saw
-        // an earlier conversation. This also initializes before any write.
-        return false;
       }
       return true;
     };
     const accept = () => {
+      page.baselineHref = href;
       page.nodes = new WeakSet(nodes);
       page.hash = hash;
       page.pending = false;
@@ -1034,14 +1031,51 @@ const Chatseek = {
   // Only explicit total/position evidence can authorize absence-based repair.
   // A composer, visible first turn, or scroll height does not prove that a
   // virtualized long chat rendered its ending.
-  completeTranscript(doc, extracted) {
+  completeTranscript(doc, extracted, platformId) {
     const nodes = extracted.nodes || [];
     if (!nodes.length || extracted.messages.some(m => m.progress) ||
         doc.querySelector('[data-is-streaming="true"], [aria-busy="true"], [data-virtualized="true"]')) return false;
     const sizes = nodes.map(n => Number(n.getAttribute("aria-setsize")));
     const positions = nodes.map(n => Number(n.getAttribute("aria-posinset")));
-    return sizes.every(n => n === nodes.length) &&
-      positions.every((n, index) => n === index + 1);
+    if (sizes.every(n => n === nodes.length) && positions.every((n, index) => n === index + 1)) return true;
+    // ChatGPT may embed its exported conversation mapping in JSON. Only the
+    // selected current_node ancestry counts (branches are not visible turns).
+    // Exact text coverage proves both boundaries without guessing scroll size.
+    const normalize = body => String(body || "").replace(/\s+/g, " ").trim();
+    const visible = extracted.messages.map(m => normalize(m.body));
+    let bytes = 0;
+    let visited = 0;
+    const proof = (data, depth) => {
+      if (!data || typeof data !== "object" || depth > 12 || ++visited > 20000) return false;
+      if ((data.conversation_id || data.id) === platformId && data.mapping && data.current_node) {
+        const chain = [];
+        const seen = new Set();
+        let id = data.current_node;
+        while (id && !seen.has(id) && seen.size < 5000) {
+          seen.add(id);
+          const row = data.mapping[id];
+          if (!row) return false;
+          const msg = row.message;
+          const role = msg?.author?.role;
+          if (role === "assistant" || role === "user") {
+            if (msg.content?.content_type !== "text" || !msg.content.parts?.every(p => typeof p === "string")) return false;
+            const body = normalize(msg.content.parts.join("\n"));
+            if (body) chain.unshift(body);
+          }
+          id = row.parent;
+        }
+        if (!id && chain.length === visible.length && chain.every((body, i) => body === visible[i])) return true;
+      }
+      for (const value of Object.values(data)) if (proof(value, depth + 1)) return true;
+      return false;
+    };
+    for (const script of doc.querySelectorAll('script[type="application/json"]')) {
+      const raw = script.textContent || "";
+      bytes += raw.length;
+      if (bytes > 2000000) break;
+      try { if (proof(JSON.parse(raw), 0)) return true; } catch { /* not a proof */ }
+    }
+    return false;
   },
 
   async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health, restoreOnNewMessages, identity, completePage = false }) {
@@ -1273,7 +1307,7 @@ const Chatseek = {
     const pageMessageIds = msgs.map((m) => m.id);
     let observed = false;
     const chunks = Chatseek.chunkMessages(msgs);
-    for (const [chunkIndex, chunk] of chunks.entries()) {
+    for (const chunk of chunks) {
       if (!stillHere()) return hold();
       const res = await Chatseek.send({
         type: "CAPTURE_MESSAGES",

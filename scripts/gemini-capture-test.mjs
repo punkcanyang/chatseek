@@ -119,7 +119,7 @@ assert(Object.keys(rows).length === 4, `stored ${Object.keys(rows).length} rows`
 for (const id of ROWS) {
   assert(rows[id].updatedAtSource === "first-seen", `${id} should be first-seen, got ${rows[id].updatedAtSource}`);
   const label = formatActivityLabel(rows[id], Date.now(), "zh-TW");
-  assert(label.unknown && label.text.startsWith("日期未知（收錄於"), label.text);
+  assert(label.unknown && label.text.startsWith("收錄於"), label.text);
 }
 assert((await order()).join() === ROWS.join(), `opened thread broke sidebar order: ${(await order()).join()}`);
 assert(rows[OPEN].messageCount === 2, `messageCount ${rows[OPEN].messageCount}`);
@@ -152,7 +152,7 @@ assert(!anchorLabel.approx && !anchorLabel.unknown, `observed label ${anchorLabe
 const aboveId = ROWS[0];
 const aboveLabel = formatActivityLabel(rows[aboveId], Date.now(), "zh-TW");
 assert(rows[aboveId].updatedAtSource === "sidebar-rank" && rows[aboveId].olderThanAt == null, aboveId);
-assert(aboveLabel.unknown && aboveLabel.text.startsWith("日期未知（收錄於"), aboveLabel.text);
+assert(aboveLabel.unknown && aboveLabel.text.startsWith("收錄於"), aboveLabel.text);
 assert(!aboveLabel.text.includes("約") && !aboveLabel.text.includes("早於"), aboveLabel.text);
 for (const id of ROWS.slice(2)) {
   assert(rows[id].updatedAtSource === "sidebar-rank", `${id} should be estimated, got ${rows[id].updatedAtSource}`);

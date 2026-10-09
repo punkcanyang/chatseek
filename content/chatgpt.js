@@ -522,7 +522,7 @@
       },
       restoreOnNewMessages,
       identity,
-      completePage: !!identity && Chatseek.completeTranscript(root, extracted),
+      completePage: !!identity && Chatseek.completeTranscript(root, extracted, platformId),
     });
     // Text is already stored. An image error must not reject this capture.
     if (conversation && result && identity?.check()) {

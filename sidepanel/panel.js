@@ -657,7 +657,7 @@ async function copyPageStructure() {
   if (statusEl) {
     statusEl.hidden = false;
     statusEl.textContent = `${t.copyStructureDone(text.length)} ${t.copyStructureManual}`;
-      statusNoticeUntil = Date.now() + 5000;
+    statusNoticeUntil = Date.now() + 5000;
   }
 }
 

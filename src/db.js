@@ -425,7 +425,6 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
     gateRows = gateRows.filter(row => row.hash !== meta.bodyHash);
     gateRows.push({ hash: meta.bodyHash, convId: conversation.id, at: Date.now() });
-    metaStore.put({ key: "spa:recent", rows: gateRows.slice(-128) });
   }
   const conv = await requestDone(convStore.get(conversation.id));
   let baselineCount = conv?.messageCount || 0;
@@ -546,7 +545,33 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     const ids = new Set(pageIds);
     const bodies = new Set(messages.map(m => m.body));
     const rows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
-    const drops = rows.filter(row => /:dom\d+$/.test(row.id) && !ids.has(row.id) && !bodies.has(row.body));
+    const obsolete = rows.filter(row => !ids.has(row.id) && !bodies.has(row.body));
+    let duplicatedTranscript = false;
+    // Stable ids require stronger evidence: the ENTIRE stored transcript is
+    // an exact copy of another conversation, while the verified full page
+    // differs. Bound candidate lookup through the existing token index.
+    if (obsolete.some(row => !/:dom\d+$/.test(row.id)) && rows.length >= 2) {
+      const longest = rows.reduce((a, b) => a.body.length >= b.body.length ? a : b);
+      const token = tokenize(longest.body).at(-1);
+      const candidates = new Set();
+      let inspected = 0;
+      if (token) await cursorEach(tokenStore, {
+        range: IDBKeyRange.bound([token], [token, "\uffff", "\uffff"]),
+      }, row => {
+        if (row.conversationId !== conversation.id && row.conversationId?.startsWith(conversation.platform + ":")) candidates.add(row.conversationId);
+        return ++inspected >= 128 || candidates.size >= 20;
+      });
+      const signature = list => JSON.stringify(list.map(row => [row.role, row.body]));
+      const ownOrder = await loadOrderIds();
+      const own = signature(orderMessages(rows, ownOrder));
+      for (const candidate of candidates) {
+        const other = await requestDone(msgStore.index("conversationId").getAll(candidate));
+        if (other.length !== rows.length) continue;
+        const order = await requestDone(metaStore.get(ORDER_PREFIX + candidate));
+        if (signature(orderMessages(other, order?.ids)) === own) { duplicatedTranscript = true; break; }
+      }
+    }
+    const drops = obsolete.filter(row => /:dom\d+$/.test(row.id) || duplicatedTranscript);
     if (drops.length) {
       for (const row of drops) await deleteStoredMessage(row.id);
       const dropped = new Set(drops.map(row => row.id));
@@ -811,6 +836,10 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     convStore.put(conv);
   }
 
+  if (meta.bodyHash) {
+    gateRows[gateRows.length - 1].at = Date.now();
+    metaStore.put({ key: "spa:recent", rows: gateRows.slice(-128) });
+  }
   await txDone(tx);
   return { observed: observedNow };
 }
