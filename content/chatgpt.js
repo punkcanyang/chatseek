@@ -180,9 +180,13 @@
       node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
       Chatseek.hash(resolved + ":" + body.slice(0, 180));
     const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    // A live image-generation status turn. It must not be stored (or get a
+    // fresh hash id) on every percentage change; runCapture drops it until it
+    // settles into real content or disappears.
+    const progress = resolved === "assistant" && Chatseek.isProgressMessage(body, node);
     return {
-      message: { id, role: resolved, body },
-      host: { el: node, messageId: id, role: resolved, body, offsets: rendered.offsets },
+      message: { id, role: resolved, body, progress },
+      host: { el: node, messageId: id, role: resolved, body, offsets: rendered.offsets, progress },
     };
   }
 
@@ -218,7 +222,9 @@
     const messages = [];
     for (const item of chosen) {
       messages.push(item.message);
-      if (collectImages) imageHosts.push(item.host);
+      // A progress-only turn has no image yet; scheduling its host would only
+      // re-scan a bubble that is about to be replaced.
+      if (collectImages && !item.message.progress) imageHosts.push(item.host);
     }
     if (!selector && chosen[0]) selector = chosen[0].layer;
     return { messages, selector, selectorsTried, selectorHits };
@@ -248,11 +254,12 @@
     if (!Chatseek.isSubstantive(body) || String(body).trim().length < 24) return null;
     const platformMessageId = Chatseek.hash(role + ":" + body.slice(0, 180));
     const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    const progress = role === "assistant" && Chatseek.isProgressMessage(body, block.el);
     return {
       node: block.el,
       layer: "heuristic",
-      message: { id, role, body },
-      host: { el: block.el, messageId: id, role, body, offsets: rendered.offsets },
+      message: { id, role, body, progress },
+      host: { el: block.el, messageId: id, role, body, offsets: rendered.offsets, progress },
     };
   }
 

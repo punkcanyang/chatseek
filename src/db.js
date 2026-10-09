@@ -11,6 +11,7 @@ import {
 import { mergeMessageOrder, orderMessages } from "./message-order.js";
 import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-list.js";
 import { normalizeImageRecord } from "./image-cache.js";
+import { isProgressText, planProgressMerges } from "./image-progress.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 4;
@@ -1461,4 +1462,181 @@ export async function clearAll() {
     if (names.includes("images")) tx.objectStore("images").clear();
     await txDone(tx);
   });
+}
+
+/**
+ * One-time tidy of image-generation progress duplicates left by <= 1.7.1.
+ *
+ * Those versions stored each "Creating image 25%" rewrite as a fresh assistant
+ * message. This folds a consecutive run of progress-only rows into the final
+ * settled turn, keeping that turn's body and image records and never touching
+ * updatedAt. Idempotent: a `progressRepair` meta flag short-circuits a second
+ * run, and re-running without the flag finds no runs to merge.
+ * IndexedDB stays at version 4.
+ */
+const PROGRESS_REPAIR_KEY = "progressRepair";
+
+async function imageRowsForMessage(imageStore, messageId) {
+  const rows = [];
+  await cursorEach(
+    imageStore.index("messageId"),
+    { range: IDBKeyRange.only(messageId) },
+    (row) => { if (row) rows.push(row); },
+  );
+  return rows;
+}
+
+async function repairConversationProgress(db, convId) {
+  const storeNames = ["conversations", "messages", "tokenMap", "meta"];
+  const hasImages = db.objectStoreNames.contains("images");
+  if (hasImages) storeNames.push("images");
+  const tx = db.transaction(storeNames, "readwrite");
+  const convStore = tx.objectStore("conversations");
+  const msgStore = tx.objectStore("messages");
+  const tokenStore = tx.objectStore("tokenMap");
+  const metaStore = tx.objectStore("meta");
+  const imageStore = hasImages ? tx.objectStore("images") : null;
+
+  const conv = await requestDone(convStore.get(convId));
+  if (!conv) {
+    await txDone(tx);
+    return { dropped: 0, groups: 0 };
+  }
+  const all = await requestDone(msgStore.index("conversationId").getAll(convId));
+  // Time order, never the stored order meta: a 1.7.1 capture anchored the meta
+  // order on the first user id, which can leave the progress rewrites reversed.
+  // capturedAt / captureIndex are monotonic per write, so they recover the run.
+  const rows = orderMessages(all || [], null);
+
+  const plans = planProgressMerges(
+    rows.map((row) => ({ id: row.id, role: row.role, body: row.body })),
+  );
+  if (!plans.length) {
+    await txDone(tx);
+    return { dropped: 0, groups: 0 };
+  }
+
+  const dropToKeep = new Map();
+  for (const plan of plans) {
+    for (const id of plan.drop) dropToKeep.set(id, plan.keep);
+  }
+
+  // A progress row has no image of its own; move any anyway so a thumbnail
+  // never points at a row that is about to disappear.
+  if (imageStore) {
+    for (const [from, keep] of dropToKeep) {
+      for (const row of await imageRowsForMessage(imageStore, from)) {
+        const dest = await requestDone(imageStore.get([keep, row.index]));
+        const key = imageBlobKey(from, row.index);
+        const packed = await requestDone(metaStore.get(key));
+        metaStore.delete(key);
+        const bytes = copyBytes(packed?.blob) || copyBytes(row.blob);
+        imageStore.delete([from, row.index]);
+        if (!dest) {
+          imageStore.put(withoutBlob({ ...row, messageId: keep }));
+          if (bytes) metaStore.put({ key: imageBlobKey(keep, row.index), blob: bytes });
+        } else if (row.bytes) {
+          await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+        }
+      }
+    }
+  }
+
+  for (const id of dropToKeep.keys()) {
+    const existing = await requestDone(msgStore.get(id));
+    if (!existing) continue;
+    deleteTokens(tokenStore, tokensForDelete(existing.body), convId, id);
+    msgStore.delete(id);
+    if (imageStore) {
+      for (const row of await imageRowsForMessage(imageStore, id)) {
+        imageStore.delete([id, row.index]);
+        metaStore.delete(imageBlobKey(id, row.index));
+        if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+      }
+    }
+  }
+
+  const orderRow = await requestDone(metaStore.get(ORDER_PREFIX + convId));
+  const nextOrder = (orderRow?.ids || []).filter((id) => id && !dropToKeep.has(id));
+  if (orderRow) metaStore.put({ ...orderRow, ids: nextOrder });
+
+  // Counts and pointers only. updatedAt / updatedAtSource stay exactly as they
+  // were: the last progress write already stamped the conversation "just now".
+  conv.messageCount = await requestDone(msgStore.index("conversationId").count(convId));
+  const droppedTail = !!(conv.tailMessageId && dropToKeep.has(conv.tailMessageId));
+  if (droppedTail) conv.tailMessageId = dropToKeep.get(conv.tailMessageId);
+  if (conv.captureBaselineTail && dropToKeep.has(conv.captureBaselineTail)) {
+    conv.captureBaselineTail = dropToKeep.get(conv.captureBaselineTail);
+  }
+  // The sidebar preview may have been the last progress rewrite. Show the kept
+  // settled turn instead. A kept progress row (no settled tail) is left alone.
+  if (droppedTail && conv.tailMessageId) {
+    const keptTail = await requestDone(msgStore.get(conv.tailMessageId));
+    if (keptTail && typeof keptTail.body === "string" && keptTail.body.trim() &&
+        !isProgressText(keptTail.body)) {
+      conv.lastPreview = clipPreviewSource(keptTail.body);
+      conv.lastPreviewRole = keptTail.role;
+    }
+  }
+  convStore.put(conv);
+  await txDone(tx);
+  return { dropped: dropToKeep.size, groups: plans.length };
+}
+
+/**
+ * Fold stored image-generation progress duplicates on every chatgpt
+ * conversation. Best-effort per conversation: one unreadable row must not
+ * strand the rest. Returns { merged, dropped, done }.
+ */
+export async function repairProgressDuplicates() {
+  return withDb(async (db) => {
+    const flagTx = db.transaction("meta", "readonly");
+    const flag = await requestDone(flagTx.objectStore("meta").get(PROGRESS_REPAIR_KEY));
+    if (flag?.done) return { merged: 0, dropped: 0, done: true };
+
+    const ids = [];
+    const convTx = db.transaction("conversations", "readonly");
+    await cursorEach(
+      convTx.objectStore("conversations").index("platform"),
+      { range: IDBKeyRange.only("chatgpt") },
+      (row) => { if (row?.id) ids.push(row.id); },
+    );
+
+    let merged = 0;
+    let dropped = 0;
+    for (const id of ids) {
+      try {
+        const res = await repairConversationProgress(db, id);
+        merged += res.groups;
+        dropped += res.dropped;
+      } catch {
+        // One unreadable conversation must not strand the rest.
+      }
+    }
+
+    const doneTx = db.transaction("meta", "readwrite");
+    doneTx.objectStore("meta").put({
+      key: PROGRESS_REPAIR_KEY,
+      done: true,
+      merged,
+      dropped,
+      at: Date.now(),
+    });
+    await txDone(doneTx);
+    if (dropped) {
+      try { console.log(`[Chatseek] progress repair merged=${merged} dropped=${dropped}`); }
+      catch { /* missing console must not stop the tidy */ }
+    }
+    return { merged, dropped, done: true };
+  });
+}
+
+let progressRepairPromise = null;
+
+/** Run the repair at most once per service-worker lifetime. */
+export function ensureProgressRepair() {
+  if (!progressRepairPromise) {
+    progressRepairPromise = repairProgressDuplicates().catch(() => null);
+  }
+  return progressRepairPromise;
 }

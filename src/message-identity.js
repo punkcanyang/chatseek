@@ -6,6 +6,8 @@
  * through a hash collision.
  */
 
+import { isProgressText } from "./image-progress.js";
+
 export function canonicalRole(role) {
   return role === "user" ? "user" : "assistant";
 }
@@ -116,6 +118,25 @@ export function alignRekeyedTurns(stored, page) {
     }
     usedS.add(index);
     if (item.id !== rows[index].id) map.set(item.id, rows[index].id);
+  }
+  // Transition write. An older capture stored a live image-generation status
+  // turn under its own hash id; the page now shows the next status line or the
+  // settled turn under a fresh id at the same slot. Same index + same role +
+  // at least one side is progress-only text means the stored row is rewritten
+  // in place instead of filed as a duplicate.
+  for (let j = 0; j < m; j++) {
+    if (usedP.has(j)) continue;
+    const item = items[j];
+    if (!item?.id || !item.body || map.has(item.id)) continue;
+    const index = Number.isInteger(item.index) ? item.index : j;
+    if (index < 0 || index >= n || usedS.has(index)) continue;
+    const row = rows[index];
+    if (!row?.body) continue;
+    if (canonicalRole(row.role) !== canonicalRole(item.role)) continue;
+    if (!isProgressText(row.body) && !isProgressText(item.body)) continue;
+    usedS.add(index);
+    usedP.add(j);
+    if (item.id !== row.id) map.set(item.id, row.id);
   }
   return map;
 }

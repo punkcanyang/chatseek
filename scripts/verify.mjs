@@ -86,7 +86,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.1") fail(`version should be 1.7.1, got ${manifest.version}`);
+if (manifest.version !== "1.7.2") fail(`version should be 1.7.2, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -281,6 +281,7 @@ for (const rel of [
   "src/markdown-dom.js",
   "src/sort-list.js",
   "src/image-cache.js",
+  "src/image-progress.js",
   "src/sync-policy.js",
   "src/sync-runner.js",
   "reader/reader.js",
@@ -839,6 +840,70 @@ if (!read("src/reader-view.js").includes("is-target") || !read("src/reader-url.j
   fail("the reader must be able to scroll to a chosen cached image");
 }
 if (!read("src/db.js").includes("listImageCards")) fail("image cards must be listed from IndexedDB");
+// 1.7.2: ChatGPT image-generation progress must never become one stored row
+// per percentage step. The classifier stays conservative (exact phrase after a
+// percentage token is stripped) and the capture path + migration share it.
+const progressSrc = read("src/image-progress.js");
+if (!/export function isProgressText/.test(progressSrc) || !/export function planProgressMerges/.test(progressSrc)) {
+  fail("image-progress must export the text classifier and the merge planner");
+}
+if (!/export function isProgressMessage/.test(progressSrc)) {
+  fail("image-progress must export the DOM-aware classifier");
+}
+for (const locale of ["zh_TW", "zh_CN", "ja", "ko"]) {
+  if (!new RegExp(`// ${locale}`).test(read("src/image-progress.js"))) {
+    fail(`image-progress phrases must cover ${locale}`);
+  }
+}
+if (!/正在建立圖像/.test(progressSrc) || !/creating image/.test(progressSrc) || !/画像を作成/.test(progressSrc)) {
+  fail("image-progress phrases must cover zh/en/ja progress text");
+}
+// The content-script world cannot import modules, so content/shared.js carries
+// its own copy of the phrase list. Keep the two identical.
+function progressPhrases(src) {
+  const at = src.indexOf("PROGRESS_PHRASES");
+  if (at < 0) return null;
+  const open = src.indexOf("[", at);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "[") depth += 1;
+    else if (src[i] === "]") {
+      depth -= 1;
+      if (depth === 0) return src.slice(open + 1, i).replace(/\s+/g, " ").trim();
+    }
+  }
+  return null;
+}
+{
+  const fromModule = progressPhrases(progressSrc);
+  const fromContent = progressPhrases(sharedSrc);
+  if (!fromModule || !fromContent || fromModule !== fromContent) {
+    fail("the progress phrase lists in src/image-progress.js and content/shared.js must match");
+  }
+}
+if (!/isProgressMessage\(body, node\)/.test(sharedSrc) && !/isProgressMessage\(body, node\)/.test(read("content/chatgpt.js"))) {
+  fail("the chatgpt adapter must ask isProgressMessage for DOM evidence");
+}
+if (!/m\.progress !== true/.test(sharedSrc) || !/progress === true/.test(sharedSrc)) {
+  fail("runCapture must drop progress turns before the write path");
+}
+if (!/ensureProgressRepair/.test(read("background.js")) || !/export async function repairProgressDuplicates/.test(read("src/db.js"))) {
+  fail("stored progress duplicates must be folded once at startup");
+}
+if (/progress repair/.test(read("src/db.js")) && !/progress repair merged=\$\{merged\} dropped=\$\{dropped\}/.test(read("src/db.js"))) {
+  fail("the progress repair log must stay counts-only");
+}
+if (!/progress=skipped:\$\{/.test(read("content/shared.js"))) {
+  fail("diag must count skipped progress turns by number only");
+}
+if (/progress=skipped:[^$]/.test(read("content/shared.js"))) {
+  fail("progress diag must not interpolate text");
+}
+if (!/const DB_VERSION = 4/.test(read("src/db.js"))) {
+  fail("1.7.2 must not bump the IndexedDB version (stays 4)");
+}
+if (/DB_VERSION = 5/.test(read("src/db.js"))) fail("1.7.2 must not bump the IndexedDB version");
 if (!read("src/db.js").includes('const IMAGE_BLOB_PREFIX = "imgb:"') || !read("src/db.js").includes("delete next.blob")) {
   fail("thumbnail bytes must be stored apart from the image list row");
 }

@@ -4,6 +4,7 @@ import {
   saveCaptureHealth,
   readCaptureHealth,
   saveImageRecords,
+  ensureProgressRepair,
 } from "./src/db.js";
 import { healthHasWarning } from "./src/activity-time.js";
 import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
@@ -27,10 +28,16 @@ function openSidePanelOnClick() {
   );
 }
 
-chrome.runtime.onInstalled.addListener(openSidePanelOnClick);
+chrome.runtime.onInstalled.addListener(() => {
+  openSidePanelOnClick();
+  // Fold image-generation progress duplicates left by <= 1.7.1. Idempotent
+  // and never bumps the DB version; fire-and-forget on install/update.
+  ensureProgressRepair();
+});
 chrome.runtime.onStartup.addListener(() => {
   openSidePanelOnClick();
   pauseSyncForStartup();
+  ensureProgressRepair();
 });
 openSidePanelOnClick();
 
@@ -308,7 +315,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "invalid conversation" });
       return;
     }
-    upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
+    // Make sure the one-time progress-duplicate tidy has run before the first
+    // write, so it cannot race a fresh capture.
+    ensureProgressRepair()
+      .catch(() => null)
+      .then(() => upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg)))
       .then((result) => {
         notifyIndexUpdated();
         sendResponse({ ok: true, observed: !!result?.observed });

@@ -975,7 +975,12 @@ const Chatseek = {
     // An archive-list row is explicit. A sidebar row does not cancel it.
     const archivedOnly = (archivedRows || []).filter((row) => row && row.id);
     const combined = list.concat(archivedOnly);
-    const msgs = (messages || []).filter((m) => m && m.id && m.body);
+    const allMsgs = (messages || []).filter((m) => m && m.id && m.body);
+    // A live image-generation status turn is rewritten on every percentage
+    // change. Keeping it off disk stops one bubble from becoming a dozen
+    // near-identical stored messages. It is written once it settles.
+    const progressSkipped = allMsgs.filter((m) => m.progress === true).length;
+    const msgs = allMsgs.filter((m) => m.progress !== true);
     // A thread is empty for a moment after SPA navigation while it loads.
     // Report 0 messages only once it stays empty; returning false makes
     // observe() look again in a few seconds even if the DOM goes quiet.
@@ -992,6 +997,9 @@ const Chatseek = {
         state.zeroSince = now;
       }
       settling = !!zeroKey && now - (state.zeroSince || 0) < Chatseek.HEALTH_GRACE_MS;
+      // A turn that only paints image-generation progress is not an empty
+      // thread; treat it as settling so the 0-message warning stays disarmed.
+      if (progressSkipped && !msgs.length) settling = true;
     }
     const selectorHits = health?.selectorHits && typeof health.selectorHits === "object"
       ? health.selectorHits
@@ -1010,11 +1018,14 @@ const Chatseek = {
     if (settling && !newChat) {
       ok = false;
       const remain = Chatseek.HEALTH_GRACE_MS - (now - (state.zeroSince || now));
-      if (remain > 0 && typeof Chatseek.requestRescan === "function") {
+      // Only progress text on screen: the grace window may already be over,
+      // but keep polling so the settling write happens on a later rescan.
+      const delay = remain > 0 ? remain - 760 : (progressSkipped ? 1200 : 0);
+      if (delay > 0 && typeof Chatseek.requestRescan === "function") {
         clearTimeout(Chatseek._graceTimer);
         Chatseek._graceTimer = setTimeout(() => {
           try { Chatseek.requestRescan(); } catch { /* rescan is best-effort */ }
-        }, Math.max(0, remain - 760));
+        }, delay);
       }
       Chatseek.publishDiag(Chatseek.diagFields({
         platform,
@@ -1027,7 +1038,8 @@ const Chatseek = {
         structure: health.structure || null,
         archiveBanner: health.archiveBanner,
         archiveList: health.archiveList,
-        healthState: "settling",
+        progressSkipped,
+        healthState: progressSkipped && !msgs.length ? "progress" : "settling",
         warn: false,
         at: Date.now(),
       }));
@@ -1056,6 +1068,7 @@ const Chatseek = {
         structure: health.structure || null,
         archiveBanner: health.archiveBanner,
         archiveList: health.archiveList,
+        progressSkipped,
         healthState: report.warn ? "warn" : "ok",
         warn: report.warn,
         at: report.at,
@@ -1309,6 +1322,115 @@ const Chatseek = {
 
   _normText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
+  },
+
+  // ChatGPT image-generation progress text. A turn is rewritten with short
+  // status strings plus a percentage while the image paints; those must not
+  // become one stored message each. Kept in sync with src/image-progress.js
+  // (scripts/verify.mjs cross-checks the two phrase lists). Conservative:
+  // exact phrase match after a percentage token is stripped, so ordinary
+  // prose with "%" survives.
+  PROGRESS_PHRASES: [
+    // zh_TW
+    "正在建立圖像", "正在建立影像", "正在勾勒草圖", "正在生成初稿", "正在打磨細節",
+    "正在生成圖片", "正在繪製", "正在生成圖像", "正在修飾細節",
+    "正在創建圖像", "正在創建影像", "正在創建圖片", "正在描繪",
+    // zh_CN
+    "正在创建图像", "正在创建影像", "正在勾勒草图", "正在生成初稿", "正在打磨细节",
+    "正在生成图片", "正在绘制", "正在生成图像", "正在修饰细节",
+    "正在创建图片", "正在描绘",
+    // en
+    "creating image", "creating your image", "creating an image",
+    "sketching", "adding details", "generating image", "generating an image",
+    "refining details", "drawing", "painting", "generating draft",
+    "starting image generation", "creating the image",
+    // ja
+    "画像を作成しています", "画像を生成しています", "スケッチを作成しています",
+    "詳細を追加しています", "下書きを生成しています", "画像を描いています",
+    "画像を作成中", "画像を生成中", "スケッチ中", "詳細を追加中",
+    // ko
+    "이미지 생성 중", "이미지를 생성하는 중", "이미지 만들기 중", "이미지를 만드는 중",
+    "스케치 중", "스케치하는 중", "세부 사항 추가 중", "세부 정보 추가 중",
+    "초안 생성 중", "초안을 생성하는 중", "이미지 그리는 중",
+    // es
+    "creando imagen", "generando imagen", "dibujando", "agregando detalles",
+    "añadiendo detalles", "creando la imagen", "generando la imagen",
+    "creando borrador", "perfeccionando detalles",
+    // fr
+    "création de l'image", "génération de l'image", "esquisse en cours",
+    "ajout des détails", "ajout de détails", "création d'image",
+    "génération d'image", "affinage des détails", "dessin en cours",
+    // de
+    "bild wird erstellt", "bild wird generiert", "skizze wird erstellt",
+    "details werden hinzugefügt", "bild erstellen", "bild generieren",
+    "entwurf wird erstellt", "details werden verfeinert",
+    // pt_BR
+    "criando imagem", "gerando imagem", "esboçando", "adicionando detalhes",
+    "criando a imagem", "gerando a imagem", "criando rascunho",
+    "refinando detalhes",
+  ],
+
+  progressCore(raw) {
+    let text = String(raw ?? "").replace(/[\u3000\u00a0]/g, " ");
+    text = text.replace(/\s+/g, " ").trim();
+    text = text.replace(/^[\s\-–—_•·*※…‥.。]+/, "");
+    text = text.replace(/\d{1,3}\s*[%％]/g, " ");
+    text = text.replace(/\s+\d{1,3}\s*$/, "");
+    text = text.replace(/[\s\-–—_•·*※…‥.。!！?？~～、,，:：;；]+$/g, "");
+    return text.replace(/\s+/g, " ").trim().toLowerCase();
+  },
+
+  isProgressText(body) {
+    const core = Chatseek.progressCore(body);
+    if (!core) return false;
+    if (!Chatseek._progressPhraseSet) {
+      Chatseek._progressPhraseSet = new Set(Chatseek.PROGRESS_PHRASES);
+    }
+    return Chatseek._progressPhraseSet.has(core);
+  },
+
+  isProgressNode(node) {
+    if (!node || typeof node.querySelector !== "function") return false;
+    try {
+      if (node.matches?.("[data-is-streaming='true'], [aria-valuenow], [aria-valuetext], [role='progressbar'], progress")) {
+        return true;
+      }
+      return !!node.querySelector(
+        "[role='progressbar'], progress, [aria-valuenow], [aria-valuetext]," +
+        "[data-is-streaming='true'], [data-testid*='progress' i], [data-testid*='streaming' i]"
+      );
+    } catch {
+      return false;
+    }
+  },
+
+  _hasContentImage(node) {
+    if (!node || typeof node.querySelectorAll !== "function") return false;
+    try {
+      for (const img of node.querySelectorAll("img, picture, figure, canvas, [data-message-image]")) {
+        const tag = String(img.tagName || "").toLowerCase();
+        if (tag !== "img") return true;
+        const src = String(img.getAttribute?.("src") || img.currentSrc || "");
+        if (src && !src.startsWith("data:")) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  },
+
+  _isShortStatusLine(body) {
+    const core = Chatseek.progressCore(body);
+    if (!core || core.length > 48) return false;
+    const raw = String(body ?? "").replace(/\s+/g, " ").trim();
+    return !/[.。!！?？\n\r]/.test(raw);
+  },
+
+  isProgressMessage(body, node) {
+    if (node && Chatseek._hasContentImage(node)) return false;
+    if (Chatseek.isProgressText(body)) return true;
+    if (node && Chatseek.isProgressNode(node) && Chatseek._isShortStatusLine(body)) return true;
+    return false;
   },
 
   _TRANSCRIPT_SELECTOR:
@@ -2346,6 +2468,8 @@ Chatseek.messageStats = (messages) => {
   let assistantCount = 0;
   let charCount = 0;
   for (const msg of messages || []) {
+    // A live image-generation progress turn is not a stored message.
+    if (msg?.progress === true) continue;
     // Unknown heuristic turns are stored as assistant. Count them the same way.
     if (msg?.role === "assistant" || msg?.role === "unknown") assistantCount += 1;
     else userCount += 1;
@@ -2446,6 +2570,7 @@ Chatseek.diagFields = (fields) => {
     structure: src.structure || null,
     archiveBanner: Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0))),
     archiveList: Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0))),
+    progressSkipped: Math.max(0, Math.min(9999, Math.floor(Number(src.progressSkipped) || 0))),
     at: Number(src.at) || Date.now(),
   };
 };
@@ -2491,6 +2616,9 @@ Chatseek.formatDiag = (fields) => {
   if (structure) parts.push(structure);
   const stack = scrubFrame(src.errorStack);
   if (stack) parts.push(`stack=${stack}`);
+  if (Number(src.progressSkipped) > 0) {
+    parts.push(`progress=skipped:${Math.max(0, Math.min(9999, Math.floor(Number(src.progressSkipped))))}`);
+  }
   return parts.join(" ");
 };
 
