@@ -185,3 +185,23 @@ reader-view／清單碼未改，兩輪互有高低，第一輪先跑的一方偏
 剩餘限制：缺完整證據／多 chunk 的污染舊列及缺席原生 id 保留；同 id 已驗完整正文可覆蓋。網站重用原訊息節點、標記長期衝突時保守不收，須重新載入。外部 Chrome／截圖／效能記錄是修前 PR HEAD 的結果，本複審修正後未重跑 Chrome；交接中尚無 500 張縮圖 Chrome 效能對 main 的實測數字，Node 的 500 圖資料完整性測試不能替代它。閱讀頁兩輪掛載值均略高於基準，冷啟動雜訊只是可能解釋，不能由兩輪確認效能無回退。
 
 複審結論：本工作樹程式審查修後通過；修正必須納入 PR。整體 VERDICT: BLOCK，理由是修後 Chrome 驗證仍缺、AGENTS.md 要求的 500 張縮圖 Chrome 效能對 main 對照未記錄；舊 HEAD 的外部通過與 Node 資料完整性測試不能充當這兩項證據。按老闆指示不在 sandbox 硬跑 Chrome，未 commit／push／合 main，未宣告 STATUS READY。
+
+## 複審修正後的外部驗證（产品开发在 sandbox 外，2026-10-10 00:20–00:45 UTC+8，HEAD 含 `89761f9`）
+
+複審 session `01a12161` 第一輪 VERDICT: BLOCK，理由只剩外部證據：修後 Chrome 驗證、500 張縮圖效能對照。程式修正已 commit `89761f9`。
+
+| 指令 | 結果 |
+| --- | --- |
+| verify／test:search／test:fixture／test:gemini／test:upgrade／test:sync／test:spa（含 spa-review-test） | 全部 exit 0 |
+| `xvfb-run -a npm run test:e2e` ×2 | 兩次 exit 0；兩次都有 `SPA selector e2e ok` 與 `SPA heuristic e2e ok`（A/B/C, delayed DOM and history.back） |
+| `xvfb-run -a npm run test:e2e-sync` ×2 | 兩次 exit 0 |
+| `xvfb-run -a node scripts/screenshot-1.7.2.1.mjs` | exit 0，`SPA screenshots ok`；三張截圖已用修後程式重拍 |
+
+圖片頁籤 500 張縮圖（`scripts/image-grid-bench.mjs`，213dde2 用 `git archive` 副本跑同一支腳本，同機同 Chrome，各兩輪）：
+
+| | 1.7.2.1 | 213dde2 |
+| --- | --- | --- |
+| 開啟中位 | 51 / 48 ms | 43 / 43 ms |
+| 捲動 p95 | 3.4 / 3.3 ms | 3.3 / 3.3 ms |
+
+image-grid／reader-view 碼沒改；開啟差 5–8 ms 在單次抖動範圍內（單次樣本 38–73 ms 兩邊都有），捲動持平。
