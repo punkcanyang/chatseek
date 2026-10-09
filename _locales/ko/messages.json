@@ -154,7 +154,7 @@
     "message": "날짜 알 수 없음"
   },
   "unknownSaved": {
-    "message": "날짜 알 수 없음 ($ARG1$ 저장)",
+    "message": "$ARG1$ 저장",
     "placeholders": {
       "arg1": {
         "content": "$1"

@@ -154,7 +154,7 @@
     "message": "Date inconnue"
   },
   "unknownSaved": {
-    "message": "Date inconnue (enregistrée le $ARG1$)",
+    "message": "Enregistrée le $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

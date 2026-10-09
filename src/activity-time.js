@@ -290,7 +290,7 @@ function clearOlderThan(item) {
  * Sidebar order is index 0 = most recently active (pinned rows already removed).
  * Anchors are page-exact / observed / page-bucket. Everyone else is interpolated
  * between the nearest anchors. With no anchors at all, order is kept but the
- * source stays first-seen so the UI can say the date is unknown.
+ * source stays first-seen so the UI can label the actual capture time.
  *
  * olderThanAt is display-only: the nearest page-exact or observed time above
  * this row that no lower anchor contradicts. It is not a sort key. A
@@ -428,7 +428,7 @@ function formatHm(ts, locale) {
  * page-exact or observed anchor says 「早於 <absolute>」. A page-bucket group
  * says 「約 <day>」: its stored instant is a made-up point inside the group
  * (Today is the midpoint of the day so far), so no clock time is shown.
- * No clock above → 「日期未知（收錄於 …）」. The anchor stamp is an Intl
+ * No clock above → 「收錄於 …」（不是網站活動時間）. The anchor stamp is an Intl
  * absolute time for that locale, so the words do not drift into another
  * relative guess as time passes.
  *
@@ -492,7 +492,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
   if (source === "first-seen" || source === "legacy" || !conv?.updatedAtSource) {
     const stamp = saved ? formatClock(saved, now, locale) : "";
     return {
-      text: stamp ? s.unknownSaved(stamp) : s.unknown,
+      text: stamp ? s.saved(stamp) : s.unknown,
       title: stamp ? s.saved(stamp) : s.unknown,
       source,
       approx: false,
@@ -514,7 +514,7 @@ export function formatActivityLabel(conv, now = Date.now(), locale = "en") {
     }
     const stamp = saved ? formatClock(saved, now, locale) : "";
     return {
-      text: stamp ? s.unknownSaved(stamp) : s.unknown,
+      text: stamp ? s.saved(stamp) : s.unknown,
       title: stamp ? s.saved(stamp) : s.unknown,
       source,
       approx: false,

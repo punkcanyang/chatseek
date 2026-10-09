@@ -88,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.2") fail(`version should be 1.7.2, got ${manifest.version}`);
+if (manifest.version !== "1.7.2.1") fail(`version should be 1.7.2.1, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -286,6 +286,7 @@ for (const rel of [
   "src/sort-list.js",
   "src/image-cache.js",
   "src/image-progress.js",
+  "src/spa-identity.js",
   "src/sync-policy.js",
   "src/sync-runner.js",
   "reader/reader.js",
@@ -1338,8 +1339,23 @@ if (healthSent().some((p) => p.health.warn) || healthWarns.length) {
   fail("a new chat with a generic title and no message nodes must not warn");
 }
 
+const { transcriptHash } = await import("../src/spa-identity.js");
+for (const messages of [[], [{body:"A"},{body:"B"}], [{body:"AB"}], [{body:"中文\n🙂"}]]) {
+  if (transcriptHash(messages) !== pageTime.transcriptHash(messages)) fail("SPA transcript hash mirrors drifted");
+}
+// 1.7.2.1: capture identity checks and two independently enforced gates.
+for (const symbol of ["pageIdentity", "transcriptHash", "completeTranscript", "stillHere", "res.held"]) {
+  if (!sharedSrc.includes(symbol)) fail(`SPA content guard missing: ${symbol}`);
+}
+for (const symbol of ["spa:recent", "5000", "identityVerified", "completePage"]) {
+  if (!read("src/db.js").includes(symbol)) fail(`SPA DB guard missing: ${symbol}`);
+}
+if (!backgroundSrc.includes("bodyHash") || !backgroundSrc.includes("result?.held")) fail("background must forward the transcript guard and hold result");
+if (!chatgptSrc.includes("here.href !== captureHref")) fail("awaited extraction must discard a changed URL");
+
 if (errors.length) {
   console.error(errors.map((e) => "x " + e).join("\n"));
   process.exit(1);
 }
 console.log("verify ok");
+

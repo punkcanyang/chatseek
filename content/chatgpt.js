@@ -3,6 +3,8 @@
   const state = { lastListFp: "", lastMsgFp: "" };
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
+  let cachedJsonDoc = null;
+  let cachedJsonHref = "";
   // Keep a live DOM turn's identity when its wording changes. Weak keys never
   // retain a removed website node. Conversation/role scope prevents SPA reuse
   // from carrying an id into another thread.
@@ -56,7 +58,12 @@
 
   function jsonTimes(doc) {
     const now = Date.now();
-    if (!cachedJsonTimes || now - cachedJsonAt > 15000) {
+    const root = doc || document;
+    const href = root.location?.href || "";
+    if (!cachedJsonTimes || cachedJsonDoc !== root || cachedJsonHref !== href ||
+        state.pageIdentity?.pending || now - cachedJsonAt > 15000) {
+      cachedJsonDoc = root;
+      cachedJsonHref = href;
       cachedJsonTimes = Chatseek.pageTimesFromDocument(doc);
       cachedJsonAt = now;
     }
@@ -285,7 +292,7 @@
       if (collectImages && !item.message.progress) imageHosts.push(item.host);
     }
     if (!selector && chosen[0]) selector = chosen[0].layer;
-    return { messages, selector, selectorsTried, selectorHits };
+    return { messages, nodes: chosen.map(item => item.node), selector, selectorsTried, selectorHits };
   }
 
   function scopeLabel(scope, got) {
@@ -433,6 +440,7 @@
   async function captureInner(doc, loc) {
     const root = doc || document;
     const here = loc || location;
+    const captureHref = here.href;
     const signals = Chatseek.readArchiveSignals(root, here, PLATFORM);
     const sidebar = extractSidebar(root, signals.archiveRoots);
     const archivedRows = [];
@@ -481,8 +489,22 @@
         return !current.banner && !current.archiveRoots.some((node) =>
           Chatseek._archiveListIds(node).includes(platformId));
       };
+      if (!state.pageIdentity) {
+        const initial = extractMessages(platformId, root, false);
+        if (initial.messages.length) Chatseek.pageIdentity(state, root, captureHref, platformId, initial);
+      }
       extracted = await extractMessagesPaced(platformId, root);
     }
+    // Record the DOM before further awaits, even if this capture is held or
+    // never written. A following URL transition must still compare against it.
+    if (here.href !== captureHref) return false;
+    const identity = platformId && (extracted.messages.length ||
+      (state.pageIdentity && (state.pageIdentity.href !== captureHref || state.pageIdentity.pending)))
+      ? Chatseek.pageIdentity(state, root, captureHref, platformId, extracted) : null;
+    // Track every safe DOM observation, including progress/failed writes. A
+    // later navigation must compare against the latest screen, not the last
+    // successfully stored screen.
+    if (identity?.check()) identity.accept();
     const stats = Chatseek.messageStats(extracted.messages);
     const pathKind = Chatseek.pageKind(here, !!platformId);
     const selectorName = extracted.selector || "";
@@ -492,6 +514,17 @@
     if (typeof Chatseek.noteEmptyConversation === "function") {
       Chatseek.noteEmptyConversation(pathKind === "conversation" && !extracted.messages.length);
     }
+    if (here.href !== captureHref) return false;
+    const completeCandidate = !!identity && Chatseek.completeTranscript(root, extracted, platformId);
+    const completePage = () => {
+      if (!completeCandidate || !identity.check()) return false;
+      // Health/sidebar messaging yields. Revalidate the complete snapshot at
+      // the actual send so a virtual-window change cannot authorize deletion.
+      const current = extractMessages(platformId, root, false);
+      return current.messages.length === extracted.messages.length &&
+        current.messages.every((m, i) => m.id === extracted.messages[i].id && m.body === extracted.messages[i].body) &&
+        Chatseek.completeTranscript(root, current, platformId);
+    };
     const result = await Chatseek.runCapture(state, {
       platform: PLATFORM,
       sidebar,
@@ -510,9 +543,11 @@
         ...stats,
       },
       restoreOnNewMessages,
+      identity,
+      completePage,
     });
     // Text is already stored. An image error must not reject this capture.
-    if (conversation) {
+    if (conversation && result && identity?.check()) {
       Chatseek.safeScheduleImages({
         conversationId: conversation.id,
         items: imageHosts,

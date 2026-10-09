@@ -154,7 +154,7 @@
     "message": "Data desconhecida"
   },
   "unknownSaved": {
-    "message": "Data desconhecida (salvo em $ARG1$)",
+    "message": "Salvo em $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

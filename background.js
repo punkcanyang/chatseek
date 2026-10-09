@@ -1,3 +1,4 @@
+import { transcriptHash } from "./src/spa-identity.js";
 import {
   upsertConversations,
   upsertMessages,
@@ -176,7 +177,11 @@ function captureMeta(msg) {
     ? msg.pageMessageIds.filter((id) => typeof id === "string" && id.length <= 300).slice(-5000)
     : [];
   const captureId = typeof msg.captureId === "string" ? msg.captureId.slice(0, 400) : "";
-  return { pageMessageIds: ids, captureId };
+  const bodyHash = typeof msg.bodyHash === "string" && /^[0-9a-f]{1,8}$/.test(msg.bodyHash)
+    ? msg.bodyHash : transcriptHash(msg.messages || []);
+  return { pageMessageIds: ids, captureId, bodyHash,
+    identityVerified: msg.identityVerified === true,
+    completePage: msg.completePage === true };
 }
 
 function validHealth(health) {
@@ -315,14 +320,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "invalid conversation" });
       return;
     }
+    // The browser supplies the sender URL at dispatch time. Recheck it too;
+    // content may have awaited extraction while the tab navigated.
+    if (msg.platform === "chatgpt") {
+      const url = senderPageUrl(sender);
+      let id = "";
+      try { id = new URL(url).pathname.match(/\/c\/([0-9a-f-]{36})(?:\/|$)/i)?.[1]?.toLowerCase() || ""; } catch { /* absent sender */ }
+      if (!id || id !== msg.conversation.platformId?.toLowerCase()) {
+        sendResponse({ ok: true, held: true, observed: false });
+        return;
+      }
+    }
     // The one-time progress-duplicate tidy runs in the background and is
     // bounded per transaction. A fresh capture does not await the whole tidy;
     // it can queue behind one slice on the shared IndexedDB stores.
     ensureProgressRepair().catch(() => null);
     upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
       .then((result) => {
-        notifyIndexUpdated();
-        sendResponse({ ok: true, observed: !!result?.observed });
+        if (!result?.held) notifyIndexUpdated();
+        sendResponse({ ok: true, observed: !!result?.observed, held: !!result?.held });
       })
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;

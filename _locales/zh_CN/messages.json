@@ -154,7 +154,7 @@
     "message": "日期未知"
   },
   "unknownSaved": {
-    "message": "日期未知（收录于 $ARG1$）",
+    "message": "收录于 $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

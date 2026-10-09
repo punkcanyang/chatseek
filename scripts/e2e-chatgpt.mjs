@@ -40,6 +40,11 @@ const BANNER_SHADOW = "16161616-1616-4161-8161-161616161616";
 const BANNER_CLOSED = "17171717-1717-4171-8171-171717171717";
 const BANNER_MIXED = "19191919-1919-4191-8191-191919191919";
 const LISTED = "18181818-1818-4181-8181-181818181818";
+const SPA_IDS = ["20202020-2020-4020-8020-202020202020", "21212121-2121-4121-8121-212121212121", "23232323-2323-4323-8323-232323232323",
+  "24242424-2424-4424-8424-242424242424", "25252525-2525-4525-8525-252525252525", "26262626-2626-4626-8626-262626262626"];
+const SPA_BODIES = ["SPA sample A: maple trees surround a quiet tea garden near the mountain.",
+  "SPA sample B: enormous ocean creatures swim beneath a silver moon tonight.",
+  "SPA sample C: a telescope records the stars from a snowy mountain summit."];
 const USER = "User asked about the pangolin habitat across the southern forest ridge today.";
 const ASST = "Assistant explained that a pangolin rolls into a ball when it feels threatened.";
 const TOP_SELECTORS = [
@@ -83,6 +88,34 @@ function pageHtml({ title, classic, user, assistant }) {
        <div><h2>ChatGPT</h2><p>${assistant}</p></div>
        <div><textarea>draft a very long prompt about pangolins that must not be stored</textarea></div>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main>${prose}</main></body></html>`;
+}
+
+// Website fixture controls only. The extension never calls these controls.
+function spaPage(offset) {
+  return `<!doctype html><html><head><title>SPA sample A</title></head><body><main></main><script>
+    const ids = ${JSON.stringify(SPA_IDS.slice(offset, offset + 3))};
+    const bodies = ${JSON.stringify(SPA_BODIES)};
+    let timer;
+    function paint(n) {
+      document.title = 'SPA sample ' + String.fromCharCode(65+n);
+      const turn = document.createElement(${JSON.stringify(offset ? 'section' : 'div')});
+      if (!${offset}) { turn.setAttribute('data-turn', 'user'); turn.setAttribute('aria-setsize', '1'); turn.setAttribute('aria-posinset', '1'); }
+      const p = document.createElement('p'); p.textContent = bodies[n]; turn.append(p);
+      document.querySelector('main').replaceChildren(turn);
+      window.__painted = n;
+    }
+    window.__spaSwitch = (n, delay) => {
+      clearTimeout(timer);
+      history.pushState({}, '', '/c/' + ids[n]);
+      timer = setTimeout(() => paint(n), delay);
+    };
+    addEventListener('popstate', () => {
+      clearTimeout(timer);
+      const n = ids.findIndex(id => location.pathname.includes(id));
+      if (n >= 0) timer = setTimeout(() => paint(n), 4000);
+    });
+    paint(0);
+  </script></body></html>`;
 }
 
 function shadowPage(mode) {
@@ -387,6 +420,8 @@ function route(url) {
   if (path === `/c/${FRAME_IMG}`) return frameImagePage();
   if (path === `/c/${LAZY}`) return lazyImagePage();
   if (path === `/c/${PROGRESS}`) return progressPage();
+  if (path === `/c/${SPA_IDS[0]}`) return spaPage(0);
+  if (path === `/c/${SPA_IDS[3]}`) return spaPage(3);
   if (path === `/c/${HEUR}`) {
     return pageHtml({ title: "Heuristic habitat", classic: false, user: USER, assistant: ASST });
   }
@@ -649,8 +684,60 @@ async function main() {
       }, `messages for ${id}`, 20000);
     }
 
+    for (const offset of [0, 3]) {
+      const ids = SPA_IDS.slice(offset, offset + 3);
+      await openChat(`https://chatgpt.com/c/${ids[0]}`);
+      await waitMsgs(ids[0], 1);
+      await page.evaluate(() => window.__spaSwitch(1, 5000));
+      await sleep(3000); // includes URL poll + debounce while A DOM remains
+      assert(msgsOf(await readDb(probe), ids[1]).length === 0, "SPA residue A was written to B");
+      await waitMsgs(ids[1], 1);
+      await page.evaluate(() => history.back());
+      await until(() => page.url().includes(ids[0]), "SPA history back");
+      await sleep(2500);
+      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === SPA_BODIES[0]), "back wrote B into A");
+      await until(() => page.evaluate(() => window.__painted === 0), "back repaint");
+      await sleep(1500);
+      await page.evaluate(() => { window.__spaSwitch(1, 5000); window.__spaSwitch(2, 5000); });
+      await sleep(3000);
+      assert(msgsOf(await readDb(probe), ids[2]).length === 0, "rapid switch wrote A into C");
+      await waitMsgs(ids[2], 1);
+      const snapshot = await readDb(probe);
+      for (const [n, id] of ids.entries()) {
+        const rows = msgsOf(snapshot, id);
+        assert(rows.length === 1 && rows[0].body === SPA_BODIES[n], `SPA ${offset}/${n} contaminated transcript`);
+        assert(convOf(snapshot, id).updatedAtSource === "first-seen", "undated first capture invented website activity");
+      }
+      console.log(`SPA ${offset ? "heuristic" : "selector"} e2e ok: A/B/C, delayed DOM and history.back`);
+    }
+    // Example screenshots, sourced from the same SPA capture assertions.
+    const spaReader = await browser.newPage();
+    await spaReader.setViewport({width:900, height:720});
+    await probe.evaluate(() => localStorage.setItem("chatseek.uiLocale", "zh-TW"));
+    for (const [n, id] of SPA_IDS.slice(0,2).entries()) {
+      await spaReader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${id}`)}`, {waitUntil:"domcontentloaded"});
+      await until(async () => (await spaReader.$eval("#readerDate", el => el.textContent).catch(()=>""))?.includes("收錄於"), "SPA reader capture date");
+      const body = await spaReader.$eval("#thread", el => el.textContent);
+      assert(body.includes(SPA_BODIES[n]) && !body.includes(SPA_BODIES[1-n]), "SPA reader wrong body");
+      await spaReader.screenshot({path:join(docs, `reader-1.7.2.1-spa-${n ? "B" : "A"}.png`),fullPage:true});
+    }
+    await spaReader.close();
+    await probe.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, {waitUntil:"domcontentloaded"});
+    await probe.setViewport({width:420,height:860});
+    await probe.evaluate(() => {
+      const q=document.getElementById("q"); q.value="SPA sample"; q.dispatchEvent(new Event("input",{bubbles:true}));
+    });
+    await until(async () => {
+      const times=await probe.$$eval("#list time", nodes=>nodes.map(n=>n.textContent));
+      return times.length >= 2 && times.every(t=>t.includes("收錄於"));
+    }, "SPA sidebar capture dates");
+    await probe.screenshot({path:join(docs,"panel-1.7.2.1-spa.png"),fullPage:true});
+    if (process.argv.includes("--spa-only")) { console.log("SPA screenshots ok"); return; }
+    await probe.evaluate(() => localStorage.removeItem("chatseek.uiLocale"));
+    await probe.goto(`chrome-extension://${extensionId}/sidepanel/index.html`,{waitUntil:"domcontentloaded"});
+
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.2 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.2.1 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -1030,7 +1117,10 @@ async function main() {
     assert(!skeleton.includes(USER) && !/southern forest ridge/.test(skeleton), "skeleton leaked the fixture body");
     assert(!skeleton.includes("://"), `skeleton leaked a url: ${skeleton.slice(0, 240)}`);
     assert(!skeleton.includes(BANNER), "skeleton leaked the conversation uuid");
-    const structureStatus = await panel.$eval("#status", (el) => el.textContent || "").catch(() => "");
+    const structureStatus = await until(async () => {
+      const text = await panel.$eval("#status", el => el.textContent || "").catch(() => "");
+      return /\d/.test(text) ? text : "";
+    }, "copy structure size status", 5000);
     assert(/\d/.test(structureStatus), `the panel did not show the skeleton size: ${structureStatus}`);
     await panel.setViewport({ width: 420, height: 860 });
     await panel.screenshot({ path: join(docs, "panel-1.7.2-copy-structure.png"), fullPage: true });

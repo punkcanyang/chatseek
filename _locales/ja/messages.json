@@ -154,7 +154,7 @@
     "message": "日付不明"
   },
   "unknownSaved": {
-    "message": "日付不明（$ARG1$ に保存）",
+    "message": "$ARG1$ に保存",
     "placeholders": {
       "arg1": {
         "content": "$1"

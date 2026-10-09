@@ -114,8 +114,8 @@ for (let i = 1; i < noAnchor.length; i++) {
 }
 const unknownHant = formatActivityLabel(noAnchor[0], Date.now(), "zh-TW");
 const unknownHans = formatActivityLabel(noAnchor[0], Date.now(), "zh-CN");
-assert(unknownHant.unknown && unknownHant.text.includes("日期未知（收錄於"), unknownHant.text);
-assert(unknownHans.unknown && unknownHans.text.includes("日期未知（收录于"), unknownHans.text);
+assert(unknownHant.unknown && unknownHant.text.includes("收錄於"), unknownHant.text);
+assert(unknownHans.unknown && unknownHans.text.includes("收录于"), unknownHans.text);
 assert(!unknownHant.text.includes("約"), "first-seen must not render as 約");
 
 const shared = load(threadHtml, "https://gemini.google.com/share/deadbeefdeadbeef").api.platforms.gemini.inspect();
@@ -185,7 +185,7 @@ assert(belowHant.before && belowHant.text === `早於 ${absoluteStamp(exact, "zh
 assert(belowHans.before && belowHans.text === `早于 ${absoluteStamp(exact, "zh-CN")}` && !belowHans.text.includes("约"), belowHans.text);
 assert(belowEn.before && belowEn.text === `before ${absoluteStamp(exact, "en")}`, belowEn.text);
 const aboveHant = formatActivityLabel(estNew, Date.now(), "zh-TW");
-assert(aboveHant.unknown && aboveHant.text.includes("日期未知（收錄於") && !aboveHant.text.includes("約"), aboveHant.text);
+assert(aboveHant.unknown && aboveHant.text.includes("收錄於") && !aboveHant.text.includes("約"), aboveHant.text);
 const midLabel = formatActivityLabel(estMid, Date.now(), "zh-TW");
 assert(!midLabel.approx && !midLabel.before, "page-exact must not render as 約 or 早於");
 

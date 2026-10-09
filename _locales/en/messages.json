@@ -154,7 +154,7 @@
     "message": "Unknown date"
   },
   "unknownSaved": {
-    "message": "Unknown date (saved $ARG1$)",
+    "message": "Saved $ARG1$",
     "placeholders": {
       "arg1": {
         "content": "$1"

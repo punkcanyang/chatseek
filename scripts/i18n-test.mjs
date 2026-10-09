@@ -99,7 +99,7 @@ for (const code of LOCALE_ORDER) {
   );
   assert(approx.approx && approx.text === fill(text(code, "approx"), formatDayStamp(when, code)), `${code} approx ${approx.text}`);
   const unknown = formatActivityLabel({ updatedAtSource: "first-seen", firstSeenAt: when, updatedAt: 1 }, Date.now(), code);
-  assert(unknown.unknown && unknown.text.includes(text(code, "unknown").slice(0, 4)), `${code} unknown ${unknown.text}`);
+  assert(unknown.unknown && unknown.text.includes(text(code, "saved").split("$1")[0]) && !unknown.text.includes(text(code, "unknown")), `${code} unknown ${unknown.text}`);
 }
 
 const enStamp = formatAbsoluteStamp(when, "en");
