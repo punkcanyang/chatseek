@@ -14,7 +14,7 @@
 - [x] SPA e2e／獨立截圖腳本、Searching 狀態列競態修正
 - [x] 1.7.2 實測文案與 ROADMAP 更新
 - [x] 外部 Chrome e2e（test:e2e、test:e2e-sync 各連跑 2 次全過）、截圖、效能對照（产品开发在 sandbox 外跑，2026-10-09 23:40–23:58）
-- [ ] Codex 複審 session `01a12161-9f1f-7190-a0d3-2b221e06c49f`（gpt-6.1-sol high，非 Fast；與寫碼不同 session）進行中，PR #20
+- [x] Codex 複審 session `01a12161-9f1f-7190-a0d3-2b221e06c49f`（gpt-6.1-sol high，非 Fast；與寫碼不同 session），PR #20；結論適用包含下方未提交修正的工作樹
 - [ ] 合 main
 
 ## 根因（原初步判讀已由真實舊碼測試證實）
@@ -47,10 +47,10 @@ baseline 213dde2 date: B JSON time missed by cross-URL 15-second cache
 ## 改動與守門規則
 
 1. `content/chatgpt.js` 回傳訊息节点 references；擷取起始保留 href，所有 awaited 擷取／結構診斷後再比對。第一次擷取前同步記錄畫面；之後每次安全觀察都更新基線，包括進度與 DB 失敗，避免只保護「最後成功寫入」那批節點。
-2. `content/shared.js` 的 pageIdentity 保存 WeakSet＋整段正文 hash。URL 變更後，舊節點或新舊混合仍 hold；無標記時還須不同正文 hash。切回仍未離開的原始畫面可以重用其已確認基線。可用標記包括選中 link 的 aria-current、data-active、active 父節點內 link、canonical、og:url、訊息祖先 data-conversation-id；每種有一致／不一致 fixture。任何可取得標記衝突就 hold。擷取開始與每個訊息 chunk 送出前都再查；背景另外比對 browser 提供的 sender URL。
+2. `content/shared.js` 的 pageIdentity 保存 WeakSet＋整段正文 hash。URL 變更後，舊節點或新舊混合仍 hold；訊息節點全部換掉才通過轉場檢查，同文仍受兩端五秒守門，但不永久漏收。切回仍未離開的原始畫面可以重用其已確認基線。可用標記包括選中 link 的 aria-current、data-active、active 父節點內 link、canonical、og:url、訊息祖先 data-conversation-id；每種有一致／不一致 fixture。任何可取得標記衝突就 hold。擷取開始與每個訊息 chunk 送出前都再查；背景另外比對 browser 提供的 sender URL。
 3. content 記錄最近五秒正文 hash／convId／實際 ack 時間。background 把整段 hash 交 DB（舊格式缺 hash 時算 chunk hash）；DB 的 meta `spa:recent` 守門持久化並與訊息寫入同一事務完成，入口序列化，先檢查才改對話列。每次清掉五秒外紀錄，不用容易漏擋的「只留上一筆」或固定數量淘汰。`src/spa-identity.js` 與 Chatseek.hash 同 FNV-1a、body-only JSON 邊界，verify 比對鏡像。不同對話被擋回 `{ok:true, held:true}`，不通知 index 更新、不當錯誤、不鎖 message fingerprint、不觸發 0 則警告。原 observe 的 false 重試仍是 3 秒倍增、上限 60 秒；mutation／URL 事件可提早重試。
 4. 污染修復不升 DB。必須是已驗身分、非進度、非空、**單一 chunk** 的完整快照。完整證據是所有節點 aria-setsize 等於總數且 aria-posinset 從 1 連續；或 DOM 內 application/json 的同對話 mapping/current_node 選定祖先鏈，所有 user／assistant 文字依次完全匹配。JSON 只掃 2MB、深度 12、20000 物件、5000 祖先節點；循環、少渲染一則、其他對話、進度／busy／virtualized 都不成立。health／sidebar await 後，實際送出時再擷取驗一次完整性；部分變完整也不被 unchanged fingerprint 略過。
-5. 完整快照下，只刪新頁 id／正文都沒有的舊列：synthetic id 必須完整符合 `<convId>:<hex hash>:dom<N>`（原生名為 dom123 的 id 不算）；原生 id 另須整段存稿的角色＋正文＋順序與另一對話完全相同，至少兩則，且新完整頁面不同。跨對話查詢走既有 tokenMap，最多 128 個 token 命中／20 個候選；未找到證據即保留。刪除與寫入在同一事務，清 token、圖片 metadata／blob／byte counter、order／尾指標／錯誤預覽，再寫正確頁面。來源對話與沒有證據的正常原生列保留。完整修復不把歷史訊息當成新活動。
+5. 先走既有訊息對齊／rekey，搬移圖片與索引，再在完整快照下清理新頁 id／正文都沒有的 synthetic 舊列。synthetic id 必須完整符合 `<convId>:<hex hash>:dom<N>`，多一段原生 id 前綴不能誤中。原生列即使全文與另一對話相同也保留，因為正常複製或分支可同文；不能據此授權刪除。刪除與寫入在同一事務，清 token、圖片 metadata／blob／byte counter、order／尾指標／錯誤預覽，再寫正確頁面。已驗完整快照可覆蓋同 id 的較長污染正文並重建預覽，部分窗口仍保留較長正文。完整修復不把歷史訊息當成新活動。
 6. 九語日期文案改成明確收錄時間；既有「早於／約／剛剛」與最後活動排序不改。manifest 為 1.7.2.1；verify 加版本、模組網路掃描、hash 鏡像與兩端守門存在性檢查。
 7. `sidepanel/panel.js` 的 copy 結果保留 5 秒，期間 refresh 不用 loading（Searching…）覆蓋或隱藏它。根因是 INDEX_UPDATED／搜尋刷新與非同步 clipboard 同用 #status；Node panel 測試先複製，再搜尋＋INDEX_UPDATED，斷言字元數仍顯示。e2e 也等字元數真正出現，不把 clipboard 已收到文字當作 UI 已完成。1.7.2 老闆第 3 步已改成「足夠共同 turnId 證據才合，缺證據保留」。
 
@@ -103,8 +103,8 @@ reader／list 在 Chrome 啟動時 `setsockopt: Operation not permitted`；500 �
 
 ## 已知限制
 
-- 頁面對話標記沒有保證每個 ChatGPT 帳號都有。無標記的 SPA 切換須訊息節點真的換掉＋正文 hash 不同；網站若重用整批原節點，即使改字也會保守 hold，重新載入對話頁可建立新文件基線。相同全文的不同對話在 5 秒內被保守擋住，稍後重試；長期無標記又完全同文的 SPA 切換仍 hold。
-- 不保證真機污染列一律自動清乾淨：沒有 aria 總數／位置或可驗證完整 JSON、虛擬窗口、進度、拆成多個 chunk、原生 id 沒整段跨對話複製證據、候選查询上限截斷，都保留舊列，避免誤刪。通過身分檢查的新正文會照常收錄；若仍有舊錯誤列，需要老闆回報真站結構以補完整性證據，不能假裝已全部修復。
+- 頁面對話標記沒有保證每個 ChatGPT 帳號都有。無標記的 SPA 切換須訊息節點真的換掉；網站若重用整批原節點，即使改字也會保守 hold，重新載入對話頁可建立新文件基線。相同全文的不同對話在 5 秒內被保守擋住，新 DOM 稍後重試可收錄；原節點或新舊混合在五秒後仍擋住。
+- 不保證真機污染列一律自動清乾淨：沒有 aria 總數／位置或可驗證完整 JSON、虛擬窗口、進度、拆成多個 chunk、缺席的原生 id，都保留舊列，避免誤刪。通過身分檢查的新正文會照常收錄；若仍有舊錯誤列，需要老闆回報真站結構以補完整性證據，不能假裝已全部修復。
 - JSON 完整性只支援純文字選定祖先鏈；圖片／多模態或 Markdown 與 JSON 字串差異大時不採為完整證據。JSON 日期解析保留既有 DOM-only 路徑，不碰網站 API。
 - 初次載入沒有之前的画面／標記時無法從空白基線證明網站已給錯頁；本修防的是已觀察到的 SPA 轉場。header canonical/og 長期滯留別串時也會 hold，寧可少收。
 - Chrome e2e、截圖與效能未在 sandbox 完成；另一個 Codex session 的独立複審仍未做。本 session 自查與回歸測試不算複審。
@@ -153,3 +153,35 @@ reader／list 在 Chrome 啟動時 `setsockopt: Operation not permitted`；500 �
 | 側欄捲動 p95 | 9 / 2 ms | 6 / 1 ms |
 
 reader-view／清單碼未改，兩輪互有高低，第一輪先跑的一方偏慢，屬冷啟動雜訊。
+
+## 獨立複審（2026-10-10 UTC+8）
+
+依老闆指定對 `git diff 213dde2..HEAD` 審查，再用自己的 `scripts/spa-review-test.mjs` 嘗試刪掉正常資料。沒有 commit、push、merge；以下修正必須由产品开发納入 PR，原 HEAD 不能直接合併。
+
+原 HEAD 的五項問題已用實際 capture／DB 測試先重現，再做最小修正：
+
+| 問題 | 重現／修正 |
+| --- | --- |
+| 原生 `native:dead:dom999` id 被誤認為 synthetic，連圖片一起刪掉 | synthetic 判斷改成移除完整 conversation 前綴後，餘下必須恰好是 `<hash>:dom<N>`。`spa-review-test.mjs:57` 保留原生列、metadata 與 blob。 |
+| 兩段正常同文對話改選分支後，舊原生列被當作跨串污染刪掉 | 移除「另一串全文相同就刪原生列」的推論。`spa-review-test.mjs:70` 確認正常分支、圖片及另一串都保留。 |
+| synthetic 正常訊息增長後，新完整快照先刪舊列，縮圖在 rekey 前消失 | 改成先做既有對齊／rekey、搬圖片與索引，再清缺席列。`spa-review-test.mjs:86` 確認 image blob、byte counter、訊息順序保留。 |
+| 無頁面標記的正常同文 SPA 對話永久漏收 | 新訊息節點全部替換可通過轉場；兩端五秒 hash 守門保持。`spa-review-test.mjs:105` 確認五秒後殘留原節點仍擋，新 DOM 同文可收，同串更新可收。 |
+| 同原生 id 的正確完整正文是污染長文的前綴時，poorerBody 拒絕覆蓋 | 僅已验身分／完整單批快照可覆蓋較短正文並重建預覽；部分窗口規則不變。`spa-review-test.mjs:137` 確認正文修好且不冒充新活動。 |
+
+逐項結論：
+
+1. 通過：殘留／混合／空切換都 hold，五秒後原節點仍不寫；重試退避 3 秒倍增到 60 秒，不出 0 則警告。證據 `content/shared.js:1008`、`:148`；自己跑 `test:spa`。
+2. 修後通過：content 與持久化 DB 各自守五秒，held 不鎖 fingerprint；真 background 舊格式 fallback／worker 重載／同串更新也過。證據 `content/shared.js:1104`、`src/db.js:389`、`scripts/spa-review-test.mjs:168`；自己跑 `test:spa`。
+3. 通過：所有擷取路徑共用 pageIdentity，extract／diag await 後比 href，每個 chunk 前再檢查，background 比 browser sender URL。證據 `content/chatgpt.js:500`、`:517`、`content/shared.js:1315`、`background.js:324`；自己跑 `test:spa`，另加 selector／heuristic health await 中切 URL 的對抗測試。
+4. 通過：舊版跨 URL 日期快取確實漏讀 B JSON；無站上時間時標明 firstSeenAt 收錄時間，來源與排序未偽裝。證據 `content/chatgpt.js:59`、`src/activity-time.js:481`；自己跑 `test:spa`、`test:search` 的 activity／九語測試、`test:gemini`。
+5. 修後通過（保守限制見下）：先對齊再刪，只清已驗完整單批的 synthetic 缺席列；原生正常分支、部分／長窗口、另一串、縮圖及索引受保護。證據 `src/db.js:625`、`:665`、`scripts/spa-review-test.mjs:57`；自己跑 `test:spa`、`test:upgrade`／`test:search` 的圖片與 3000 列／500 縮圖整理對抗測試。另補舊列圖片 byte counter／blob 斷言。
+6. 通過：基準是 git show 載入真 213dde2 content／DB／依賴，selector、heuristic 均斷言 B DB 含 A 正文；新版延遲／混合／快速／back 不串文。Chrome SPA 段查 DB 各串恰一則且全文正確，不只查 UI 文字。證據 `scripts/spa-switch-test.mjs:46`、`scripts/e2e-chatgpt.mjs:687`；自己跑 `test:spa` 與 e2e 語法檢查。Chrome 兩種 e2e 各兩次通過是上節產品開發的外部證據，未冒稱本複審實跑。
+7. 通過：manifest 只有版本差異、permissions 精確 sidePanel、DB 4、無新依賴／網路／網站 DOM 寫入／未消毒 innerHTML。逐行 verify diff 除精確版號外均為新增掃描與斷言，舊守門不減。證據 `manifest.json:32`、`src/db.js:17`、`scripts/verify.mjs:289`、`:1342`；自己跑 `verify`、`test:upgrade`，$0。
+8. 通過：activity、圖片清單、sync、archive、progress、skeleton 回歸均過；1.7.2 老闆第 3 步與現有共同 turnId 證據規則相符；copy 結果五秒內不被搜尋刷新覆蓋。證據 `notes/HANDOFF-1.7.2.md:84`、`sidepanel/panel.js:860`、`scripts/panel-test.mjs:678`；自己跑 `test:search`、`test:sync`。
+9. 通過：production diff 限於 SPA 身分／hash、污染修復、日期與卡中指定的 copy 狀態競態；無額外功能或新依賴。證據開工卡「要修／順手」、`package.json:19`；完整 diff 審讀與 `git diff --check`。
+
+本複審最终實跑：`npm run verify`、`test:search`、`test:fixture`、`test:gemini`、`test:upgrade`、`test:sync`、`test:spa` 全部 exit 0；獨立新增八組對抗測試全過。`git diff --check` 與 `node --check scripts/e2e-chatgpt.mjs` 亦 exit 0。使用既有 node_modules，無下載、真站登入或費用。
+
+剩餘限制：缺完整證據／多 chunk 的污染舊列及缺席原生 id 保留；同 id 已驗完整正文可覆蓋。網站重用原訊息節點、標記長期衝突時保守不收，須重新載入。外部 Chrome／截圖／效能記錄是修前 PR HEAD 的結果，本複審修正後未重跑 Chrome；交接中尚無 500 張縮圖 Chrome 效能對 main 的實測數字，Node 的 500 圖資料完整性測試不能替代它。閱讀頁兩輪掛載值均略高於基準，冷啟動雜訊只是可能解釋，不能由兩輪確認效能無回退。
+
+複審結論：本工作樹程式審查修後通過；修正必須納入 PR。整體 VERDICT: BLOCK，理由是修後 Chrome 驗證仍缺、AGENTS.md 要求的 500 張縮圖 Chrome 效能對 main 對照未記錄；舊 HEAD 的外部通過與 Node 資料完整性測試不能充當這兩項證據。按老闆指示不在 sandbox 硬跑 Chrome，未 commit／push／合 main，未宣告 STATUS READY。

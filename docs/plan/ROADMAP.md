@@ -31,7 +31,7 @@
 
 開工卡：`docs/plan/cards/开工卡-Chatseek-1.7.2.1-P0-SPA切換串內文-2026-10-09.md`。基準 `213dde2`，分支 `fix/spa-switch`。Codex 同一 session 做根因、設計與寫碼；另一個 Codex session 複審，寫碼者不 commit／push／合併。
 
-已完成舊版 selector／heuristic 真實碼重現；新版本以頁面標記＋DOM 節點／正文 hash 擋殘留，多分頁用持久化 5 秒 hash 守門。日期不足時九語明標收錄時間、保留最後活動排序。污染修復只在完整快照且有 dom id 缺席／整段跨對話複製證據時清理，虛擬窗口不刪。SPA Node fixture、e2e／範例截圖腳本已寫。Chrome e2e／效能／截圖因 sandbox 的 localhost／browser 限制待外部執行；未複審、未合併，不能標 READY。交接 `notes/HANDOFF-1.7.2.1.md`。
+已完成舊版 selector／heuristic 真實碼重現；新版本以頁面標記＋DOM 節點擋殘留，多分頁用持久化 5 秒 hash 守門，同文新 DOM 不永久漏收。日期不足時九語明標收錄時間、保留最後活動排序。污染修復先對齊訊息再清理完整快照裡缺席的 synthetic 列；虛擬窗口及缺席原生列保留，避免正常同文分支與圖片被誤刪。SPA Node fixture、e2e／範例截圖脚本已寫；外部 Chrome 驗證與獨立複審詳見 `notes/HANDOFF-1.7.2.1.md`。未合併。
 
 ## 1.7.1 → 1.7.2 開發歷程（兩版皆已出）
 

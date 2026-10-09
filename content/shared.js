@@ -1014,7 +1014,9 @@ const Chatseek = {
         // Even an updated sidebar/canonical link cannot authorize residual
         // old turns. Mixed old/new DOM also stays held.
         if (nodes.some(n => page.nodes.has(n))) return false;
-        if (!markers.length && hash === page.hash) return false;
+        // Replaced message nodes prove a DOM transition even for two genuine
+        // identical transcripts. The independent five-second hash gates below
+        // still hold them briefly; equal wording must not hold them forever.
       }
       return true;
     };

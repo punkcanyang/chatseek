@@ -536,62 +536,6 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     if (conv?.tailMessageId === fromId) conv.tailMessageId = toId;
   }
 
-  // Absence is evidence only with a verified complete snapshot in ONE batch.
-  // Preserve stable native ids and same-body rekeys; a dom<N> row missing
-  // from a proved full transcript has no enduring website identity.
-  let repaired = false;
-  if (meta.identityVerified === true && meta.completePage === true &&
-      pageIds.length === messages.length && messages.every(m => !m.progress)) {
-    const ids = new Set(pageIds);
-    const bodies = new Set(messages.map(m => m.body));
-    const rows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
-    const isDomIdentity = row => row.id.startsWith(conversation.id + ":") && /:[0-9a-f]{1,8}:dom\d+$/.test(row.id);
-    const obsolete = rows.filter(row => !ids.has(row.id) && !bodies.has(row.body));
-    let duplicatedTranscript = false;
-    // Stable ids require stronger evidence: the ENTIRE stored transcript is
-    // an exact copy of another conversation, while the verified full page
-    // differs. Bound candidate lookup through the existing token index.
-    if (obsolete.some(row => !isDomIdentity(row)) && rows.length >= 2) {
-      const longest = rows.reduce((a, b) => a.body.length >= b.body.length ? a : b);
-      const token = tokenize(longest.body).at(-1);
-      const candidates = new Set();
-      let inspected = 0;
-      if (token) await cursorEach(tokenStore, {
-        range: IDBKeyRange.bound([token], [token, "\uffff", "\uffff"]),
-      }, row => {
-        if (row.conversationId !== conversation.id && row.conversationId?.startsWith(conversation.platform + ":")) candidates.add(row.conversationId);
-        return ++inspected >= 128 || candidates.size >= 20;
-      });
-      const signature = list => JSON.stringify(list.map(row => [row.role, row.body]));
-      const ownOrder = await loadOrderIds();
-      const own = signature(orderMessages(rows, ownOrder));
-      for (const candidate of candidates) {
-        const other = await requestDone(msgStore.index("conversationId").getAll(candidate));
-        if (other.length !== rows.length) continue;
-        const order = await requestDone(metaStore.get(ORDER_PREFIX + candidate));
-        if (signature(orderMessages(other, order?.ids)) === own) { duplicatedTranscript = true; break; }
-      }
-    }
-    const drops = obsolete.filter(row => isDomIdentity(row) || duplicatedTranscript);
-    if (drops.length) {
-      for (const row of drops) await deleteStoredMessage(row.id);
-      const dropped = new Set(drops.map(row => row.id));
-      rememberOrder((await loadOrderIds()).filter(id => !dropped.has(id)));
-      baselineCount = Math.max(0, baselineCount - drops.length);
-      if (dropped.has(baselineTail)) baselineTail = "";
-      conv.captureBaselineCount = baselineCount;
-      conv.captureBaselineTail = baselineTail;
-      conv.tailMessageId = baselineTail;
-      // Clear previews derived from contamination, then rebuild from capture.
-      conv.firstUserPreview = "";
-      conv.firstUserMessageId = "";
-      conv.lastPreview = "";
-      conv.lastPreviewRole = "";
-      identityChanged = true;
-      repaired = true;
-    }
-  }
-
   let missingId = false;
   if (conv && baselineCount > 0 && !titleOnly) {
     for (const msg of messages) {
@@ -678,10 +622,56 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
   }
 
+  // Align normal rekeys/growing turns first so their images survive.
+  // Absence is evidence only with a verified complete snapshot in ONE batch.
+  // Preserve stable native ids and same-body rekeys; a dom<N> row missing
+  // from a proved full transcript has no enduring website identity.
+  let repaired = false;
+  const completeSnapshot = meta.identityVerified === true && meta.completePage === true &&
+    pageIds.length === messages.length && messages.every((m, i) => !m.progress && m.id === pageIds[i]);
+  if (completeSnapshot) {
+    const ids = new Set(pageIds);
+    const bodies = new Set(messages.map(m => m.body));
+    const rows = await requestDone(msgStore.index("conversationId").getAll(conversation.id));
+    const isDomIdentity = row => row.id.startsWith(conversation.id + ":") &&
+      /^[0-9a-f]{1,8}:dom\d+$/.test(row.id.slice(conversation.id.length + 1));
+    const obsolete = rows.filter(row => !ids.has(row.id) && !bodies.has(row.body));
+    // Identical native transcripts can be legitimate copies or branches.
+    // Body equality with another conversation cannot authorize native deletion.
+    const drops = obsolete.filter(isDomIdentity);
+    if (drops.length) {
+      for (const row of drops) await deleteStoredMessage(row.id);
+      const dropped = new Set(drops.map(row => row.id));
+      rememberOrder((await loadOrderIds()).filter(id => !dropped.has(id)));
+      baselineCount = Math.max(0, baselineCount - drops.length);
+      if (dropped.has(baselineTail)) baselineTail = "";
+      conv.captureBaselineCount = baselineCount;
+      conv.captureBaselineTail = baselineTail;
+      conv.tailMessageId = baselineTail;
+      // Clear previews derived from contamination, then rebuild from capture.
+      conv.firstUserPreview = "";
+      conv.firstUserMessageId = "";
+      conv.lastPreview = "";
+      conv.lastPreviewRole = "";
+      identityChanged = true;
+      repaired = true;
+    }
+  }
+
   for (const [captureIndex, msg] of messages.entries()) {
     if (!msg?.id || typeof msg.body !== "string" || !msg.body) continue;
     const existing = await requestDone(msgStore.get(msg.id));
-    if (existing && (existing.body === msg.body || poorerBody(existing.body, msg.body))) continue;
+    if (existing?.body === msg.body) continue;
+    if (existing && poorerBody(existing.body, msg.body)) {
+      if (!completeSnapshot) continue;
+      // A verified full page can correct a polluted longer prefix. Partial
+      // repaints still retain the longer stored body and its image records.
+      conv.firstUserPreview = "";
+      conv.firstUserMessageId = "";
+      conv.lastPreview = "";
+      conv.lastPreviewRole = "";
+      repaired = true;
+    }
     if (!titleOnly && !existing && baselineCount > pageCount && pageCount > 0) {
       const needle = msg.body.trim();
       if (needle.length >= 12) {

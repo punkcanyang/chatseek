@@ -201,10 +201,13 @@ for (const partial of [false,true]) {
   if(!partial) assert(!tokens.some(r=>r.source===stale.id),'stale search tokens deleted');
   assert.equal((await db.readImagesForMessages([stale.id])).length,partial?1:0,'stale thumbnail removed with row');
   assert.equal((await db.readImagesForMessages([stable.id])).length,1,'normal thumbnail survives');
+  assert.equal(await db.imageCacheUsage(),partial?3:1,'repair decrements only the deleted thumbnail bytes');
+  if(!partial) assert.equal(await db.readImageBytes(stale.id,0),null,'deleted thumbnail blob cannot be read');
+  assert.equal((await db.readImageBytes(stable.id,0)).blob.byteLength,1,'native image bytes retained');
   dom.window.close();
 }
 console.log('complete repair clears wrong dom rows/tokens/previews; partial + stable rows preserved');
-// Native rows need exact whole-transcript cross-conversation evidence.
+// Even an identical whole transcript can be a legitimate native-id branch.
 for (const full of [false,true]) {
   await reset();
   const c=n=>({id:`chatgpt:${ids[n]}`,platform:'chatgpt',platformId:ids[n],url:url(n),title:'Sample'});
@@ -215,11 +218,11 @@ for (const full of [false,true]) {
   if(full) { const n=dom.window.document.querySelector('[data-turn]'); n.setAttribute('aria-setsize','1');n.setAttribute('aria-posinset','1'); }
   const a=api(dom,db); await capture(a);
   const stored=await rows(1);
-  assert.equal(stored.some(m=>m.body===body(0)),!full,'native cross-copy removed only after full page proof');
+  assert(stored.some(m=>m.body===body(0)),'native cross-copy preserved even after full page proof');
   assert.deepEqual((await rows(0)).map(m=>m.body),old(0).map(m=>m.body),'source conversation untouched');
   dom.window.close();
 }
-console.log('native cross-conversation transcript repair conservative and source retained');
+console.log('native identical transcripts and source retained');
 // Full-page evidence from exported JSON ancestry: never accept missing turns,
 // branches, wrong conversation, streaming, or virtualized windows.
 {
