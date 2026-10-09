@@ -251,6 +251,7 @@ export function mountImageGrid(scroller, options = {}) {
     }
     spacer.style.height = `${range.total}px`;
     const seen = new Set();
+    const placed = [];
     const cellW = Math.max(40, (width - gap * (cols - 1)) / cols);
     for (let i = range.start; i < range.end; i += 1) {
       const card = cards[i];
@@ -273,8 +274,9 @@ export function mountImageGrid(scroller, options = {}) {
       cell.style.left = `${col * (cellW + gap)}px`;
       cell.style.width = `${cellW}px`;
       cell.style.height = `${rowHeight - gap}px`;
-      if (cell.parentNode !== pool) pool.append(cell);
+      placed.push(cell);
     }
+    for (const cell of placed) pool.append(cell);
     for (const [key, cell] of cells) {
       if (seen.has(key)) continue;
       dropCell(key, cell);

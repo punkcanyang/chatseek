@@ -130,6 +130,13 @@ view.setCards(many);
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert(scroller.scrollTop === 5000, `refresh keeps the scroll position ${scroller.scrollTop}`);
 assert(loads.length === decoded, `refresh decoded the same thumbs again (${loads.length - decoded})`);
+const swapped = many.map((card, index) => (
+  index === 0 ? { ...card, status: "cleared", bytes: 0 } : card
+));
+scroller.scrollTop = 0;
+view.setCards(swapped);
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert(scroller.querySelector(".shot")?.dataset.status === "cleared", "rebuilt cells stay in card order");
 view.destroy();
 assert(scroller.children.length === 0, "destroy drops the grid");
 
