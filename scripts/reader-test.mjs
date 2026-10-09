@@ -161,6 +161,10 @@ assert(plain.host.querySelector(".msg-user .msg-role")?.textContent === "你", "
 assert(plain.host.querySelector(".msg-assistant .msg-role")?.textContent === "助手", "assistant role label");
 assert(plain.host.querySelector("#readerPlatform")?.textContent === "ChatGPT", "platform label");
 assert(plain.host.querySelector("#readerDate")?.textContent, "date label");
+const mountedBeforeClock = plain.view.renderedMessages();
+plain.view.setActivity({ updatedAt: Date.now(), updatedAtSource: "observed" });
+assert(plain.host.querySelector("#readerDate")?.textContent === "刚刚", "reader clock follows a new observed time");
+assert(plain.view.renderedMessages() === mountedBeforeClock, "a clock update must not remount messages");
 assert(plain.host.querySelector("#hitCount")?.hidden === true, "no search: no hit counter");
 assert(plain.host.querySelector("#prevHit")?.hidden && plain.host.querySelector("#nextHit")?.hidden, "no search: no hit buttons");
 assert(!plain.host.querySelector("#openOriginal")?.hidden, "no search: original site stays");

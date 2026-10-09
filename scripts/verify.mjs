@@ -3,6 +3,7 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
+import { mergeActivityTime, pageShowsNewActivity } from "../src/activity-time.js";
 import { tokenize, queryTokens } from "../src/tokenize.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -85,7 +86,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.3") fail(`version should be 1.6.3, got ${manifest.version}`);
+if (manifest.version !== "1.6.4") fail(`version should be 1.6.4, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -620,6 +621,71 @@ for (const line of [
     fail(`time source rank drifted: ${line}`);
   }
 }
+const olderExact = Date.UTC(2024, 3, 2, 9, 0, 0);
+const observedNow = olderExact + 86400000 * 400;
+const stamped = mergeActivityTime(
+  { updatedAt: olderExact, updatedAtSource: "page-exact", firstSeenAt: olderExact },
+  { updatedAt: observedNow, updatedAtSource: "observed" },
+  observedNow,
+);
+if (stamped.updatedAt !== observedNow || stamped.updatedAtSource !== "observed") {
+  fail("a newer observed stamp must replace an older page-exact time");
+}
+const kept = mergeActivityTime(stamped, { updatedAt: olderExact, updatedAtSource: "page-exact" }, observedNow);
+if (kept.updatedAt !== observedNow || kept.updatedAtSource !== "observed") {
+  fail("an older page-exact time must not roll an observed clock backward");
+}
+const rekeyed = pageShowsNewActivity({
+  baselineCount: 2,
+  baselineTail: "old-tail",
+  baselineTailBody: "A pangolin rolls into a ball when the ridge feels unsafe.",
+  pageIds: ["h-user", "h-asst", "h-new"],
+  pageBodies: [
+    { id: "h-user", body: "The ridge path stays dry until the afternoon rain starts." },
+    { id: "h-asst", body: "A pangolin rolls into a ball when the ridge feels unsafe." },
+    { id: "h-new", body: "NEW_TAIL_TOKEN The pangolin asked what the ridge looks like after rain." },
+  ],
+});
+if (!rekeyed) fail("a re-keyed capture with a new ending must count as activity");
+const sameEnding = pageShowsNewActivity({
+  baselineCount: 2,
+  baselineTail: "old-tail",
+  baselineTailBody: "A pangolin rolls into a ball when the ridge feels unsafe.",
+  pageIds: ["h-user", "h-asst"],
+  pageBodies: [
+    { id: "h-user", body: "The ridge path stays dry until the afternoon rain starts." },
+    { id: "h-asst", body: "**A** pangolin rolls into a ball when the ridge feels unsafe." },
+  ],
+});
+if (sameEnding) fail("re-keying the same ending must not count as activity");
+const scrollback = pageShowsNewActivity({
+  baselineCount: 2,
+  baselineTail: "tail",
+  baselineTailBody: "visible end of the stored thread",
+  pageIds: ["older", "start", "tail"],
+  pageBodies: [
+    { id: "older", body: "older message loaded by scrolling up the transcript" },
+    { id: "tail", body: "visible end of the stored thread" },
+  ],
+});
+if (scrollback) fail("scrollback must not count as activity");
+if (!dbSrc.includes("pageShowsNewActivity")) fail("db.js must decide activity from the page ending");
+if (!dbSrc.includes("alignRekeyedTurns") || !dbSrc.includes("planCloneDrops")) {
+  fail("db.js must collapse a re-keyed copy of the same turn");
+}
+if (!read("src/message-identity.js").includes("turnStamp")) {
+  fail("re-keyed turns need a role and normalized-text identity");
+}
+if (!read("content/shared.js").includes("Chatseek.debounce(invoke, 800)")) {
+  fail("capture must stay debounced so a stream does not write every token");
+}
+const readerSrc = read("reader/reader.js");
+if (!readerSrc.includes("INDEX_UPDATED") || !readerSrc.includes("readConversationRow")) {
+  fail("the reader must refresh its clock from the conversation row");
+}
+if (!readerSrc.includes("clearInterval(readerClock)")) {
+  fail("the reader clock must stop while the reader is hidden");
+}
 const beforeCopy = {
   zh_TW: "早於",
   zh_CN: "早于",
@@ -702,6 +768,12 @@ const archivedOrder = panelHtml.indexOf('data-scope="archived"');
 const allOrder = panelHtml.indexOf('id="filterAll"');
 if (!(tabOrder < gptOrder && gptOrder < archivedOrder && archivedOrder < allOrder)) {
   fail("tab order should be active, platforms, archived, all");
+}
+if (!panelSrc.includes("paintActivityTimes")) {
+  fail("the side panel must repaint relative activity labels");
+}
+if (!panelSrc.includes("clearInterval(activityClock)")) {
+  fail("the side panel clock must stop while the panel is hidden");
 }
 if (!/gemini:\s*"Gemini"/.test(panelSrc)) fail("side panel should name Gemini");
 if (!/removeConversation/.test(panelSrc)) fail("side panel should remove a row from the local index");
