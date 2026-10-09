@@ -91,16 +91,15 @@ assert(PROGRESS_PHRASES.some((p) => /[\uac00-\ud7af]/.test(p)), "ko phrases pres
     { id: "p3", role: "assistant", body: "Adding details 80%" },
     { id: "final", role: "assistant", body: "Here is the image." },
   ];
-  const plans = planProgressMerges(rows.map(row => ({ ...row, conversationId: "fixture", captureIndex: 1 })));
+  const plans = planProgressMerges(rows.map(row => ({ ...row, conversationId: "fixture", captureIndex: 1, turnId: "fixture-turn" })));
   assert(plans.length === 1, "one merge plan");
   assert(plans[0].keep === "final", "the settled turn is kept");
   assert(plans[0].drop.join(",") === "p1,p2,p3", "the progress run is dropped");
-  // Without a settled tail the run keeps its own last row. The governing user
-  // row is the extra position evidence the conservative merge rule requires.
+  // Without a settled tail the run keeps its last row only with a shared turn.
   const tail = planProgressMerges([
     { id: "tu", role: "user", body: "draw", conversationId: "fixture", captureIndex: 0 },
-    { id: "a", role: "assistant", body: "Sketching 40%", conversationId: "fixture", captureIndex: 1 },
-    { id: "b", role: "assistant", body: "Adding details 80%", conversationId: "fixture", captureIndex: 1 },
+    { id: "a", role: "assistant", body: "Sketching 40%", conversationId: "fixture", captureIndex: 1, turnId: "tail-turn" },
+    { id: "b", role: "assistant", body: "Adding details 80%", conversationId: "fixture", captureIndex: 1, turnId: "tail-turn" },
   ]);
   assert(tail.length === 1 && tail[0].keep === "b" && tail[0].drop[0] === "a", "a run without a settled tail keeps its last row");
   // Same slot but no evidence at all: left alone (keep a duplicate, never
@@ -391,8 +390,9 @@ async function repairAll() {
 }
 
 // ---------------------------------------------------------------- Part C
-// Migration of the <= 1.7.1 duplicates. The time order and the stored order
-// meta disagree on purpose: only a time-ordered repair keeps the settled turn.
+// Migration with explicit persisted position evidence. Legacy rows lacking
+// turn identity (Part A) must survive; captureIndex is only window-local.
+// Time order and stored order disagree: keep the settled turn.
 {
   const Chatseek = loadChatseek();
   const CONV_C = `${CONV_ID}:c`;
@@ -407,11 +407,11 @@ async function repairAll() {
     },
     messages: [
       { id: `${CONV_C}:u`, conversationId: CONV_C, role: "user", body: USER_TEXT, capturedAt: T - 1, captureIndex: 0 },
-      { id: p(1), conversationId: CONV_C, role: "assistant", body: TICKS[0], capturedAt: T, captureIndex: 0 },
-      { id: p(2), conversationId: CONV_C, role: "assistant", body: TICKS[1], capturedAt: T + 1, captureIndex: 0 },
-      { id: finalId, conversationId: CONV_C, role: "assistant", body: SETTLED_BODY, capturedAt: T + 2, captureIndex: 0 },
-      { id: q(1), conversationId: CONV_C, role: "assistant", body: "Sketching 38%", capturedAt: T + 3, captureIndex: 1 },
-      { id: q(2), conversationId: CONV_C, role: "assistant", body: "Adding details 80%", capturedAt: T + 4, captureIndex: 1 },
+      { id: p(1), conversationId: CONV_C, role: "assistant", body: TICKS[0], capturedAt: T, captureIndex: 0, turnId: "settled-turn" },
+      { id: p(2), conversationId: CONV_C, role: "assistant", body: TICKS[1], capturedAt: T + 1, captureIndex: 0, turnId: "settled-turn" },
+      { id: finalId, conversationId: CONV_C, role: "assistant", body: SETTLED_BODY, capturedAt: T + 2, captureIndex: 0, turnId: "settled-turn" },
+      { id: q(1), conversationId: CONV_C, role: "assistant", body: "Sketching 38%", capturedAt: T + 3, captureIndex: 1, turnId: "orphan-turn" },
+      { id: q(2), conversationId: CONV_C, role: "assistant", body: "Adding details 80%", capturedAt: T + 4, captureIndex: 1, turnId: "orphan-turn" },
     ],
     order: [`${CONV_C}:u`, p(1), finalId, p(2), q(1), q(2)],
     images: [
@@ -426,6 +426,8 @@ async function repairAll() {
   const first = await repairAll();
   console.log("Part C  repair merged:", first.merged, "dropped:", first.dropped, "done:", first.done);
   assert(first.done === true, "repair reports done");
+  assert((await db.readConversation(`${CONV_ID}:a`)).messages.length === 5,
+    "legacy duplicate rows without turn evidence remain intact");
   assert(first.merged >= 2, "the seeded runs were merged");
   const after = await db.readConversation(CONV_C);
   const ids = after.messages.map((m) => m.id);

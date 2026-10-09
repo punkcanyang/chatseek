@@ -652,7 +652,7 @@ async function copyPageStructure() {
   showDiagBox(text);
   if (statusEl) {
     statusEl.hidden = false;
-    statusEl.textContent = t.copyStructureManual;
+    statusEl.textContent = `${t.copyStructureDone(text.length)} ${t.copyStructureManual}`;
   }
 }
 

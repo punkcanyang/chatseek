@@ -316,8 +316,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     // The one-time progress-duplicate tidy runs in the background and is
-    // bounded per transaction; a fresh capture never waits behind it. It is
-    // fire-and-forget so a slow or stuck repair cannot delay the response.
+    // bounded per transaction. A fresh capture does not await the whole tidy;
+    // it can queue behind one slice on the shared IndexedDB stores.
     ensureProgressRepair().catch(() => null);
     upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
       .then((result) => {

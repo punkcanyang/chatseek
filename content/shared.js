@@ -3116,34 +3116,24 @@ Chatseek.charBucket = (n) => {
 
 Chatseek.cleanClassToken = (raw) => {
   const out = [];
-  for (const rawToken of String(raw || "").toLowerCase().split(/\s+/)) {
-    if (!rawToken) continue;
-    for (const piece of rawToken.split(/[^a-z-]+/)) {
-      const bits = piece.split("-").filter((bit) => bit.length >= 2 && !/^[a-f]{6,}$/.test(bit));
-      const token = bits.join("-").replace(/^-+|-+$/g, "");
-      if (token.length < 2 || token.length > 24) continue;
-      out.push(token);
-      if (out.length >= 3) return out;
+  for (const token of String(raw || "").slice(0, 256).split(/\s+/).filter(Boolean).slice(0, 3)) {
+    if (SKELETON_ENUMS.get("data-testid").has(token)) out.push(token);
+    else {
+      const prefix = skeletonClasses(token);
+      if (prefix && prefix !== "x" && prefix !== "h") out.push(prefix);
     }
   }
   return out;
 };
 
 function describeEl(el) {
-  const tag = String(el?.tagName || "").toLowerCase();
-  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return "";
+  const tag = skeletonTagName(el?.tagName);
   const names = [];
   const attrs = el.attributes;
-  if (attrs) {
-    for (const attr of [...attrs]) {
-      const name = String(attr?.name || "").toLowerCase();
-      if (!name || name === "class" || name === "style") continue;
-      if (/^(href|src|srcdoc|alt|title|value|placeholder)$/.test(name)) continue;
-      if (!/^[a-z][a-z0-9:-]*$/.test(name)) continue;
-      const bare = name.replace(/[^a-z-]/g, "");
-      if (bare.length >= 2) names.push(bare);
-      if (names.length >= 4) break;
-    }
+  for (let i = 0; i < Math.min(attrs?.length || 0, 64) && names.length < 4; i += 1) {
+    const name = skeletonAttrName(attrs[i]?.name);
+    if (/^(class|style|href|src|srcdoc|alt|title|value|placeholder)$/.test(name)) continue;
+    names.push(name);
   }
   const tokens = [
     ...Chatseek.cleanClassToken(el.getAttribute?.("data-testid")),
@@ -3163,7 +3153,7 @@ function frameHostname(frame) {
     try {
       if (typeof location !== "undefined" && location.href) base = location.href;
     } catch { /* keep the fallback base */ }
-    return String(new URL(src, base).hostname || "").toLowerCase();
+    return skeletonHostname(String(new URL(src, base).hostname || "").toLowerCase());
   } catch {
     return "";
   }
@@ -3250,7 +3240,7 @@ Chatseek.structureDiag = (doc) => {
   if (rootHasMain(top)) places.push("top");
   const shadowEntries = Chatseek.shadowHosts(top, { closed: true });
   const shadows = shadowEntries.map((entry) => ({
-    tag: String(entry.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+    tag: skeletonTagName(entry.tag || "div"),
     mode: entry.mode === "closed" ? "closed" : "open",
   }));
   if (shadowEntries.some((entry) => rootHasMain(entry.root))) places.push("shadow");
@@ -3316,7 +3306,7 @@ Chatseek.structureDiagPaced = async (doc) => {
   for (const scope of embedded) {
     if (scope.kind === "shadow") {
       shadows.push({
-        tag: String(scope.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+        tag: skeletonTagName(scope.tag || "div"),
         mode: scope.mode === "closed" ? "closed" : "open",
       });
       if (rootHasMain(scope.node) && !places.includes("shadow")) places.push("shadow");
@@ -3364,13 +3354,20 @@ Chatseek.formatStructure = (structure) => {
   const frames = (Array.isArray(structure.frames) ? structure.frames : [])
     .map((item) => String(item || "").toLowerCase())
     .filter((item) => /^[a-z0-9.-]+:(script|noscript)$/.test(item))
+    .map((item) => {
+      const at = item.lastIndexOf(":");
+      return skeletonHostname(item.slice(0, at)) + item.slice(at);
+    })
     .slice(0, 6);
   const shadows = (Array.isArray(structure.shadows) ? structure.shadows : [])
     .map((item) => {
-      if (typeof item === "string") return item.toLowerCase();
+      if (typeof item === "string") {
+        const match = item.toLowerCase().match(/^([a-z][a-z0-9-]*):(open|closed)$/);
+        return match ? `${skeletonTagName(match[1])}:${match[2]}` : "";
+      }
       const tag = String(item?.tag || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
       const mode = item?.mode === "closed" ? "closed" : "open";
-      return tag ? `${tag}:${mode}` : "";
+      return tag ? `${skeletonTagName(tag)}:${mode}` : "";
     })
     .filter((item) => /^[a-z0-9-]+:(open|closed)$/.test(item))
     .slice(0, 6);
@@ -3538,161 +3535,157 @@ function skeletonIndent(depth) {
   return "  ".repeat(Math.max(0, Math.min(depth, SKELETON_DEPTH)));
 }
 
-// A value survives only when it is a short, plain enum. Anything that could be
-// an opaque token — a uuid, a long hex/base-ish run, a sentence — is dropped.
-function skeletonEnum(value) {
-  if (typeof value !== "string" || value === "") return null;
-  if (value.length > 32) return null;
-  if (!/^[A-Za-z0-9_:-]+$/.test(value)) return null;
-  if (Chatseek.UUID.test(value)) return null;
-  if (/^[0-9a-f]{16,}$/i.test(value)) return null;
-  if (/^[A-Za-z0-9_:-]{24,}$/.test(value)) return null;
-  return value;
+// Names can themselves contain private data. Only vocabulary known to describe
+// DOM structure is emitted verbatim; unknown names/tags get fixed placeholders.
+const SKELETON_TAGS = new Set((
+  "html head body title meta link base style script noscript template slot main nav " +
+  "header footer aside section article div span p a button input textarea select option " +
+  "form label fieldset legend img picture source video audio canvas iframe frame " +
+  "ul ol li dl dt dd table thead tbody tfoot tr th td caption col colgroup h1 h2 h3 h4 h5 h6 " +
+  "pre code blockquote br hr b i u s em strong small sup sub details summary figure figcaption " +
+  "time progress meter output dialog svg g path rect circle ellipse line polyline polygon " +
+  "defs use symbol text tspan clipPath mask linearGradient radialGradient stop foreignObject " +
+  "math mi mo mn ms mtext mrow annotation semantics"
+).toLowerCase().split(/\s+/));
+const SKELETON_ATTRS = new Set((
+  "id class role title alt placeholder href src srcdoc style value name content type " +
+  "width height hidden disabled checked selected multiple readonly required tabindex " +
+  "contenteditable dir lang charset rel target loading decoding draggable slot part datetime " +
+  "viewbox d fill stroke xmlns focusable data-testid data-turn data-message-author-role " +
+  "data-message-id data-conversation-id data-is-streaming data-state data-kind " +
+  "data-turn-id data-turn-id-container data-message-content data-message-author data-test-id " +
+  "data-time data-timestamp data-updated-at data-updatedat data-role data-line-number " +
+  "aria-label aria-labelledby aria-describedby aria-hidden aria-expanded aria-selected " +
+  "aria-checked aria-busy aria-live aria-atomic aria-disabled aria-controls aria-current " +
+  "aria-valuenow aria-valuemin aria-valuemax aria-valuetext"
+).split(/\s+/));
+const SKELETON_ENUMS = new Map([
+  ["role", "main navigation complementary banner contentinfo article document list listitem " +
+    "button textbox img status progressbar alert dialog tab tablist tabpanel region group presentation none"],
+  ["data-message-author-role", "assistant user system tool"], ["data-turn", "assistant user system tool"],
+  ["data-testid", "message-turn conversation-turn conversation-title conversation-list markdown"],
+  ["data-kind", "open closed shadow-host"], ["data-state", "open closed loading complete idle streaming"],
+  ["data-is-streaming", "true false"], ["contenteditable", "true false plaintext-only"],
+  ["dir", "ltr rtl auto"], ["lang", "en zh zh-CN zh-TW ja ko es pt-BR fr de"],
+  ["charset", "utf-8 UTF-8"], ["type", "button submit reset text password checkbox radio search number"],
+  ["loading", "lazy eager"], ["decoding", "async sync auto"], ["aria-live", "off polite assertive"],
+  ...["aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-busy", "aria-atomic",
+    "aria-disabled", "draggable", "focusable"].map(name => [name, "true false mixed"]),
+].map(([name, values]) => [name, new Set(values.split(" "))]));
+const SKELETON_CLASSES = new Set((
+  "prose markdown message conversation sidebar container group text whitespace truncate " +
+  "flex grid block inline hidden relative absolute fixed sticky overflow items justify " +
+  "rounded border bg font leading gap space p px py m mx my w h min max light dark archived"
+).split(/\s+/));
+
+function skeletonTagName(name) {
+  const tag = String(name || "").toLowerCase();
+  return SKELETON_TAGS.has(tag) ? tag : "element-x";
 }
 
-// null means "this name always hides its value" (id-like, url-like, prose-like).
-function skeletonAttrValue(name, value) {
+function skeletonHostname(host) {
+  return String(host || "").split(".").map(label =>
+    Chatseek.UUID.test(label) || /[0-9a-f]{16,}/i.test(label) || /^[A-Za-z0-9_-]{24,}$/.test(label) ? "x" : label
+  ).join(".");
+}
+
+function skeletonAttrName(name) {
   const key = String(name || "").toLowerCase();
-  if (
-    key === "id" || key === "value" || key === "name" || key === "content" ||
-    key === "srcdoc" || key === "style" || key === "title" || key === "alt" ||
-    key === "placeholder" || key === "href" || key === "src" ||
-    key === "aria-label" || key === "class" || /^on/.test(key) ||
-    /-id$/.test(key)
-  ) return null;
-  const en = skeletonEnum(value);
-  return en == null ? "x" : en;
+  return SKELETON_ATTRS.has(key) ? key : key.startsWith("data-") ? "data-x" : "attr-x";
 }
 
-// Keep up to three class tokens, each reduced to its prefix (before the first
-// -/_ or 20 chars); a hash-looking token becomes `h`.
+function skeletonAttrValue(name, value) {
+  // A character/length check alone cannot distinguish "alice" from an enum.
+  const values = SKELETON_ENUMS.get(name);
+  if (!values || typeof value !== "string" || value.length > 32 ||
+      !/^[A-Za-z0-9_:-]+$/.test(value) || Chatseek.UUID.test(value)) return "x";
+  return values.has(value) ? value : "x";
+}
+
 function skeletonClasses(value) {
-  const tokens = String(value || "").split(/\s+/).filter(Boolean).slice(0, 3);
-  const out = tokens.map((token) => {
-    let s = token;
-    const cut = s.search(/[-_]/);
-    if (cut > 0) s = s.slice(0, cut);
-    if (s.length > 20) s = s.slice(0, 20);
-    if (!s) return "x";
-    if (/[0-9a-f]{10,}/i.test(s) || /^\d{5,}$/.test(s)) return "h";
-    return s;
-  });
-  return out.join(".");
+  // Bound parsing as well as output. No arbitrary word may become a class hint.
+  const tokens = String(value || "").slice(0, 256).split(/\s+/).filter(Boolean).slice(0, 3);
+  return tokens.map(token => {
+    if (/[0-9a-f]{10,}/i.test(token) || /^\d{5,}$/.test(token) ||
+        (/^[A-Za-z0-9_-]{24,}$/.test(token))) return "h";
+    const prefix = token.split(/[-_]/)[0];
+    return prefix.length <= 20 && SKELETON_CLASSES.has(prefix) ? prefix : "x";
+  }).join(".");
 }
 
-function skeletonAttrs(node) {
-  let attrs = [];
-  try { attrs = node.attributes ? [...node.attributes] : []; } catch { attrs = []; }
-  return attrs;
-}
-
-function skeletonElementLine(node, depth, childCount, note) {
-  const tag = String(node.tagName || "").toLowerCase() || "?";
+function skeletonElementLine(node, depth, childCount, note, state) {
+  const tag = skeletonTagName(node.tagName);
   let line = `${skeletonIndent(depth)}${tag} d${depth} c${childCount}`;
-  for (const attr of skeletonAttrs(node)) {
-    const name = String(attr.name || "").toLowerCase();
-    if (!name) continue;
-    if (name === "class") { line += ` class=${skeletonClasses(attr.value)}`; continue; }
-    const shown = skeletonAttrValue(name, attr.value);
-    line += ` ${name}=${shown == null ? "x" : shown}`;
+  const attrs = node.attributes;
+  // Even malicious elements with thousands of attribute names remain bounded.
+  const length = Math.min(attrs?.length || 0, 64);
+  for (let i = 0; i < length; i += 1) {
+    const attr = attrs[i];
+    const name = skeletonAttrName(attr.name);
+    const shown = name === "class" ? skeletonClasses(attr.value) : skeletonAttrValue(name, attr.value);
+    line += ` ${name}=${shown}`;
   }
-  return line + (note || "");
+  if ((attrs?.length || 0) > length) { state.truncated = true; line += " #attrs-truncated"; }
+  return line + note;
 }
 
-// Shallow signature: two consecutive siblings with the same signature collapse
-// to one line with "×N". Structure, not content, decides sameness.
-function skeletonSignature(node) {
-  if (!node) return null;
-  if (node.nodeType === 3) return `#text(${String(node.nodeValue || "").length})`;
-  if (node.nodeType !== 1) return null;
-  const tag = String(node.tagName || "").toLowerCase();
-  let sig = tag;
-  for (const attr of skeletonAttrs(node)) {
-    const name = String(attr.name || "").toLowerCase();
-    if (!name) continue;
-    if (name === "class") { sig += ` class=${skeletonClasses(attr.value)}`; continue; }
-    const shown = skeletonAttrValue(name, attr.value);
-    sig += ` ${name}=${shown == null ? "x" : shown}`;
-  }
-  let kids = 0;
-  let text = 0;
-  try {
-    kids = node.childNodes ? node.childNodes.length : 0;
-    for (const child of (node.childNodes || [])) {
-      if (child.nodeType === 3) text += String(child.nodeValue || "").length;
-    }
-  } catch { /* unreadable frame */ }
-  return `${sig}|${kids}|${text}`;
-}
-
-// Children to descend into: an open/closed shadow root replaces the light DOM
-// (like the extractor), a same-origin iframe exposes its document element, and a
-// cross-origin frame exposes only its host.
 function skeletonChildren(node) {
   const tag = String(node.tagName || "").toLowerCase();
   if (tag === "iframe" || tag === "frame") {
     let doc = null;
-    try { doc = node.contentDocument; } catch { doc = null; }
-    if (doc && doc.documentElement) {
-      return { children: [doc.documentElement], note: " #same-origin-frame" };
-    }
+    try { doc = node.contentDocument; } catch { /* cross-origin */ }
+    if (doc?.documentElement) return { children: [doc.documentElement], note: " #same-origin-frame" };
     let host = "";
     try {
-      const src = node.getAttribute ? node.getAttribute("src") : "";
-      if (src) host = String(new URL(src, "https://x.invalid/").hostname || "");
-    } catch { host = ""; }
+      const src = node.getAttribute("src") || "";
+      // Relative paths cannot tell us a domain without reading the page URL.
+      // Do not manufacture x.invalid or copy the path into the output.
+      if (/^(?:https?:)?\/\//i.test(src)) {
+        const url = new URL(src.startsWith("//") ? "https:" + src : src);
+        if (url.protocol === "http:" || url.protocol === "https:") host = skeletonHostname(url.hostname);
+      }
+    } catch { /* invalid URL */ }
     return { children: [], note: host ? ` #cross-origin host=${host}` : " #cross-origin" };
   }
   const adopted = adoptedRoot(node, true);
-  if (adopted) {
-    let kids = [];
-    try { kids = adopted.root?.childNodes ? [...adopted.root.childNodes] : []; } catch { kids = []; }
-    return { children: kids, note: adopted.mode === "open" ? "" : " #shadow" };
-  }
-  let kids = [];
-  try { kids = node.childNodes ? [...node.childNodes] : []; } catch { kids = []; }
-  return { children: kids, note: "" };
+  // Preserve both trees: light DOM may contain slotted messages or a frame.
+  return { children: node.childNodes || [], shadow: adopted?.root?.childNodes,
+    note: adopted ? (adopted.mode === "open" ? " #open-shadow" : " #shadow") : "" };
 }
 
-function skeletonGroups(nodes) {
-  const groups = [];
-  let i = 0;
-  while (i < nodes.length) {
-    const sig = skeletonSignature(nodes[i]);
-    if (sig == null) { groups.push({ node: nodes[i], count: 1 }); i += 1; continue; }
-    let j = i + 1;
-    while (j < nodes.length && skeletonSignature(nodes[j]) === sig) j += 1;
-    groups.push({ node: nodes[i], count: j - i });
-    i = j;
+function skeletonEmit(node, depth, state) {
+  if (!node || state.nodes >= SKELETON_NODES || depth > SKELETON_DEPTH) {
+    state.truncated = true; return [];
   }
-  return groups;
-}
-
-function skeletonEmit(node, depth, lines, state, count) {
-  if (!node || state.nodes >= SKELETON_NODES) { state.truncated = true; return; }
-  if (node.nodeType === 3) {
-    state.nodes += 1;
-    const len = String(node.nodeValue || "").length;
-    lines.push(`${skeletonIndent(depth)}#text(${len})${count > 1 ? ` ×${count}` : ""}`);
-    return;
+  state.nodes += 1; // Count every visited node, including collapsed siblings.
+  if (node.nodeType !== 1 && node.nodeType !== 3) return [];
+  if (node.nodeType === 3) return [`${skeletonIndent(depth)}#text(${String(node.nodeValue || "").length})`];
+  const { children, shadow, note } = skeletonChildren(node);
+  const lines = [skeletonElementLine(node, depth, children.length + (shadow?.length || 0), note, state)];
+  // Compare complete sanitized subtree outlines, not a shallow tag signature.
+  // A collapsed group keeps its children's outline, so useful selectors remain.
+  for (const siblings of [children, shadow || []]) {
+    let previous = null;
+    let count = 0;
+    const flush = () => {
+      if (previous) lines.push(previous[0] + (count > 1 ? ` ×${count}` : ""), ...previous.slice(1));
+    };
+    for (let i = 0; i < siblings.length; i += 1) {
+      if (state.nodes >= SKELETON_NODES) { state.truncated = true; break; }
+      const branch = skeletonEmit(siblings[i], depth + 1, state);
+      if (!branch.length) continue;
+      if (previous && branch.length === previous.length && branch.every((line, at) => line === previous[at])) count += 1;
+      else { flush(); previous = branch; count = 1; }
+    }
+    flush();
   }
-  if (node.nodeType !== 1) return;
-  if (depth > SKELETON_DEPTH) { state.truncated = true; return; }
-  state.nodes += 1;
-  const { children, note } = skeletonChildren(node);
-  const times = count > 1 ? ` ×${count}` : "";
-  lines.push(skeletonElementLine(node, depth, children.length, note) + times);
-  if (count > 1) return; // isomorphic siblings share one outline
-  for (const group of skeletonGroups(children)) {
-    skeletonEmit(group.node, depth + 1, lines, state, group.count);
-  }
+  return lines;
 }
 
 Chatseek.buildPageSkeleton = (doc) => {
   const target = doc || (typeof document !== "undefined" ? document : null);
   const state = { nodes: 0, truncated: false };
-  const body = [];
-  if (target && target.documentElement) skeletonEmit(target.documentElement, 0, body, state, 1);
+  const body = target?.documentElement ? skeletonEmit(target.documentElement, 0, state) : [];
   const head = `# chatseek page skeleton v1 nodes=${state.nodes} depth<=${SKELETON_DEPTH} truncated=${state.truncated ? "true" : "false"}`;
   const text = [head, ...body].join("\n");
   return { text, chars: text.length, nodes: state.nodes, truncated: state.truncated };

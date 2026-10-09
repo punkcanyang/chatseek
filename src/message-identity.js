@@ -121,9 +121,9 @@ export function alignRekeyedTurns(stored, page) {
   }
   // Transition write. An older capture stored a live image-generation status
   // turn under its own hash id; the page now shows the next status line or the
-  // settled turn under a fresh id at the same slot. Same index + same role +
-  // known capture position + an old assistant progress body means the stored
-  // row is rewritten in place instead of filed as a duplicate. A new status
+  // settled turn under a fresh id. A window-local slot is not enough: both
+  // rows must carry the same persisted turn identity. Otherwise preserve the
+  // legacy row rather than overwrite a turn from a different window. A status
   // must never overwrite an unrelated stored user or legitimate short answer.
   for (let j = 0; j < m; j++) {
     if (usedP.has(j)) continue;
@@ -133,6 +133,7 @@ export function alignRekeyedTurns(stored, page) {
     if (index < 0 || index >= n || usedS.has(index)) continue;
     const row = rows[index];
     if (!row?.body) continue;
+    if (typeof row.turnId !== "string" || !row.turnId || row.turnId !== item.turnId) continue;
     if (row.role !== "assistant" || !Number.isInteger(row.captureIndex) ||
         row.captureIndex !== index) continue;
     if (canonicalRole(row.role) !== canonicalRole(item.role)) continue;

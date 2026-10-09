@@ -562,6 +562,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
           id: msg.id,
           role: msg.role,
           body: msg.body,
+          turnId: msg.turnId,
           index: indexOf.has(msg.id) ? indexOf.get(msg.id) : pageItems.length,
         });
       }
@@ -636,6 +637,8 @@ async function writeMessages(db, conversation, messages, meta = {}) {
       capturedAt: typeof existing?.capturedAt === "number" ? existing.capturedAt : Date.now(),
       captureIndex: Number.isInteger(existing?.captureIndex) ? existing.captureIndex : captureIndex,
     };
+    const turnId = existing?.turnId || msg.turnId;
+    if (typeof turnId === "string" && turnId) record.turnId = turnId;
     msgStore.put(record);
     writeTokens(
       tokenStore,
@@ -1626,8 +1629,8 @@ async function repairConversationProgress(db, convId, options = {}) {
 
 /**
  * Fold stored image-generation progress duplicates on every chatgpt
- * conversation. Best-effort per conversation: one unreadable row must not
- * strand the rest. Returns { merged, dropped, done }.
+ * conversation. On failure retain the cursor for a retry; never mark a failed
+ * scan complete. Returns { merged, dropped, done }.
  */
 async function persistRepairState(db, state) {
   const tx = db.transaction("meta", "readwrite");

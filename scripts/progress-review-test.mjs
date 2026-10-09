@@ -6,6 +6,7 @@ import * as db from "../src/db.js";
 import { isProgressMessage, planProgressMerges } from "../src/image-progress.js";
 import { readerPageUrl, parseReaderSearch } from "../src/reader-url.js";
 import { tokenize } from "../src/tokenize.js";
+import { alignRekeyedTurns } from "../src/message-identity.js";
 
 const shared = readFileSync(new URL("../content/shared.js", import.meta.url), "utf8");
 const adapter = readFileSync(new URL("../content/chatgpt.js", import.meta.url), "utf8");
@@ -49,15 +50,24 @@ await check("migration requires the same position and conversation", () => {
     { ...row("a", "Sketching 40%", 1), turnId: "t1" },
     { ...row("b", "Adding details 80%", 1), turnId: "t2" },
   ]).length, 0, "different turn ids must not merge");
-  // A governing user row is the accepted extra position evidence.
+  // A prior user is not proof that different capture windows share a turn.
   const anchored = planProgressMerges([
     { id: "u", role: "user", body: "Draw a leaf", conversationId: "chatgpt:review", captureIndex: 0 },
     row("a", "Sketching 40%", 1),
     row("b", "Adding details 80%", 1),
   ]);
-  assert.equal(anchored.length, 1, "a preceding user row is enough evidence");
-  assert.equal(anchored[0].keep, "b");
-  assert.deepEqual(anchored[0].drop, ["a"]);
+  assert.equal(anchored.length, 0, "a preceding user alone is insufficient evidence");
+  for (const finalBody of ["Adding details 80%", "Done"]) {
+    assert.deepEqual(planProgressMerges([
+      row("u", "Draw a leaf", 0, "user"),
+      { ...row("a", "Sketching 40%"), turnId: "t1" },
+      { ...row("b", finalBody), turnId: "t2" },
+    ]), [], "a user must not override conflicting turn identities");
+  }
+  assert.deepEqual(planProgressMerges([
+    row("u", "Old prompt", 0, "user"), row("old", "Unrelated answer", 2),
+    row("a", "Sketching 40%"), row("b", "Done"),
+  ]), [], "a remote prior user cannot anchor a later capture window");
   // A shared turn id is the other accepted evidence.
   const turnBound = planProgressMerges([
     { ...row("a", "Sketching 40%", 1), turnId: "t1" },
@@ -74,6 +84,22 @@ await check("short legitimate replies and controls are not progress", () => {
   }
   const dom = new JSDOM('<div id="t"><figure></figure>Creating image 25%</div>');
   assert.equal(isProgressMessage("Creating image 25%", dom.window.document.querySelector("#t")), true);
+});
+
+await check("progress alias cannot overwrite a different capture window", async () => {
+  const old = { ...row("old", "Creating image 25%", 0), turnId: "old-turn" };
+  const fresh = { id: "fresh", role: "assistant", body: "Completely unrelated answer", index: 0 };
+  assert.equal(alignRekeyedTurns([old], [fresh]).size, 0);
+  assert.equal(alignRekeyedTurns([old], [{ ...fresh, turnId: "new-turn" }]).size, 0);
+  assert.equal(alignRekeyedTurns([old], [{ ...fresh, turnId: "old-turn" }]).get("fresh"), "old");
+  const conv = { id: "chatgpt:review-window", platform: "chatgpt" };
+  await db.upsertMessages(conv, [{ ...old, id: `${conv.id}:old` }], { pageMessageIds: [`${conv.id}:old`] });
+  await db.upsertMessages(conv, [{ ...fresh, id: `${conv.id}:fresh` }], { pageMessageIds: [`${conv.id}:fresh`] });
+  const result = await db.readConversation(conv.id);
+  assert.equal(result.messages.length, 2, "both distinct turns survive the actual write path");
+  assert(result.messages.some(m => m.body === old.body));
+  assert(result.messages.some(m => m.body === fresh.body));
+  assert.equal(result.messages.find(m => m.body === old.body).turnId, "old-turn");
 });
 
 await check("one DOM turn can rewrite arbitrary prose without a new row", async () => {
@@ -134,6 +160,25 @@ await check("one DOM turn can rewrite arbitrary prose without a new row", async 
   assert.equal(extract()[0].progress, false, "user text must remain intact");
 });
 
+await check("equal prompt text cannot anchor a different DOM window", () => {
+  const pid = "99999999-9999-4999-8999-999999999999";
+  const dom = new JSDOM('<main><div data-turn="user">Again</div><div data-turn="assistant">First answer</div></main>',
+    { url: `https://chatgpt.com/c/${pid}` });
+  const api = new Function("document", "location", "Node", "NodeFilter", "console", "chrome",
+    `${shared}; Chatseek.autoStart=false; ${adapter}; return Chatseek;`)(dom.window.document,
+      dom.window.location, dom.window.Node, dom.window.NodeFilter, { warn() {}, log() {} }, { runtime: { id: "test" } });
+  const extract = () => api.platforms.chatgpt.extractMessages(pid, dom.window.document, false).messages;
+  const before = extract();
+  const main = dom.window.document.createElement("main");
+  for (const [role, body] of [["user", "Again"], ["assistant", "An unrelated later answer"]]) {
+    const turn = dom.window.document.createElement("div"); turn.dataset.turn = role; turn.textContent = body; main.append(turn);
+  }
+  dom.window.document.querySelector("main").replaceWith(main);
+  const after = extract();
+  assert.notEqual(after[1].id, before[1].id, "same text on a new node is not unchanged-neighbour evidence");
+  dom.window.close();
+});
+
 await check("failed migration rolls back and retries", async () => {
   const cid = "chatgpt:review-retry";
   const database = await db.openDb();
@@ -142,7 +187,7 @@ await check("failed migration rolls back and retries", async () => {
   tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 3, updatedAt: 4567 });
   tx.objectStore("messages").put({ ...row(`${cid}:u`, "Make art", 0, "user"), conversationId: cid, capturedAt: 0 });
   for (const [id, body, time] of [["p", "Creating image 25%", 1], ["final", "Done", 2]]) {
-    tx.objectStore("messages").put({ ...row(`${cid}:${id}`, body), conversationId: cid, capturedAt: time });
+    tx.objectStore("messages").put({ ...row(`${cid}:${id}`, body), turnId: "retry-turn", conversationId: cid, capturedAt: time });
   }
   await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
   const original = database.transaction;
@@ -183,7 +228,7 @@ await check("3000 rows and 500 colliding thumbnails remain intact and jumpable",
   for (let i = 0; i < 3000; i++) {
     const id = `${cid}:${i}`;
     const body = i === 2999 ? "Final image" : `Creating image ${i % 100}%`;
-    tx.objectStore("messages").put({ ...row(id, body), conversationId: cid, capturedAt: i });
+    tx.objectStore("messages").put({ ...row(id, body), turnId: "large-turn", conversationId: cid, capturedAt: i });
     if (fullIndex) {
       for (const token of tokenize(body)) tx.objectStore("tokenMap").put({ token, conversationId: cid, source: id, role: "assistant", positions: [0] });
     }
@@ -256,7 +301,7 @@ await check("migration preserves colliding thumbnails and their bytes", async ()
   tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 4, updatedAt: 1234, updatedAtSource: "observed", tailMessageId: `${cid}:final` });
   tx.objectStore("messages").put({ ...row(`${cid}:u`, "Draw a leaf", 0, "user"), capturedAt: 99 });
   [row(`${cid}:p1`, "Creating image 25%"), row(`${cid}:p2`, "Sketching 40%"), row(`${cid}:final`, "Done")].forEach((m, i) => {
-    tx.objectStore("messages").put({ ...m, capturedAt: 100 + i });
+    tx.objectStore("messages").put({ ...m, turnId: "image-turn", capturedAt: 100 + i });
     for (const token of tokenize(m.body)) tx.objectStore("tokenMap").put({ token, conversationId: cid, source: m.id, role: "assistant", positions: [0] });
   });
   tx.objectStore("meta").put({ key: `order:${cid}`, ids: [`${cid}:p2`, `${cid}:p1`, `${cid}:final`] });

@@ -150,8 +150,8 @@ export function isProgressMessage(body, node) {
  * captureIndex alone is not proof of position: it is the index inside the
  * capture window, so two windows can both report slot 1 for different turns.
  * A merge therefore also needs extra position evidence: a shared non-empty
- * turnId, or a governing user row immediately before the run (a real thread
- * always stores the prompt that owns the turn). Without that evidence the
+ * persisted turnId. A preceding user row does not bind later captures to the
+ * same turn, and must never substitute for that evidence. Without it the
  * rows are left alone: keeping a duplicate is safe, deleting a different
  * turn is not.
  *
@@ -173,17 +173,6 @@ export function planProgressMerges(rows) {
     a.turnId === b.turnId;
   const sameSlot = (a, b) => sameConv(a, b) &&
     Number.isInteger(a.captureIndex) && a.captureIndex >= 0 && a.captureIndex === b.captureIndex;
-  // Nearest preceding user row in the same conversation: the prompt that owns
-  // this position. Its id is the extra position evidence the review requires.
-  const anchorAt = (at) => {
-    for (let k = at - 1; k >= 0; k -= 1) {
-      const prev = list[k];
-      if (!prev || prev.role !== "user") continue;
-      if (!sameConv(prev, list[at])) return null;
-      return prev.id || `user@${prev.captureIndex}`;
-    }
-    return null;
-  };
   const out = [];
   let i = 0;
   while (i < list.length) {
@@ -191,20 +180,17 @@ export function planProgressMerges(rows) {
       i += 1;
       continue;
     }
-    const anchor = anchorAt(i);
-    const runTurn = typeof list[i].turnId === "string" && list[i].turnId !== "";
     let j = i + 1;
-    while (j < list.length && isProg(list[j]) && sameSlot(list[i], list[j])) j += 1;
+    while (j < list.length && isProg(list[j]) && sameSlot(list[i], list[j]) &&
+        sameTurn(list[i], list[j])) j += 1;
     const next = list[j];
-    const runEvidence = !!anchor ||
-      (runTurn && list.slice(i, j).every((row) => sameTurn(row, list[i])));
     const drop = [];
     let keep = null;
-    if (runEvidence && next && next.role === "assistant" && !isProg(next) &&
-        sameSlot(list[i], next) && (!!anchor || sameTurn(list[i], next))) {
+    if (next && next.role === "assistant" && !isProg(next) &&
+        sameSlot(list[i], next) && sameTurn(list[i], next)) {
       keep = next.id;
       for (let k = i; k < j; k += 1) drop.push(list[k].id);
-    } else if (runEvidence && j - i > 1) {
+    } else if (j - i > 1) {
       keep = list[j - 1].id;
       for (let k = i; k < j - 1; k += 1) drop.push(list[k].id);
     }

@@ -235,3 +235,54 @@ node scripts/progress-review-test.mjs --full-index  # 見 BLOCK 1
 - 骨架上限 6000 節點、深度 60，超過標 `truncated=true`；跨源 iframe 只記網域（`host=<hostname>`），路徑一律 `x`。
 - 首次全庫修復在極端 fake-IDB 負載下的擷取餘裕約 8–10 秒（< 15 秒但不大）；真實 Chrome 原生 IDB 快很多，仍需真機確認。
 - BLOCK 1 的修復是分小批事務；修復期間若同時擷取，兩者靠 IDB 事務排隊協調，不保證零等待。
+
+## Codex 第二輪獨立複審（2026-10-09；HEAD 6968c0d 後未提交修正）
+
+本節覆蓋上文 round 2 的「turn／anchor 已足夠」與「骨架不外洩」結論。比對完整
+`ad8f7d1..HEAD` 與 `5e4527c..HEAD`，不跑 Chrome、不 commit、不 push。
+
+### 重現與修正
+
+- `planProgressMerges` 在前方有 user 時，竟可合併明確不同 `turnId` 的相鄰 assistant；
+  遙遠的 user 也能授權合併。`alignRekeyedTurns` 的 progress alias 則會把窗口 slot 0
+  的另一則合法新回答覆寫到舊進度列。兩條路徑現在都要求共同、非空、持久化的 `turnId`，
+  且仍須同對話、同 slot、相鄰。寫入路徑傳遞並保留既有 turn 證據。
+  live DOM 重建的 neighbour anchor 也只認穩定 id；相同 prompt 字樣不能授權
+  把另一窗口的 assistant 當成同一則。原有只替換 assistant、user 節點不變的更新測試仍過。
+- **重要限制**：1.7.1 真實舊列通常只有 `captureIndex`，沒有 `turnId`。
+  這批資料沒有足夠證據，故不自動合併；前方有 user 也不例外。
+  這是第二輪指定的「證據不足不合併」，不能宣稱所有歷史重複都已清乾淨。
+  `progress-test` Part A 仍執行真實 `ad8f7d1` 原碼，重現 5 列／4 則進度；
+  Part C 分別驗證缺證據的舊列保留、有共同 turn 證據的列合併。
+- 新的獨立 `skeleton-review-test` 在修前重現 UUID、帳號名、中英文 class、
+  data-* 短值、帶資料的屬性名及自訂標籤外洩。短字串符合字元規則並不代表它是列舉值。
+  現在只有固定結構詞及各屬性的已知列舉值能保留；未知屬性名為 `data-x`／`attr-x`，
+  自訂標籤為 `element-x`，未知 class 前綴為 `x`，雜湊為 `h`。
+  既有自動 diag 的 class／標籤／屬性名也共用遮罩；網域中的 UUID／長雜湊標籤遮為 `x`。
+- 兄弟收斂改比較完整去識別化子樹，保留代表子樹的子節點；不同內層、frame、shadow
+  不再被淺層 signature 隱藏。shadow 的 light DOM 與 shadow DOM 都讀取。
+  6000 上限計算實際走訪（含被收斂的兄弟與忽略的註解），深度上限包含文字節點。
+  另加每元素 64 屬性的界限，超出同樣標 `truncated=true`；相對 frame URL 不再虛構網域。
+- 剪貼簿失敗的手動複製路徑也顯示字元數。九語按鈕、成功文案、原有 fallback 保留。
+
+### 獨立驗證
+
+- 對抗樣本覆蓋中英日文內文／標題、帳號／email／UUID、相對 `/c/<id>`、query、fragment、
+  data-* 值與名稱、style、srcdoc、SVG title、input value、script/style/noscript、textarea、
+  contenteditable、自訂元素、class、跨源 iframe 路徑、location；均不進入輸出。
+  保留跨源裸網域（規格允許），不讀 frame 內文；未知結構名稱保守遮罩，可能少掉 selector 線索。
+- 此對抗測試直接掛進 `verify.mjs`，也納入 `test:skeleton`／`test:search`。
+  `verify` 相對基準僅更新版號、增加掃描範圍及加嚴守門；沒有刪原有安全斷言。
+- full-index fake-IDB：3000 則／500 張縮圖、完整 tokenMap，修復期間 5 次擷取最慢
+  **9706 ms < 15000 ms**；整體修復 **221088 ms**，event-loop 最大間隔 **173 ms**。
+  最终版與 500 張縮圖／位元組／跳轉索引保留，索引清除正確、時間不變、再次修復無刪除。
+  此次分批修復演算法未再改動；補上的 alias 限制另有真實 DB 寫入回歸測試。
+- `verify`、`test:search`、`test:fixture`、`test:gemini`、`test:upgrade`、`test:sync` 均通過。
+  Node panel 測試涵蓋九語、側欄所屬窗口、剪貼簿成功與手動複製字元數。
+  1.6.4 活動與重算 id、1.6.5 圖片跳轉、1.7.0 同步、1.7.1 封存／恢復規則回歸通過。
+
+權限仍恰好 `["sidePanel"]`，host/matches/CSP 與 ad8f7d1 相同；DB 仍 4；
+無新增依賴、網路請求、網站 DOM 修改或付費服務。這版仍不修真機全 0 的選擇器。
+Chrome e2e／真機由老闆跑；既有截圖由寫碼者產生，複審未重拍。
+64 刪除是每事務的列數界限，4 秒不是可中斷的硬期限：每批仍讀整則對話，
+超出此次 3000 則壓力樣本的超大對話仍需量測。永久 DB 故障會停在該對話並待下次重試。

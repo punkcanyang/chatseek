@@ -108,8 +108,8 @@ const SECRETS = [
   assert(text.includes("data-turn=user"), "data-turn kept");
   assert(text.includes("data-message-id=x"), "data-message-id masked");
   assert(text.includes("data-testid=message-turn"), "an enum testid is kept");
-  assert(text.includes("data-analytics=x"), "a hash-like attribute is masked");
-  assert(text.includes("class=plainword.h.hashy"), "class prefixes kept, hash -> h, got: " + text.split("\n").find((l) => l.includes("class=")));
+  assert(text.includes("data-x=x"), "unknown attribute names and values are masked");
+  assert(text.includes("class=x.h.h"), "unknown class words masked, hashes -> h");
   assert(text.includes(" href=x") || text.includes(" href=x "), "href masked");
   assert(text.includes(" alt=x"), "alt masked");
   assert(text.includes(" src=x"), "src masked");

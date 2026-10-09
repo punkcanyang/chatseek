@@ -256,8 +256,7 @@
     if (previous?.length === chosen.length) {
       const anchored = chosen.some((item, index) => {
         const before = previous[index];
-        return before.role === item.message.role &&
-          (before.id === item.message.id || before.body === item.message.body);
+        return before.role === item.message.role && before.id === item.message.id;
       });
       if (anchored) {
         const ids = new Set(chosen.map(item => item.message.id));

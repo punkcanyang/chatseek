@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 import { JSDOM } from "jsdom";
+import { reviewSkeleton } from "./skeleton-review-test.mjs";
 import { mergeActivityTime, pageShowsNewActivity } from "../src/activity-time.js";
 import { tokenize, queryTokens } from "../src/tokenize.js";
 
@@ -943,6 +944,10 @@ if (/chrome\.scripting|\.executeScript\b/.test(panelSrc)) {
 if (/chrome\.scripting|\.executeScript\b/.test(sharedSrc)) {
   fail("the content script must not inject scripts for the page structure");
 }
+// Independent reviewer attacks include short safe-looking account words,
+// attribute/tag/class names, relative URLs, multilingual input, and bounds.
+try { reviewSkeleton(sharedSrc); }
+catch (error) { fail(`page skeleton adversarial review: ${error.message}`); }
 // Runtime guard: an attack fixture must leak nothing while keeping structure.
 {
   const UUID_V = "11111111-1111-4111-8111-111111111111";
