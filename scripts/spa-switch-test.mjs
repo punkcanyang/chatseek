@@ -57,6 +57,7 @@ try {
   }
   await load('db.js'); const oldDb=await import(`file://${dir}/db.js`);
   for (const heuristic of [false,true]) {
+    await oldDb.clearAll();
     const dom=new JSDOM('',{url:url(0)}); paint(dom,0,heuristic);
     const a=api(dom,oldDb,true); await a.platforms.chatgpt.capture();
     dom.window.history.pushState({},'',url(1)); await a.platforms.chatgpt.capture();
@@ -66,12 +67,15 @@ try {
     dom.window.close();
   }
   {
+    await oldDb.clearAll();
     const dom=new JSDOM('',{url:url(0)});paint(dom,0);const a=api(dom,oldDb,true);await a.platforms.chatgpt.capture();
     dom.window.history.pushState({},'',url(1));paint(dom,1);
     const script=dom.window.document.createElement('script');script.type='application/json';
     script.textContent=JSON.stringify({conversation_id:ids[1],update_time:(Date.now()-86400000)/1000});dom.window.document.head.append(script);
     await a.platforms.chatgpt.capture();
-    assert.equal((await oldDb.readConversation(`chatgpt:${ids[1]}`)).conversation.updatedAtSource,'first-seen','old 15-second cache misses newly painted B JSON date');
+    const snapshot=await oldDb.readConversation(`chatgpt:${ids[1]}`);
+    assert(snapshot.messages.some(m=>m.body===body(1)),'old date reproduction must actually capture repainted B');
+    assert.equal(snapshot.conversation.updatedAtSource,'first-seen','old 15-second cache misses newly painted B JSON date');
     console.log('baseline 213dde2 date: B JSON time missed by cross-URL 15-second cache');
     dom.window.close();
   }
@@ -105,6 +109,11 @@ for (const heuristic of [false,true]) {
   // Even an updated sidebar marker is not permission to write old nodes.
   const link=dom.window.document.createElement('a'); link.href=url(1); link.setAttribute('aria-current','page'); dom.window.document.body.append(link);
   assert.equal(await a.platforms.chatgpt.capture(),false);
+  const mixed=dom.window.document.createElement(heuristic?'section':'div');
+  if(!heuristic) mixed.setAttribute('data-turn','user');
+  const p=dom.window.document.createElement('p');p.textContent=body(1);mixed.append(p);dom.window.document.querySelector('main').append(mixed);
+  assert.equal(await a.platforms.chatgpt.capture(),false,'mixed old A and new B turns must remain held');
+  assert.equal((await rows(1)).length,0);
   paint(dom,1,heuristic); await capture(a);
   assert.deepEqual((await rows(1)).map(m=>m.body),[body(1)]);
   await new Promise(resolve => { dom.window.addEventListener('popstate',resolve,{once:true}); dom.window.history.back(); });
