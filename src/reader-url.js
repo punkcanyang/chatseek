@@ -11,7 +11,9 @@ export function readerPageUrl(id, query, runtime, focus) {
   if (q) params.set("q", q);
   const messageId = String(focus?.messageId || "");
   const index = focus?.index;
-  if (messageId && messageId.length <= 400 && Number.isInteger(index) && index >= 0 && index < 24) {
+  // Live capture still caps each turn at 24. Repair can preserve more slots
+  // from old duplicates; those local records must remain jumpable too.
+  if (messageId && messageId.length <= 400 && Number.isInteger(index) && index >= 0 && index <= 1_000_000) {
     params.set("m", messageId);
     params.set("i", String(index));
   }
@@ -28,12 +30,12 @@ export function readerPageUrl(id, query, runtime, focus) {
 export function parseReaderSearch(search) {
   const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
   const rawIndex = params.get("i");
-  const imageIndex = /^\d{1,2}$/.test(rawIndex || "") ? Number(rawIndex) : -1;
+  const imageIndex = /^\d{1,7}$/.test(rawIndex || "") ? Number(rawIndex) : -1;
   return {
     id: params.get("id") || "",
     query: params.get("q") || "",
     messageId: (params.get("m") || "").slice(0, 400),
-    imageIndex: imageIndex >= 0 && imageIndex < 24 ? imageIndex : -1,
+    imageIndex: imageIndex >= 0 && imageIndex <= 1_000_000 ? imageIndex : -1,
   };
 }
 

@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "还没有诊断。请先打开一段对话并刷新页面。"
   },
+  "copyStructure": {
+    "message": "复制页面结构"
+  },
+  "copyStructureDone": {
+    "message": "页面结构已复制（$ARG1$ 字符）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "无法写入剪贴板，请从下方文本框复制。"
+  },
+  "copyStructureEmpty": {
+    "message": "还没有页面结构。请先打开一段对话并刷新页面。"
+  },
+  "copyStructureUnavailable": {
+    "message": "找不到可用的 ChatGPT 标签页，无法获取页面结构。"
+  },
   "injectMissing": {
     "message": "此标签页未加载 Chatseek：请刷新页面，并确认扩展的网站访问权限允许此网站"
   },

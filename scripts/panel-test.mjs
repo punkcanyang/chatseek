@@ -647,5 +647,33 @@ await clearImageCache();
 document.getElementById("filterActive").click();
 await until(() => document.querySelector(".item") && !document.getElementById("list").hidden, "the conversation list returns");
 
+// Structure copy uses the panel's own window and keeps a character count even
+// when clipboard access is denied and the manual-copy box is shown.
+for (const locale of LOCALE_ORDER) {
+  for (const key of ["copyStructure", "copyStructureDone", "copyStructureManual", "copyStructureEmpty", "copyStructureUnavailable"]) {
+    assert(CATALOG[locale][key], `structure copy locale ${locale}:${key}`);
+  }
+}
+active[1] = { id: 11, windowId: 1, active: true, url: A.url };
+lastFocused = 2;
+const structureText = "# chatseek page skeleton v1 nodes=1 depth<=60 truncated=false\nhtml d0 c0";
+const structureCalls = [];
+chrome.tabs.sendMessage = async (tabId, msg) => {
+  structureCalls.push({ tabId, msg });
+  return { ok: true, text: structureText, chars: structureText.length };
+};
+navigator.clipboard = { writeText: async () => { throw new Error("denied"); } };
+document.getElementById("copyStructureBtn").click();
+await until(() => document.getElementById("diagBox").value === structureText, "manual structure copy");
+assert(!document.getElementById("diagBox").hidden, "manual box is visible");
+assert(document.getElementById("status").textContent.includes(String(structureText.length)), "manual fallback reports chars");
+assert(structureCalls.length === 1 && structureCalls[0].tabId === 11 &&
+  structureCalls[0].msg.type === "COPY_PAGE_SKELETON", "only this window's active tab receives the request");
+let copiedStructure = "";
+navigator.clipboard.writeText = async text => { copiedStructure = text; };
+document.getElementById("copyStructureBtn").click();
+await until(() => copiedStructure === structureText && document.getElementById("diagBox").hidden, "clipboard structure copy");
+assert(document.getElementById("status").textContent.includes(String(structureText.length)), "clipboard success reports chars");
+
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

@@ -1,0 +1,49 @@
+# chatseek page skeleton v1 nodes=48 depth<=60 truncated=false
+html d0 c2 lang=en
+  head d1 c2
+    meta d2 c0 charset=utf-8
+    title d2 c1
+      #text(21)
+  body d1 c11 class=light
+    #text(1)
+    nav d2 c1 class=sidebar
+      a d3 c2 href=x
+        span d4 c1 class=truncate
+          #text(21)
+        time d4 c1 datetime=x
+          #text(10)
+    #text(1)
+    main d2 c7 class=conversation
+      #text(3)
+      div d3 c1 class=archived
+        #text(30)
+      #text(3)
+      div d3 c3 data-message-author-role=user data-message-id=x data-turn=user class=group.text
+        #text(5)
+        div d4 c1 class=whitespace
+          #text(44)
+        #text(3)
+      #text(3)
+      div d3 c5 data-message-author-role=assistant data-message-id=x data-turn=assistant class=group.text
+        #text(5)
+        div d4 c1 class=markdown.prose
+          p d5 c1
+            #text(15)
+        #text(5)
+        img d4 c0 alt=x src=x class=rounded
+        #text(3)
+      #text(1)
+    #text(1)
+    div d2 c1 id=x data-kind=shadow-host #shadow
+      div d3 c1 data-message-author-role=assistant data-turn=assistant
+        div d4 c1 class=markdown
+          p d5 c1
+            #text(22)
+    #text(1)
+    iframe d2 c0 id=x src=x #cross-origin host=example.com
+    #text(1)
+    iframe d2 c1 id=x #same-origin-frame
+      html d3 c2
+        head d4 c0
+        body d4 c0
+    #text(1)

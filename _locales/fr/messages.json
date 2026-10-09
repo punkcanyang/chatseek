@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "Pas encore de diagnostic. Ouvrez une conversation et actualisez la page."
   },
+  "copyStructure": {
+    "message": "Copier la structure de la page"
+  },
+  "copyStructureDone": {
+    "message": "Structure de la page copiée ($ARG1$ caractères)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "Impossible d'écrire dans le presse-papiers. Sélectionnez le texte ci-dessous."
+  },
+  "copyStructureEmpty": {
+    "message": "Pas encore de structure de page. Ouvrez une conversation et actualisez la page."
+  },
+  "copyStructureUnavailable": {
+    "message": "Aucun onglet ChatGPT trouvé, la structure de la page est indisponible."
+  },
   "injectMissing": {
     "message": "Cet onglet n'a pas chargé Chatseek. Actualisez-le et vérifiez que l'extension peut accéder à ce site."
   },

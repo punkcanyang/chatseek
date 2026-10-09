@@ -3,6 +3,26 @@
   const state = { lastListFp: "", lastMsgFp: "" };
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
+  // Keep a live DOM turn's identity when its wording changes. Weak keys never
+  // retain a removed website node. Conversation/role scope prevents SPA reuse
+  // from carrying an id into another thread.
+  const liveTurnIds = new WeakMap();
+  let liveTurnSequence = 0;
+  let previousPage = null;
+
+  function messageIdFor(node, conversationId, role, body) {
+    const explicit = node.getAttribute("data-message-id") ||
+      node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
+      node.getAttribute("data-turn-id");
+    if (explicit) return `${PLATFORM}:${conversationId}:${explicit}`;
+    const host = turnOf(node);
+    const scope = `${conversationId}:${role}`;
+    const previous = liveTurnIds.get(host);
+    if (previous?.scope === scope) return previous.id;
+    const id = `${PLATFORM}:${conversationId}:${Chatseek.hash(role + ":" + body.slice(0, 180))}:dom${++liveTurnSequence}`;
+    liveTurnIds.set(host, { scope, id });
+    return id;
+  }
 
   // First hit wins. Later layers cover the late-2026 turn markup
   // (data-turn / conversation-turn / data-message-id) when the classic
@@ -174,16 +194,29 @@
       ? role
       : (/^chatgpt/i.test(heading) ? "assistant" : "user");
     const rendered = bodyOf(node, resolved);
-    const body = rendered.text;
+    const body = settledBody(rendered, node, resolved);
     if (!Chatseek.isSubstantive(body)) return null;
-    const platformMessageId = node.getAttribute("data-message-id") ||
-      node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
-      Chatseek.hash(resolved + ":" + body.slice(0, 180));
-    const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    const id = messageIdFor(node, conversationId, resolved, body);
+    // A live image-generation status turn. It must not be stored (or get a
+    // fresh hash id) on every percentage change; runCapture drops it until it
+    // settles into real content or disappears.
+    const progress = resolved === "assistant" && Chatseek.isProgressMessage(body, node);
     return {
-      message: { id, role: resolved, body },
-      host: { el: node, messageId: id, role: resolved, body, offsets: rendered.offsets },
+      message: { id, role: resolved, body, progress },
+      host: { el: node, messageId: id, role: resolved, body, offsets: rendered.offsets, progress },
     };
+  }
+
+  function settledBody(rendered, node, role) {
+    // Images do not add text in domText(). Keep an image-only turn and discard
+    // its stale status line once a real image appears; offsets follow the new
+    // body without changing the website DOM.
+    if (role !== "user" && Chatseek._hasContentImage(node) &&
+        (!rendered.text.trim() || Chatseek.isProgressText(rendered.text))) {
+      for (const image of rendered.offsets.keys()) rendered.offsets.set(image, 0);
+      return "🖼";
+    }
+    return rendered.text;
   }
 
   function takeLayer(scope, chosen) {
@@ -215,10 +248,41 @@
       if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
       return 0;
     });
+    // React may replace the element while keeping the same turn position.
+    // Reuse that slot only in an equally sized window with an unchanged
+    // neighbour at the same position. Shifted/partial windows need new ids.
+    const previous = previousPage?.conversationId === chosen.conversationId
+      ? previousPage.messages : null;
+    if (previous?.length === chosen.length) {
+      const anchored = chosen.some((item, index) => {
+        const before = previous[index];
+        return before.role === item.message.role && before.id === item.message.id;
+      });
+      if (anchored) {
+        const ids = new Set(chosen.map(item => item.message.id));
+        for (let index = 0; index < chosen.length; index++) {
+          const item = chosen[index];
+          const before = previous[index];
+          if (before.role !== item.message.role || ids.has(before.id) ||
+              !/:dom\d+$/.test(before.id) || !/:dom\d+$/.test(item.message.id)) continue;
+          item.message.id = before.id;
+          item.host.messageId = before.id;
+          liveTurnIds.set(turnOf(item.node), {
+            scope: `${chosen.conversationId}:${item.message.role}`, id: before.id,
+          });
+        }
+      }
+    }
+    previousPage = {
+      conversationId: chosen.conversationId,
+      messages: chosen.map(item => ({ ...item.message })),
+    };
     const messages = [];
     for (const item of chosen) {
       messages.push(item.message);
-      if (collectImages) imageHosts.push(item.host);
+      // A progress-only turn has no image yet; scheduling its host would only
+      // re-scan a bubble that is about to be replaced.
+      if (collectImages && !item.message.progress) imageHosts.push(item.host);
     }
     if (!selector && chosen[0]) selector = chosen[0].layer;
     return { messages, selector, selectorsTried, selectorHits };
@@ -244,15 +308,18 @@
   function heuristicFromBlock(block, conversationId) {
     const role = block?.role === "user" || block?.role === "assistant" ? block.role : "unknown";
     const rendered = Chatseek.safeDomText(block.el, role === "user");
-    const body = rendered.text;
-    if (!Chatseek.isSubstantive(body) || String(body).trim().length < 24) return null;
-    const platformMessageId = Chatseek.hash(role + ":" + body.slice(0, 180));
-    const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+    const body = settledBody(rendered, block.el, role);
+    if (!Chatseek.isSubstantive(body) ||
+        (String(body).trim().length < 24 && !Chatseek._hasContentImage(block.el))) return null;
+    const id = messageIdFor(block.el, conversationId, role, body);
+    // Unknown heuristic roles are stored as assistant, so use the same status
+    // rule here. Explicit user turns are always preserved.
+    const progress = role !== "user" && Chatseek.isProgressMessage(body, block.el);
     return {
       node: block.el,
       layer: "heuristic",
-      message: { id, role, body },
-      host: { el: block.el, messageId: id, role, body, offsets: rendered.offsets },
+      message: { id, role, body, progress },
+      host: { el: block.el, messageId: id, role, body, offsets: rendered.offsets, progress },
     };
   }
 

@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "還沒有診斷。請先打開一段對話並重新整理頁面。"
   },
+  "copyStructure": {
+    "message": "複製頁面結構"
+  },
+  "copyStructureDone": {
+    "message": "頁面結構已複製（$ARG1$ 字元）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "無法寫入剪貼簿，請從下方文字框複製。"
+  },
+  "copyStructureEmpty": {
+    "message": "還沒有頁面結構。請先打開一段對話並重新整理頁面。"
+  },
+  "copyStructureUnavailable": {
+    "message": "找不到可用的 ChatGPT 分頁，無法取得頁面結構。"
+  },
   "injectMissing": {
     "message": "此分頁未載入 Chatseek：請重新整理分頁，並確認擴充的網站存取權允許此網站"
   },

@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "診断はまだありません。会話を開いてページを再読み込みしてください。"
   },
+  "copyStructure": {
+    "message": "ページ構造をコピー"
+  },
+  "copyStructureDone": {
+    "message": "ページ構造をコピーしました（$ARG1$ 文字）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "クリップボードに書けません。下のテキストを選んでコピーしてください。"
+  },
+  "copyStructureEmpty": {
+    "message": "ページ構造はまだありません。会話を開いてページを再読み込みしてください。"
+  },
+  "copyStructureUnavailable": {
+    "message": "利用できる ChatGPT タブがないため、ページ構造を取得できません。"
+  },
   "injectMissing": {
     "message": "このタブには Chatseek が読み込まれていません。タブを再読み込みし、拡張機能がこのサイトへのアクセスを許可されているか確認してください。"
   },

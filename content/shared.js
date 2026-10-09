@@ -975,7 +975,12 @@ const Chatseek = {
     // An archive-list row is explicit. A sidebar row does not cancel it.
     const archivedOnly = (archivedRows || []).filter((row) => row && row.id);
     const combined = list.concat(archivedOnly);
-    const msgs = (messages || []).filter((m) => m && m.id && m.body);
+    const allMsgs = (messages || []).filter((m) => m && m.id && m.body);
+    // A live image-generation status turn is rewritten on every percentage
+    // change. Keeping it off disk stops one bubble from becoming a dozen
+    // near-identical stored messages. It is written once it settles.
+    const progressSkipped = allMsgs.filter((m) => m.progress === true).length;
+    const msgs = allMsgs.filter((m) => m.progress !== true);
     // A thread is empty for a moment after SPA navigation while it loads.
     // Report 0 messages only once it stays empty; returning false makes
     // observe() look again in a few seconds even if the DOM goes quiet.
@@ -992,6 +997,9 @@ const Chatseek = {
         state.zeroSince = now;
       }
       settling = !!zeroKey && now - (state.zeroSince || 0) < Chatseek.HEALTH_GRACE_MS;
+      // A turn that only paints image-generation progress is not an empty
+      // thread; treat it as settling so the 0-message warning stays disarmed.
+      if (progressSkipped && !msgs.length) settling = true;
     }
     const selectorHits = health?.selectorHits && typeof health.selectorHits === "object"
       ? health.selectorHits
@@ -1010,11 +1018,14 @@ const Chatseek = {
     if (settling && !newChat) {
       ok = false;
       const remain = Chatseek.HEALTH_GRACE_MS - (now - (state.zeroSince || now));
-      if (remain > 0 && typeof Chatseek.requestRescan === "function") {
+      // Only progress text on screen: the grace window may already be over,
+      // but keep polling so the settling write happens on a later rescan.
+      const delay = remain > 0 ? remain - 760 : (progressSkipped ? 1200 : 0);
+      if (delay > 0 && typeof Chatseek.requestRescan === "function") {
         clearTimeout(Chatseek._graceTimer);
         Chatseek._graceTimer = setTimeout(() => {
           try { Chatseek.requestRescan(); } catch { /* rescan is best-effort */ }
-        }, Math.max(0, remain - 760));
+        }, delay);
       }
       Chatseek.publishDiag(Chatseek.diagFields({
         platform,
@@ -1027,7 +1038,8 @@ const Chatseek = {
         structure: health.structure || null,
         archiveBanner: health.archiveBanner,
         archiveList: health.archiveList,
-        healthState: "settling",
+        progressSkipped,
+        healthState: progressSkipped && !msgs.length ? "progress" : "settling",
         warn: false,
         at: Date.now(),
       }));
@@ -1056,6 +1068,7 @@ const Chatseek = {
         structure: health.structure || null,
         archiveBanner: health.archiveBanner,
         archiveList: health.archiveList,
+        progressSkipped,
         healthState: report.warn ? "warn" : "ok",
         warn: report.warn,
         at: report.at,
@@ -1167,7 +1180,8 @@ const Chatseek = {
       conversation.archiveSource || "",
       ...msgs.map((m) => m.id + ":" + m.body.length + ":" + m.body.slice(-80)),
     ]);
-    if (msgFp === state.lastMsgFp) {
+    if (msgFp === state.lastMsgFp && state.lastMsgBodies &&
+        msgs.every((m) => state.lastMsgBodies.get(m.id) === m.body)) {
       Chatseek.noteSyncStored(conversation.id, msgs.length);
       const restored = await restorePending();
       return ok && restored;
@@ -1198,6 +1212,10 @@ const Chatseek = {
       if (res.observed) observed = true;
     }
     state.lastMsgFp = msgFp;
+    // A stable turn id can also rewrite the beginning at the same length.
+    // Keep string references so a matching length/tail fingerprint alone
+    // cannot hide that edit; this does not copy or hash entire transcripts.
+    state.lastMsgBodies = new Map(msgs.map((m) => [m.id, m.body]));
     state.lastMsgConvId = conversation.id;
     state.lastMsgKeys = new Set(keys);
     Chatseek.noteSyncStored(conversation.id, msgs.length);
@@ -1309,6 +1327,119 @@ const Chatseek = {
 
   _normText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
+  },
+
+  // ChatGPT image-generation progress text. A turn is rewritten with short
+  // status strings plus a percentage while the image paints; those must not
+  // become one stored message each. Kept in sync with src/image-progress.js
+  // (scripts/verify.mjs cross-checks the two phrase lists). Conservative:
+  // exact phrase match after a percentage token is stripped, so ordinary
+  // prose with "%" survives.
+  PROGRESS_PHRASES: [
+    // zh_TW
+    "正在建立圖像", "正在建立影像", "正在勾勒草圖", "正在生成初稿", "正在打磨細節",
+    "正在生成圖片", "正在繪製", "正在生成圖像", "正在修飾細節",
+    "正在創建圖像", "正在創建影像", "正在創建圖片", "正在描繪",
+    // zh_CN
+    "正在创建图像", "正在创建影像", "正在勾勒草图", "正在生成初稿", "正在打磨细节",
+    "正在生成图片", "正在绘制", "正在生成图像", "正在修饰细节",
+    "正在创建图片", "正在描绘",
+    // en
+    "creating image", "creating your image", "creating an image",
+    "sketching", "adding details", "generating image", "generating an image",
+    "refining details", "drawing", "painting", "generating draft",
+    "starting image generation", "creating the image",
+    // ja
+    "画像を作成しています", "画像を生成しています", "スケッチを作成しています",
+    "詳細を追加しています", "下書きを生成しています", "画像を描いています",
+    "画像を作成中", "画像を生成中", "スケッチ中", "詳細を追加中",
+    // ko
+    "이미지 생성 중", "이미지를 생성하는 중", "이미지 만들기 중", "이미지를 만드는 중",
+    "스케치 중", "스케치하는 중", "세부 사항 추가 중", "세부 정보 추가 중",
+    "초안 생성 중", "초안을 생성하는 중", "이미지 그리는 중",
+    // es
+    "creando imagen", "generando imagen", "dibujando", "agregando detalles",
+    "añadiendo detalles", "creando la imagen", "generando la imagen",
+    "creando borrador", "perfeccionando detalles",
+    // fr
+    "création de l'image", "génération de l'image", "esquisse en cours",
+    "ajout des détails", "ajout de détails", "création d'image",
+    "génération d'image", "affinage des détails", "dessin en cours",
+    // de
+    "bild wird erstellt", "bild wird generiert", "skizze wird erstellt",
+    "details werden hinzugefügt", "bild erstellen", "bild generieren",
+    "entwurf wird erstellt", "details werden verfeinert",
+    // pt_BR
+    "criando imagem", "gerando imagem", "esboçando", "adicionando detalhes",
+    "criando a imagem", "gerando a imagem", "criando rascunho",
+    "refinando detalhes",
+  ],
+
+  progressCore(raw) {
+    let text = String(raw ?? "").replace(/[\u3000\u00a0]/g, " ");
+    text = text.replace(/\s+/g, " ").trim();
+    text = text.replace(/^[\s\-–—_•·*※…‥.。]+/, "");
+    text = text.replace(/\d{1,3}\s*[%％]/g, " ");
+    text = text.replace(/\s+\d{1,3}\s*$/, "");
+    text = text.replace(/[\s\-–—_•·*※…‥.。!！?？~～、,，:：;；]+$/g, "");
+    return text.replace(/\s+/g, " ").trim().toLowerCase();
+  },
+
+  isProgressText(body) {
+    const core = Chatseek.progressCore(body);
+    if (!core) return false;
+    if (/^(drawing|painting|sketching|dibujando|esboçando)$/.test(core) &&
+        !/\d{1,3}\s*[%％]/.test(String(body))) return false;
+    if (!Chatseek._progressPhraseSet) {
+      Chatseek._progressPhraseSet = new Set(Chatseek.PROGRESS_PHRASES);
+    }
+    return Chatseek._progressPhraseSet.has(core);
+  },
+
+  isProgressNode(node) {
+    if (!node || typeof node.querySelector !== "function") return false;
+    try {
+      if (node.matches?.("[data-is-streaming='true'], [role='progressbar'], progress")) {
+        return true;
+      }
+      return !!node.querySelector(
+        "[role='progressbar'], progress," +
+        "[data-is-streaming='true'], [data-testid*='progress' i], [data-testid*='streaming' i]"
+      );
+    } catch {
+      return false;
+    }
+  },
+
+  _hasContentImage(node) {
+    if (!node || typeof node.querySelectorAll !== "function") return false;
+    try {
+      for (const img of node.querySelectorAll("img")) {
+        const src = String(img.getAttribute?.("src") || img.currentSrc || "");
+        const width = Number(img.getAttribute?.("width") || img.naturalWidth || 0);
+        const height = Number(img.getAttribute?.("height") || img.naturalHeight || 0);
+        if ((width && width <= 32) || (height && height <= 32)) continue;
+        if (src && (!src.startsWith("data:") || (width > 32 && height > 32))) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  },
+
+  _isShortStatusLine(body) {
+    const core = Chatseek.progressCore(body);
+    if (!core || core.length > 48) return false;
+    const raw = String(body ?? "").replace(/\s+/g, " ").trim();
+    return !/[.。!！?？\n\r]/.test(raw) &&
+      /^(正在(?:準備|准备|生成|建立|繪製|绘制|創建|创建|思考)|準備中|准备中|thinking|loading|generating|creating|preparing|drawing|painting|sketching)(?:\b|[\u4e00-\u9fff])/i.test(core);
+  },
+
+  isProgressMessage(body, node) {
+    if (node && Chatseek._hasContentImage(node)) return false;
+    if (Chatseek.isProgressText(body)) return true;
+    if (node && Chatseek.isProgressNode(node) && Chatseek._isShortStatusLine(body)) return true;
+    return false;
   },
 
   _TRANSCRIPT_SELECTOR:
@@ -2346,6 +2477,8 @@ Chatseek.messageStats = (messages) => {
   let assistantCount = 0;
   let charCount = 0;
   for (const msg of messages || []) {
+    // A live image-generation progress turn is not a stored message.
+    if (msg?.progress === true) continue;
     // Unknown heuristic turns are stored as assistant. Count them the same way.
     if (msg?.role === "assistant" || msg?.role === "unknown") assistantCount += 1;
     else userCount += 1;
@@ -2446,6 +2579,7 @@ Chatseek.diagFields = (fields) => {
     structure: src.structure || null,
     archiveBanner: Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0))),
     archiveList: Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0))),
+    progressSkipped: Math.max(0, Math.min(9999, Math.floor(Number(src.progressSkipped) || 0))),
     at: Number(src.at) || Date.now(),
   };
 };
@@ -2491,6 +2625,9 @@ Chatseek.formatDiag = (fields) => {
   if (structure) parts.push(structure);
   const stack = scrubFrame(src.errorStack);
   if (stack) parts.push(`stack=${stack}`);
+  if (Number(src.progressSkipped) > 0) {
+    parts.push(`progress=skipped:${Math.max(0, Math.min(9999, Math.floor(Number(src.progressSkipped))))}`);
+  }
   return parts.join(" ");
 };
 
@@ -2979,34 +3116,24 @@ Chatseek.charBucket = (n) => {
 
 Chatseek.cleanClassToken = (raw) => {
   const out = [];
-  for (const rawToken of String(raw || "").toLowerCase().split(/\s+/)) {
-    if (!rawToken) continue;
-    for (const piece of rawToken.split(/[^a-z-]+/)) {
-      const bits = piece.split("-").filter((bit) => bit.length >= 2 && !/^[a-f]{6,}$/.test(bit));
-      const token = bits.join("-").replace(/^-+|-+$/g, "");
-      if (token.length < 2 || token.length > 24) continue;
-      out.push(token);
-      if (out.length >= 3) return out;
+  for (const token of String(raw || "").slice(0, 256).split(/\s+/).filter(Boolean).slice(0, 3)) {
+    if (SKELETON_ENUMS.get("data-testid").has(token)) out.push(token);
+    else {
+      const prefix = skeletonClasses(token);
+      if (prefix && prefix !== "x" && prefix !== "h") out.push(prefix);
     }
   }
   return out;
 };
 
 function describeEl(el) {
-  const tag = String(el?.tagName || "").toLowerCase();
-  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return "";
+  const tag = skeletonTagName(el?.tagName);
   const names = [];
   const attrs = el.attributes;
-  if (attrs) {
-    for (const attr of [...attrs]) {
-      const name = String(attr?.name || "").toLowerCase();
-      if (!name || name === "class" || name === "style") continue;
-      if (/^(href|src|srcdoc|alt|title|value|placeholder)$/.test(name)) continue;
-      if (!/^[a-z][a-z0-9:-]*$/.test(name)) continue;
-      const bare = name.replace(/[^a-z-]/g, "");
-      if (bare.length >= 2) names.push(bare);
-      if (names.length >= 4) break;
-    }
+  for (let i = 0; i < Math.min(attrs?.length || 0, 64) && names.length < 4; i += 1) {
+    const name = skeletonAttrName(attrs[i]?.name);
+    if (/^(class|style|href|src|srcdoc|alt|title|value|placeholder)$/.test(name)) continue;
+    names.push(name);
   }
   const tokens = [
     ...Chatseek.cleanClassToken(el.getAttribute?.("data-testid")),
@@ -3026,7 +3153,7 @@ function frameHostname(frame) {
     try {
       if (typeof location !== "undefined" && location.href) base = location.href;
     } catch { /* keep the fallback base */ }
-    return String(new URL(src, base).hostname || "").toLowerCase();
+    return skeletonHostname(String(new URL(src, base).hostname || "").toLowerCase());
   } catch {
     return "";
   }
@@ -3113,7 +3240,7 @@ Chatseek.structureDiag = (doc) => {
   if (rootHasMain(top)) places.push("top");
   const shadowEntries = Chatseek.shadowHosts(top, { closed: true });
   const shadows = shadowEntries.map((entry) => ({
-    tag: String(entry.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+    tag: skeletonTagName(entry.tag || "div"),
     mode: entry.mode === "closed" ? "closed" : "open",
   }));
   if (shadowEntries.some((entry) => rootHasMain(entry.root))) places.push("shadow");
@@ -3179,7 +3306,7 @@ Chatseek.structureDiagPaced = async (doc) => {
   for (const scope of embedded) {
     if (scope.kind === "shadow") {
       shadows.push({
-        tag: String(scope.tag || "div").toLowerCase().replace(/[^a-z0-9-]/g, "") || "div",
+        tag: skeletonTagName(scope.tag || "div"),
         mode: scope.mode === "closed" ? "closed" : "open",
       });
       if (rootHasMain(scope.node) && !places.includes("shadow")) places.push("shadow");
@@ -3227,13 +3354,20 @@ Chatseek.formatStructure = (structure) => {
   const frames = (Array.isArray(structure.frames) ? structure.frames : [])
     .map((item) => String(item || "").toLowerCase())
     .filter((item) => /^[a-z0-9.-]+:(script|noscript)$/.test(item))
+    .map((item) => {
+      const at = item.lastIndexOf(":");
+      return skeletonHostname(item.slice(0, at)) + item.slice(at);
+    })
     .slice(0, 6);
   const shadows = (Array.isArray(structure.shadows) ? structure.shadows : [])
     .map((item) => {
-      if (typeof item === "string") return item.toLowerCase();
+      if (typeof item === "string") {
+        const match = item.toLowerCase().match(/^([a-z][a-z0-9-]*):(open|closed)$/);
+        return match ? `${skeletonTagName(match[1])}:${match[2]}` : "";
+      }
       const tag = String(item?.tag || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
       const mode = item?.mode === "closed" ? "closed" : "open";
-      return tag ? `${tag}:${mode}` : "";
+      return tag ? `${skeletonTagName(tag)}:${mode}` : "";
     })
     .filter((item) => /^[a-z0-9-]+:(open|closed)$/.test(item))
     .slice(0, 6);
@@ -3383,4 +3517,198 @@ try {
   }
 } catch {
   // Capture still runs when messaging is unavailable.
+}
+
+/* ---------------------------------------------------------------- page skeleton
+ * Diagnostic only. Reads the live DOM (top document, open/closed shadow roots,
+ * same-origin iframes) and returns a structure-only outline the owner can paste
+ * back when a selector stops matching. It never emits text, titles, urls,
+ * conversation ids, or account data: every node is reduced to its tag name,
+ * depth, child count and attribute names, and — only for a handful of short
+ * enumerated attributes — a value that is itself a plain enum. Everything else
+ * is `x`. Text nodes carry a character count, never their content.
+ */
+const SKELETON_NODES = 6000;
+const SKELETON_DEPTH = 60;
+
+function skeletonIndent(depth) {
+  return "  ".repeat(Math.max(0, Math.min(depth, SKELETON_DEPTH)));
+}
+
+// Names can themselves contain private data. Only vocabulary known to describe
+// DOM structure is emitted verbatim; unknown names/tags get fixed placeholders.
+const SKELETON_TAGS = new Set((
+  "html head body title meta link base style script noscript template slot main nav " +
+  "header footer aside section article div span p a button input textarea select option " +
+  "form label fieldset legend img picture source video audio canvas iframe frame " +
+  "ul ol li dl dt dd table thead tbody tfoot tr th td caption col colgroup h1 h2 h3 h4 h5 h6 " +
+  "pre code blockquote br hr b i u s em strong small sup sub details summary figure figcaption " +
+  "time progress meter output dialog svg g path rect circle ellipse line polyline polygon " +
+  "defs use symbol text tspan clipPath mask linearGradient radialGradient stop foreignObject " +
+  "math mi mo mn ms mtext mrow annotation semantics"
+).toLowerCase().split(/\s+/));
+const SKELETON_ATTRS = new Set((
+  "id class role title alt placeholder href src srcdoc style value name content type " +
+  "width height hidden disabled checked selected multiple readonly required tabindex " +
+  "contenteditable dir lang charset rel target loading decoding draggable slot part datetime " +
+  "viewbox d fill stroke xmlns focusable data-testid data-turn data-message-author-role " +
+  "data-message-id data-conversation-id data-is-streaming data-state data-kind " +
+  "data-turn-id data-turn-id-container data-message-content data-message-author data-test-id " +
+  "data-time data-timestamp data-updated-at data-updatedat data-role data-line-number " +
+  "aria-label aria-labelledby aria-describedby aria-hidden aria-expanded aria-selected " +
+  "aria-checked aria-busy aria-live aria-atomic aria-disabled aria-controls aria-current " +
+  "aria-valuenow aria-valuemin aria-valuemax aria-valuetext"
+).split(/\s+/));
+const SKELETON_ENUMS = new Map([
+  ["role", "main navigation complementary banner contentinfo article document list listitem " +
+    "button textbox img status progressbar alert dialog tab tablist tabpanel region group presentation none"],
+  ["data-message-author-role", "assistant user system tool"], ["data-turn", "assistant user system tool"],
+  ["data-testid", "message-turn conversation-turn conversation-title conversation-list markdown"],
+  ["data-kind", "open closed shadow-host"], ["data-state", "open closed loading complete idle streaming"],
+  ["data-is-streaming", "true false"], ["contenteditable", "true false plaintext-only"],
+  ["dir", "ltr rtl auto"], ["lang", "en zh zh-CN zh-TW ja ko es pt-BR fr de"],
+  ["charset", "utf-8 UTF-8"], ["type", "button submit reset text password checkbox radio search number"],
+  ["loading", "lazy eager"], ["decoding", "async sync auto"], ["aria-live", "off polite assertive"],
+  ...["aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-busy", "aria-atomic",
+    "aria-disabled", "draggable", "focusable"].map(name => [name, "true false mixed"]),
+].map(([name, values]) => [name, new Set(values.split(" "))]));
+const SKELETON_CLASSES = new Set((
+  "prose markdown message conversation sidebar container group text whitespace truncate " +
+  "flex grid block inline hidden relative absolute fixed sticky overflow items justify " +
+  "rounded border bg font leading gap space p px py m mx my w h min max light dark archived"
+).split(/\s+/));
+
+function skeletonTagName(name) {
+  const tag = String(name || "").toLowerCase();
+  return SKELETON_TAGS.has(tag) ? tag : "element-x";
+}
+
+function skeletonHostname(host) {
+  return String(host || "").split(".").map(label =>
+    Chatseek.UUID.test(label) || /[0-9a-f]{16,}/i.test(label) || /^[A-Za-z0-9_-]{24,}$/.test(label) ? "x" : label
+  ).join(".");
+}
+
+function skeletonAttrName(name) {
+  const key = String(name || "").toLowerCase();
+  return SKELETON_ATTRS.has(key) ? key : key.startsWith("data-") ? "data-x" : "attr-x";
+}
+
+function skeletonAttrValue(name, value) {
+  // A character/length check alone cannot distinguish "alice" from an enum.
+  const values = SKELETON_ENUMS.get(name);
+  if (!values || typeof value !== "string" || value.length > 32 ||
+      !/^[A-Za-z0-9_:-]+$/.test(value) || Chatseek.UUID.test(value)) return "x";
+  return values.has(value) ? value : "x";
+}
+
+function skeletonClasses(value) {
+  // Bound parsing as well as output. No arbitrary word may become a class hint.
+  const tokens = String(value || "").slice(0, 256).split(/\s+/).filter(Boolean).slice(0, 3);
+  return tokens.map(token => {
+    if (/[0-9a-f]{10,}/i.test(token) || /^\d{5,}$/.test(token) ||
+        (/^[A-Za-z0-9_-]{24,}$/.test(token))) return "h";
+    const prefix = token.split(/[-_]/)[0];
+    return prefix.length <= 20 && SKELETON_CLASSES.has(prefix) ? prefix : "x";
+  }).join(".");
+}
+
+function skeletonElementLine(node, depth, childCount, note, state) {
+  const tag = skeletonTagName(node.tagName);
+  let line = `${skeletonIndent(depth)}${tag} d${depth} c${childCount}`;
+  const attrs = node.attributes;
+  // Even malicious elements with thousands of attribute names remain bounded.
+  const length = Math.min(attrs?.length || 0, 64);
+  for (let i = 0; i < length; i += 1) {
+    const attr = attrs[i];
+    const name = skeletonAttrName(attr.name);
+    const shown = name === "class" ? skeletonClasses(attr.value) : skeletonAttrValue(name, attr.value);
+    line += ` ${name}=${shown}`;
+  }
+  if ((attrs?.length || 0) > length) { state.truncated = true; line += " #attrs-truncated"; }
+  return line + note;
+}
+
+function skeletonChildren(node) {
+  const tag = String(node.tagName || "").toLowerCase();
+  if (tag === "iframe" || tag === "frame") {
+    let doc = null;
+    try { doc = node.contentDocument; } catch { /* cross-origin */ }
+    if (doc?.documentElement) return { children: [doc.documentElement], note: " #same-origin-frame" };
+    let host = "";
+    try {
+      const src = node.getAttribute("src") || "";
+      // Relative paths cannot tell us a domain without reading the page URL.
+      // Do not manufacture x.invalid or copy the path into the output.
+      if (/^(?:https?:)?\/\//i.test(src)) {
+        const url = new URL(src.startsWith("//") ? "https:" + src : src);
+        if (url.protocol === "http:" || url.protocol === "https:") host = skeletonHostname(url.hostname);
+      }
+    } catch { /* invalid URL */ }
+    return { children: [], note: host ? ` #cross-origin host=${host}` : " #cross-origin" };
+  }
+  const adopted = adoptedRoot(node, true);
+  // Preserve both trees: light DOM may contain slotted messages or a frame.
+  return { children: node.childNodes || [], shadow: adopted?.root?.childNodes,
+    note: adopted ? (adopted.mode === "open" ? " #open-shadow" : " #shadow") : "" };
+}
+
+function skeletonEmit(node, depth, state) {
+  if (!node || state.nodes >= SKELETON_NODES || depth > SKELETON_DEPTH) {
+    state.truncated = true; return [];
+  }
+  state.nodes += 1; // Count every visited node, including collapsed siblings.
+  if (node.nodeType !== 1 && node.nodeType !== 3) return [];
+  if (node.nodeType === 3) return [`${skeletonIndent(depth)}#text(${String(node.nodeValue || "").length})`];
+  const { children, shadow, note } = skeletonChildren(node);
+  const lines = [skeletonElementLine(node, depth, children.length + (shadow?.length || 0), note, state)];
+  // Compare complete sanitized subtree outlines, not a shallow tag signature.
+  // A collapsed group keeps its children's outline, so useful selectors remain.
+  for (const siblings of [children, shadow || []]) {
+    let previous = null;
+    let count = 0;
+    const flush = () => {
+      if (previous) lines.push(previous[0] + (count > 1 ? ` ×${count}` : ""), ...previous.slice(1));
+    };
+    for (let i = 0; i < siblings.length; i += 1) {
+      if (state.nodes >= SKELETON_NODES) { state.truncated = true; break; }
+      const branch = skeletonEmit(siblings[i], depth + 1, state);
+      if (!branch.length) continue;
+      if (previous && branch.length === previous.length && branch.every((line, at) => line === previous[at])) count += 1;
+      else { flush(); previous = branch; count = 1; }
+    }
+    flush();
+  }
+  return lines;
+}
+
+Chatseek.buildPageSkeleton = (doc) => {
+  const target = doc || (typeof document !== "undefined" ? document : null);
+  const state = { nodes: 0, truncated: false };
+  const body = target?.documentElement ? skeletonEmit(target.documentElement, 0, state) : [];
+  const head = `# chatseek page skeleton v1 nodes=${state.nodes} depth<=${SKELETON_DEPTH} truncated=${state.truncated ? "true" : "false"}`;
+  const text = [head, ...body].join("\n");
+  return { text, chars: text.length, nodes: state.nodes, truncated: state.truncated };
+};
+
+try {
+  if (
+    syncTopFrame() &&
+    typeof chrome !== "undefined" &&
+    chrome.runtime?.onMessage?.addListener &&
+    !globalThis.__chatseekSkeleton
+  ) {
+    globalThis.__chatseekSkeleton = true;
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!msg || msg.type !== "COPY_PAGE_SKELETON") return;
+      try {
+        const result = Chatseek.buildPageSkeleton(document);
+        sendResponse({ ok: true, text: result.text, chars: result.chars, nodes: result.nodes, truncated: result.truncated });
+      } catch {
+        try { sendResponse({ ok: false, text: "", chars: 0 }); } catch { /* channel closed */ }
+      }
+    });
+  }
+} catch {
+  // The panel shows the manual-copy fallback when the channel is closed.
 }

@@ -377,6 +377,26 @@
   "copyDiagEmpty": {
     "message": "No diagnostics yet. Open a conversation and refresh the page."
   },
+  "copyStructure": {
+    "message": "Copy page structure"
+  },
+  "copyStructureDone": {
+    "message": "Page structure copied ($ARG1$ chars)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "copyStructureManual": {
+    "message": "Couldn't write to the clipboard. Select the text below and copy it."
+  },
+  "copyStructureEmpty": {
+    "message": "No page structure yet. Open a conversation and refresh the page."
+  },
+  "copyStructureUnavailable": {
+    "message": "No ChatGPT tab found, so the page structure could not be read."
+  },
   "injectMissing": {
     "message": "This tab has not loaded Chatseek. Refresh the tab and confirm the extension is allowed to access this site."
   },

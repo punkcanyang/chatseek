@@ -103,6 +103,11 @@ function bundle(code) {
     copyDiagDone: say("copyDiagDone"),
     copyDiagManual: say("copyDiagManual"),
     copyDiagEmpty: say("copyDiagEmpty"),
+    copyStructure: say("copyStructure"),
+    copyStructureDone: (chars) => say("copyStructureDone", chars),
+    copyStructureManual: say("copyStructureManual"),
+    copyStructureEmpty: say("copyStructureEmpty"),
+    copyStructureUnavailable: say("copyStructureUnavailable"),
     injectMissing: say("injectMissing"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
@@ -152,6 +157,7 @@ const clearBtn = document.getElementById("clearBtn");
 const imageCacheEl = document.getElementById("imageCache");
 const clearImagesBtn = document.getElementById("clearImagesBtn");
 const copyDiagBtn = document.getElementById("copyDiagBtn");
+const copyStructureBtn = document.getElementById("copyStructureBtn");
 const diagBox = document.getElementById("diagBox");
 const healthEl = document.getElementById("health");
 const injectWarnEl = document.getElementById("injectWarn");
@@ -222,6 +228,7 @@ function applyStatic() {
   clearBtn.textContent = t.clear;
   if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
   if (copyDiagBtn) copyDiagBtn.textContent = t.copyDiag;
+  if (copyStructureBtn) copyStructureBtn.textContent = t.copyStructure;
   if (injectWarnEl && !injectWarnEl.hidden) injectWarnEl.textContent = t.injectMissing;
   if (imageCacheEl) {
     if (imageCacheEl.dataset.state === "ready") {
@@ -564,6 +571,91 @@ async function copyDiagnostics() {
   }
 }
 
+// A page that never answers must not swallow the click: after a long wait the
+// button reports that the structure was unavailable.
+const STRUCTURE_WAIT_MS = 10000;
+
+function structureUnavailable() {
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent = t.copyStructureUnavailable;
+  }
+  showDiagBox(t.copyStructureUnavailable);
+}
+
+async function copyPageStructure() {
+  if (typeof chrome.tabs?.query !== "function" || typeof chrome.tabs?.sendMessage !== "function") {
+    structureUnavailable();
+    return;
+  }
+  let url = "";
+  let tabId = null;
+  try {
+    const query = Number.isInteger(panelWindowId)
+      ? { active: true, windowId: panelWindowId }
+      : { active: true, currentWindow: true };
+    const tabs = await chrome.tabs.query(query);
+    const tab = (tabs || [])[0];
+    url = typeof tab?.url === "string" ? tab.url : "";
+    tabId = Number.isInteger(tab?.id) ? tab.id : null;
+  } catch {
+    url = "";
+  }
+  if (!Number.isInteger(tabId) || !isChatTabUrl(url)) {
+    structureUnavailable();
+    return;
+  }
+  let result = null;
+  let timer = 0;
+  try {
+    result = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: "COPY_PAGE_SKELETON" }),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), STRUCTURE_WAIT_MS); }),
+    ]);
+  } catch {
+    result = null;
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = result?.ok && typeof result.text === "string" ? result.text : "";
+  if (!text) {
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = t.copyStructureEmpty;
+    }
+    showDiagBox(text || t.copyStructureEmpty);
+    return;
+  }
+  let wrote = false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await Promise.race([
+        navigator.clipboard.writeText(text).then(() => {
+          wrote = true;
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("clipboard")), 500);
+        }),
+      ]);
+    }
+  } catch {
+    wrote = false;
+  }
+  if (wrote) {
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = t.copyStructureDone(result.chars ?? text.length);
+    }
+    if (diagBox) diagBox.hidden = true;
+    return;
+  }
+  showDiagBox(text);
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent = `${t.copyStructureDone(text.length)} ${t.copyStructureManual}`;
+  }
+}
+
 async function renderHealth() {
   if (!healthEl) return;
   const health = await readCaptureHealth();
@@ -878,6 +970,10 @@ async function refreshImageCache() {
 
 copyDiagBtn?.addEventListener("click", () => {
   copyDiagnostics();
+});
+
+copyStructureBtn?.addEventListener("click", () => {
+  copyPageStructure();
 });
 
 clearImagesBtn?.addEventListener("click", async () => {

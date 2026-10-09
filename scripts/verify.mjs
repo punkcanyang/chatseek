@@ -3,6 +3,8 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
+import { JSDOM } from "jsdom";
+import { reviewSkeleton } from "./skeleton-review-test.mjs";
 import { mergeActivityTime, pageShowsNewActivity } from "../src/activity-time.js";
 import { tokenize, queryTokens } from "../src/tokenize.js";
 
@@ -86,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.1") fail(`version should be 1.7.1, got ${manifest.version}`);
+if (manifest.version !== "1.7.2") fail(`version should be 1.7.2, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -153,6 +155,7 @@ const referenced = new Set([
   "src/current-tab.js",
   "src/i18n.js",
   "src/message-order.js",
+  "src/message-identity.js",
   "src/reader-url.js",
   "src/reader-view.js",
   "reader/index.html",
@@ -269,6 +272,7 @@ for (const rel of [
   "content/images.js",
   "src/activity-time.js",
   "src/db.js",
+  "src/message-identity.js",
   "src/tokenize.js",
   "src/preview.js",
   "src/conversation-url.js",
@@ -281,6 +285,7 @@ for (const rel of [
   "src/markdown-dom.js",
   "src/sort-list.js",
   "src/image-cache.js",
+  "src/image-progress.js",
   "src/sync-policy.js",
   "src/sync-runner.js",
   "reader/reader.js",
@@ -288,7 +293,7 @@ for (const rel of [
   "sidepanel/sync-ui.js",
 ]) {
   const src = read(rel);
-  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts/.test(src)) {
+  if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts|\bnew\s+Image\b/.test(src)) {
     fail(`${rel} must not make network requests`);
   }
   if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
@@ -839,6 +844,183 @@ if (!read("src/reader-view.js").includes("is-target") || !read("src/reader-url.j
   fail("the reader must be able to scroll to a chosen cached image");
 }
 if (!read("src/db.js").includes("listImageCards")) fail("image cards must be listed from IndexedDB");
+// 1.7.2: ChatGPT image-generation progress must never become one stored row
+// per percentage step. The classifier stays conservative (exact phrase after a
+// percentage token is stripped) and the capture path + migration share it.
+const progressSrc = read("src/image-progress.js");
+if (!/export function isProgressText/.test(progressSrc) || !/export function planProgressMerges/.test(progressSrc)) {
+  fail("image-progress must export the text classifier and the merge planner");
+}
+if (!/export function isProgressMessage/.test(progressSrc)) {
+  fail("image-progress must export the DOM-aware classifier");
+}
+for (const locale of ["zh_TW", "zh_CN", "ja", "ko"]) {
+  if (!new RegExp(`// ${locale}`).test(read("src/image-progress.js"))) {
+    fail(`image-progress phrases must cover ${locale}`);
+  }
+}
+if (!/正在建立圖像/.test(progressSrc) || !/creating image/.test(progressSrc) || !/画像を作成/.test(progressSrc)) {
+  fail("image-progress phrases must cover zh/en/ja progress text");
+}
+// The content-script world cannot import modules, so content/shared.js carries
+// its own copy of the phrase list. Keep the two identical.
+function progressPhrases(src) {
+  const at = src.indexOf("PROGRESS_PHRASES");
+  if (at < 0) return null;
+  const open = src.indexOf("[", at);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "[") depth += 1;
+    else if (src[i] === "]") {
+      depth -= 1;
+      if (depth === 0) return src.slice(open + 1, i).replace(/\s+/g, " ").trim();
+    }
+  }
+  return null;
+}
+{
+  const fromModule = progressPhrases(progressSrc);
+  const fromContent = progressPhrases(sharedSrc);
+  if (!fromModule || !fromContent || fromModule !== fromContent) {
+    fail("the progress phrase lists in src/image-progress.js and content/shared.js must match");
+  }
+}
+if (!/isProgressMessage\(body, node\)/.test(sharedSrc) && !/isProgressMessage\(body, node\)/.test(read("content/chatgpt.js"))) {
+  fail("the chatgpt adapter must ask isProgressMessage for DOM evidence");
+}
+if (!/m\.progress !== true/.test(sharedSrc) || !/progress === true/.test(sharedSrc)) {
+  fail("runCapture must drop progress turns before the write path");
+}
+if (!/ensureProgressRepair/.test(read("background.js")) || !/export async function repairProgressDuplicates/.test(read("src/db.js"))) {
+  fail("stored progress duplicates must be folded once at startup");
+}
+if (/progress repair/.test(read("src/db.js")) && !/progress repair merged=\$\{merged\} dropped=\$\{dropped\}/.test(read("src/db.js"))) {
+  fail("the progress repair log must stay counts-only");
+}
+if (!/progress=skipped:\$\{/.test(read("content/shared.js"))) {
+  fail("diag must count skipped progress turns by number only");
+}
+if (/progress=skipped:[^$]/.test(read("content/shared.js"))) {
+  fail("progress diag must not interpolate text");
+}
+if (!/const DB_VERSION = 4/.test(read("src/db.js"))) {
+  fail("1.7.2 must not bump the IndexedDB version (stays 4)");
+}
+if (/DB_VERSION = 5/.test(read("src/db.js"))) fail("1.7.2 must not bump the IndexedDB version");
+
+// 1.7.2 P0: the "copy page structure" diagnostic must expose structure only.
+// Static guard: the generator lives in content/shared.js, the panel asks for it
+// over the existing content->panel channel, and neither side reaches for a url,
+// location, innerHTML, or chrome.scripting.
+const skeletonAt = sharedSrc.indexOf("page skeleton\n * Diagnostic only");
+if (skeletonAt < 0) {
+  fail("shared.js must carry the page-skeleton generator section");
+} else {
+  const skeletonSrc = sharedSrc.slice(skeletonAt);
+  if (!/Chatseek\.buildPageSkeleton\s*=/.test(skeletonSrc)) fail("buildPageSkeleton must be defined");
+  if (!skeletonSrc.includes("COPY_PAGE_SKELETON")) fail("the skeleton listener must answer COPY_PAGE_SKELETON");
+  if (!/SKELETON_NODES\s*=\s*6000/.test(skeletonSrc)) fail("the skeleton node cap must stay 6000");
+  if (!/SKELETON_DEPTH\s*=\s*60/.test(skeletonSrc)) fail("the skeleton depth cap must stay 60");
+  if (!skeletonSrc.includes("#cross-origin") || !skeletonSrc.includes("#same-origin-frame")) {
+    fail("the skeleton must mark cross-origin and same-origin frames");
+  }
+  if (/location\.(href|origin)|innerHTML/.test(skeletonSrc)) {
+    fail("the skeleton generator must not read location or write innerHTML");
+  }
+  if (/chrome\.scripting|executeScript|insertCSS/.test(skeletonSrc)) {
+    fail("the skeleton must not reach for scripting injection");
+  }
+}
+if (!panelSrc.includes("copyStructureBtn") || !panelSrc.includes("copyPageStructure") || !panelSrc.includes("COPY_PAGE_SKELETON")) {
+  fail("the side panel must offer the copy-page-structure button");
+}
+if (!read("sidepanel/index.html").includes('id="copyStructureBtn"')) {
+  fail("sidepanel/index.html must carry the copyStructureBtn button");
+}
+if (/chrome\.scripting|\.executeScript\b/.test(panelSrc)) {
+  fail("the panel must not inject scripts to read the page structure");
+}
+if (/chrome\.scripting|\.executeScript\b/.test(sharedSrc)) {
+  fail("the content script must not inject scripts for the page structure");
+}
+// Independent reviewer attacks include short safe-looking account words,
+// attribute/tag/class names, relative URLs, multilingual input, and bounds.
+try { reviewSkeleton(sharedSrc); }
+catch (error) { fail(`page skeleton adversarial review: ${error.message}`); }
+// Runtime guard: an attack fixture must leak nothing while keeping structure.
+{
+  const UUID_V = "11111111-1111-4111-8111-111111111111";
+  const SKEL_PAGE_URL = "https://chatgpt.com/c/" + UUID_V;
+  const SKEL_SECRETS = [
+    UUID_V, SKEL_PAGE_URL, "https://evil.example/path/SKELETONURLSECRET",
+    "SKELETONBODYSECRET", "SKELETONTITLESECRET", "user@example.com",
+    "aria label sentence should not leak", "tooltip title secret", "alt text secret",
+    "srcdoc inner secret", "shadow inner secret", "closed shadow inner secret",
+    "abcdef1234567890abcdef12",
+  ];
+  const skelHtml = "<!DOCTYPE html><html><head><title>SKELETONTITLESECRET</title></head><body>" +
+    '<div id="root" role="main" data-message-author-role="assistant" data-turn="user"' +
+    ' data-message-id="' + UUID_V + '" aria-label="aria label sentence should not leak"' +
+    ' title="tooltip title secret" class="plainword abcdef1234567890abcdef12 hashy-abcdef1234567890abcdef1234567890">' +
+    "<p>SKELETONBODYSECRET user@example.com</p>" +
+    '<a href="' + SKEL_PAGE_URL + '">SKELETONBODYSECRET LINK</a>' +
+    '<img alt="alt text secret" src="https://evil.example/path/SKELETONURLSECRET">' +
+    '<iframe id="same"></iframe><iframe id="cross" src="https://evil.example/path/SKELETONURLSECRET"></iframe>' +
+    '<div id="openHost"></div><div id="closedHost"></div>' +
+    '<iframe srcdoc="&lt;p&gt;srcdoc inner secret&lt;/p&gt;"></iframe></div></body></html>';
+  const skelDom = new JSDOM(skelHtml, { url: SKEL_PAGE_URL });
+  const skelDoc = skelDom.window.document;
+  skelDoc.getElementById("same").contentDocument.body.textContent = "SKELETONBODYSECRET";
+  skelDoc.getElementById("openHost").attachShadow({ mode: "open" }).innerHTML = "<span>shadow inner secret</span>";
+  const closedHostEl = skelDoc.getElementById("closedHost");
+  const closedRootEl = closedHostEl.attachShadow({ mode: "closed" });
+  closedRootEl.innerHTML = "<span>closed shadow inner secret</span>";
+  for (const key of ["__chatseekLoaded", "__chatseekPing", "__chatseekSkeleton", "__chatseekSyncInspect"]) {
+    delete globalThis[key];
+  }
+  const skelFn = new Function(
+    "document", "location", "window", "Node", "NodeFilter", "console", "chrome",
+    sharedSrc + "\nChatseek.autoStart = false;\nreturn Chatseek;",
+  );
+  const Chatseek = skelFn(
+    skelDoc,
+    skelDom.window.location,
+    skelDom.window,
+    skelDom.window.Node,
+    skelDom.window.NodeFilter,
+    { warn() {}, log() {} },
+    { runtime: { id: "verify", sendMessage() {}, onMessage: { addListener() {} } },
+      dom: { openOrClosedShadowRoot: (el) => (el === closedHostEl ? closedRootEl : null) } },
+  );
+  const skelOut = Chatseek.buildPageSkeleton(skelDoc);
+  const skelText = skelOut.text;
+  for (const secret of SKEL_SECRETS) {
+    if (skelText.includes(secret)) fail("the page skeleton leaked: " + secret);
+  }
+  if (skelText.includes("://") || skelText.includes("/path/")) {
+    fail("the page skeleton leaked a url");
+  }
+  // The cross-origin frame may keep its bare hostname (spec allows the domain),
+  // but never the path.
+  if (!skelText.includes("host=evil.example")) {
+    fail("the page skeleton dropped the cross-origin host marker");
+  }
+  if (!/^# chatseek page skeleton v1 nodes=\d+ depth<=60 truncated=false$/.test(skelText.split("\n")[0])) {
+    fail("the page skeleton header drifted");
+  }
+  if (!skelText.includes("role=main")) fail("the page skeleton dropped role=main");
+  if (!skelText.includes("data-message-author-role=assistant")) fail("the page skeleton dropped the author role");
+  if (!skelText.includes("data-message-id=x")) fail("the page skeleton must mask data-message-id");
+  if (!skelText.includes("href=x") || !skelText.includes("alt=x") || !skelText.includes("src=x")) {
+    fail("the page skeleton must mask href/alt/src");
+  }
+  skelDom.window.close();
+  for (const key of ["__chatseekLoaded", "__chatseekPing", "__chatseekSkeleton", "__chatseekSyncInspect"]) {
+    delete globalThis[key];
+  }
+}
+
 if (!read("src/db.js").includes('const IMAGE_BLOB_PREFIX = "imgb:"') || !read("src/db.js").includes("delete next.blob")) {
   fail("thumbnail bytes must be stored apart from the image list row");
 }
