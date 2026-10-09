@@ -1476,7 +1476,21 @@ export async function clearAll() {
  */
 const PROGRESS_REPAIR_KEY = "progressRepair";
 
-async function repairConversationProgress(db, convId) {
+// Bounded work per transaction. A capture or search transaction runs between
+// batches, so the tidy can never hold the object stores for a whole-database
+// scan. `drops` caps message deletions in one transaction; `conversations` and
+// `budgetMs` cap how much one invocation does before it yields. Small enough
+// that one slice stays well under the content script's 15s capture-response
+// window even on a pathological fake-IndexedDB load.
+const REPAIR_BATCH = { conversations: 2, drops: 64, budgetMs: 4000 };
+
+function yieldToLoop() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function repairConversationProgress(db, convId, options = {}) {
+  const maxDrops = Number.isInteger(options.maxDrops) && options.maxDrops > 0
+    ? options.maxDrops : REPAIR_BATCH.drops;
   const storeNames = ["conversations", "messages", "tokenMap", "meta"];
   const hasImages = db.objectStoreNames.contains("images");
   if (hasImages) storeNames.push("images");
@@ -1493,7 +1507,7 @@ async function repairConversationProgress(db, convId) {
     const conv = await requestDone(convStore.get(convId));
     if (!conv) {
       await completed;
-      return { dropped: 0, groups: 0 };
+      return { dropped: 0, groups: 0, remaining: 0 };
     }
     const all = await requestDone(msgStore.index("conversationId").getAll(convId));
     // Time order, never the stored order meta: a 1.7.1 capture anchored the meta
@@ -1505,13 +1519,28 @@ async function repairConversationProgress(db, convId) {
     const plans = planProgressMerges(rows);
     if (!plans.length) {
       await completed;
-      return { dropped: 0, groups: 0 };
+      return { dropped: 0, groups: 0, remaining: 0 };
     }
 
+    // One bounded slice per transaction. A thread with thousands of progress
+    // rewrites is folded over several short transactions with a yield between
+    // them, so a capture or search never waits behind one long transaction.
+    const order = [];
     const dropToKeep = new Map();
     for (const plan of plans) {
-      for (const id of plan.drop) dropToKeep.set(id, plan.keep);
+      for (const id of plan.drop) {
+        if (order.length >= maxDrops) break;
+        order.push(id);
+        dropToKeep.set(id, plan.keep);
+      }
+      if (order.length >= maxDrops) break;
     }
+    if (!order.length) {
+      await completed;
+      return { dropped: 0, groups: 0, remaining: 0 };
+    }
+    const totalDrops = plans.reduce((n, plan) => n + plan.drop.length, 0);
+    const remaining = totalDrops - order.length;
 
     // A progress row has no image of its own; move any anyway so a thumbnail
     // never points at a row that is about to disappear.
@@ -1587,7 +1616,7 @@ async function repairConversationProgress(db, convId) {
     }
     convStore.put(conv);
     await completed;
-    return { dropped: dropToKeep.size, groups: plans.length };
+    return { dropped: dropToKeep.size, groups: plans.length, remaining };
   } catch (error) {
     try { tx.abort(); } catch { /* already completed or aborted */ }
     await completed.catch(() => {});
@@ -1600,60 +1629,106 @@ async function repairConversationProgress(db, convId) {
  * conversation. Best-effort per conversation: one unreadable row must not
  * strand the rest. Returns { merged, dropped, done }.
  */
-export async function repairProgressDuplicates() {
+async function persistRepairState(db, state) {
+  const tx = db.transaction("meta", "readwrite");
+  tx.objectStore("meta").put({ key: PROGRESS_REPAIR_KEY, at: Date.now(), ...state });
+  await txDone(tx);
+}
+
+/**
+ * Fold stored image-generation progress duplicates in bounded batches.
+ *
+ * One invocation does at most `maxConversations` conversations and at most
+ * `maxDrops` message deletions per transaction, stopping early at `budgetMs`.
+ * The queue and cursor live in the `progressRepair` meta row, so an interrupted
+ * run resumes where it stopped. A failure leaves `done:false` (no completion
+ * is ever marked on failure) and the conversation is retried next time.
+ * Returns { merged, dropped, done, stalled, remaining }.
+ */
+export async function repairProgressDuplicates(options = {}) {
+  const maxConversations = Number.isInteger(options.maxConversations)
+    ? options.maxConversations : REPAIR_BATCH.conversations;
+  const maxDrops = Number.isInteger(options.maxDrops) ? options.maxDrops : REPAIR_BATCH.drops;
+  const budgetMs = Number.isInteger(options.budgetMs) ? options.budgetMs : REPAIR_BATCH.budgetMs;
   return withDb(async (db) => {
     const flagTx = db.transaction("meta", "readonly");
     const flag = await requestDone(flagTx.objectStore("meta").get(PROGRESS_REPAIR_KEY));
-    if (flag?.done) return { merged: 0, dropped: 0, done: true };
+    if (flag?.done) return { merged: 0, dropped: 0, done: true, stalled: false, remaining: 0 };
 
-    const ids = [];
-    const convTx = db.transaction("conversations", "readonly");
-    await cursorEach(
-      convTx.objectStore("conversations").index("platform"),
-      { range: IDBKeyRange.only("chatgpt") },
-      (row) => { if (row?.id) ids.push(row.id); },
-    );
+    let state = Array.isArray(flag?.queue) ? { ...flag } : null;
+    if (!state) {
+      const ids = [];
+      const convTx = db.transaction("conversations", "readonly");
+      await cursorEach(
+        convTx.objectStore("conversations").index("platform"),
+        { range: IDBKeyRange.only("chatgpt") },
+        (row) => { if (row?.id) ids.push(row.id); },
+      );
+      state = { done: false, queue: ids, index: 0, merged: 0, dropped: 0 };
+    }
 
-    let merged = 0;
-    let dropped = 0;
-    let failed = 0;
-    for (const id of ids) {
+    const deadline = Date.now() + budgetMs;
+    let merged = state.merged || 0;
+    let dropped = state.dropped || 0;
+    let processed = 0;
+    while (state.index < state.queue.length) {
+      let res;
       try {
-        const res = await repairConversationProgress(db, id);
-        merged += res.groups;
-        dropped += res.dropped;
+        res = await repairConversationProgress(db, state.queue[state.index], { maxDrops });
       } catch {
-        // One unreadable conversation must not strand the rest.
-        failed += 1;
+        // Do not advance the cursor and never mark completion: the next run
+        // retries this conversation, and idempotent slices make replay safe.
+        await persistRepairState(db, { ...state, done: false, merged, dropped });
+        return { merged, dropped, done: false, stalled: true, remaining: -1 };
+      }
+      dropped += res.dropped;
+      if (res.remaining === 0) merged += res.groups || (res.dropped ? 1 : 0);
+      if (res.remaining > 0) {
+        // This one conversation is bigger than a batch: yield so a capture or
+        // search can run, then resume the same conversation next invocation.
+        await persistRepairState(db, { done: false, queue: state.queue, index: state.index, merged, dropped });
+        return { merged, dropped, done: false, stalled: false, remaining: res.remaining };
+      }
+      state.index += 1;
+      processed += 1;
+      await persistRepairState(db, { done: false, queue: state.queue, index: state.index, merged, dropped });
+      if (processed >= maxConversations || Date.now() > deadline) {
+        return { merged, dropped, done: false, stalled: false, remaining: -1 };
       }
     }
 
-    const doneTx = db.transaction("meta", "readwrite");
-    doneTx.objectStore("meta").put({
-      key: PROGRESS_REPAIR_KEY,
-      done: failed === 0,
-      merged,
-      dropped,
-      at: Date.now(),
-    });
-    await txDone(doneTx);
+    await persistRepairState(db, { done: true, queue: [], index: 0, merged, dropped });
     if (dropped) {
       try { console.log(`[Chatseek] progress repair merged=${merged} dropped=${dropped}`); }
       catch { /* missing console must not stop the tidy */ }
     }
-    return { merged, dropped, done: failed === 0 };
+    return { merged, dropped, done: true, stalled: false, remaining: 0 };
   });
 }
 
-let progressRepairPromise = null;
+let progressRepairLoop = null;
 
-/** Share a pending/successful repair; a failed attempt remains retryable. */
+/**
+ * Run the tidy in the background until it finishes. Never rejects and never
+ * blocks a caller: capture and search do not await this. A failed or stalled
+ * attempt resolves with done:false and is retried on the next call.
+ */
 export function ensureProgressRepair() {
-  if (!progressRepairPromise) {
-    progressRepairPromise = repairProgressDuplicates().then((result) => {
-      if (!result.done) progressRepairPromise = null;
-      return result;
-    }).catch(() => { progressRepairPromise = null; return null; });
-  }
-  return progressRepairPromise;
+  if (progressRepairLoop) return progressRepairLoop;
+  const run = (async () => {
+    let last = null;
+    for (;;) {
+      try {
+        last = await repairProgressDuplicates();
+      } catch {
+        return { merged: 0, dropped: 0, done: false, stalled: true, remaining: -1 };
+      }
+      if (last.done || last.stalled) return last;
+      await yieldToLoop();
+    }
+  })();
+  progressRepairLoop = run;
+  run.then(() => { if (progressRepairLoop === run) progressRepairLoop = null; },
+    () => { if (progressRepairLoop === run) progressRepairLoop = null; });
+  return run;
 }

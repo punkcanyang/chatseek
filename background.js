@@ -315,11 +315,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "invalid conversation" });
       return;
     }
-    // Make sure the one-time progress-duplicate tidy has run before the first
-    // write, so it cannot race a fresh capture.
-    ensureProgressRepair()
-      .catch(() => null)
-      .then(() => upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg)))
+    // The one-time progress-duplicate tidy runs in the background and is
+    // bounded per transaction; a fresh capture never waits behind it. It is
+    // fire-and-forget so a slow or stuck repair cannot delay the response.
+    ensureProgressRepair().catch(() => null);
+    upsertMessages(msg.conversation, msg.messages || [], captureMeta(msg))
       .then((result) => {
         notifyIndexUpdated();
         sendResponse({ ok: true, observed: !!result?.observed });

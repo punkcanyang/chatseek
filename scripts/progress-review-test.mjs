@@ -17,12 +17,54 @@ async function check(name, fn) {
 const row = (id, body, captureIndex = 1, role = "assistant") =>
   ({ id, body, captureIndex, role, conversationId: "chatgpt:review" });
 
+// The tidy is bounded per transaction, so a test that wants a whole scan must
+// keep calling until it reports done. Only that last result carries the
+// cumulative merged/dropped counts.
+async function repairAll() {
+  let last = null;
+  for (let i = 0; i < 500; i += 1) {
+    last = await db.repairProgressDuplicates();
+    if (last.done || last.stalled) return last;
+  }
+  throw new Error("progress repair did not finish");
+}
+
 await check("migration requires the same position and conversation", () => {
   assert.equal(planProgressMerges([row("a", "Sketching 40%", 1), row("b", "Adding details 80%", 2)]).length, 0);
   assert.equal(planProgressMerges([row("a", "Sketching 40%"), { ...row("b", "Done"), conversationId: "chatgpt:other" }]).length, 0);
   assert.equal(planProgressMerges([row("a", "Sketching 40%"), row("u", "separator", 2, "user"), row("b", "Adding details 80%")]).length, 0);
   assert.equal(planProgressMerges([row("a", "Sketching 40%", undefined), { id: "b", role: "assistant", body: "Done" }]).length, 0);
   assert.equal(planProgressMerges([row("a", "Sketching 40%", -1), row("b", "Adding details 80%", -1)]).length, 0);
+  // Codex BLOCK 2: captureIndex is batch-local, so two capture windows can
+  // both report slot 1 for different turns. The same slot alone is not proof
+  // of position and must not merge.
+  assert.equal(planProgressMerges([row("a", "Sketching 40%", 1), row("b", "Adding details 80%", 1)]).length, 0,
+    "same slot with no position evidence must not merge");
+  assert.equal(planProgressMerges([
+    row("a", "Sketching 40%", 1),
+    { ...row("b", "Adding details 80%", 1), conversationId: "chatgpt:other" },
+  ]).length, 0, "cross-conversation same slot must not merge");
+  // Same slot but different turn ids are different turns.
+  assert.equal(planProgressMerges([
+    { ...row("a", "Sketching 40%", 1), turnId: "t1" },
+    { ...row("b", "Adding details 80%", 1), turnId: "t2" },
+  ]).length, 0, "different turn ids must not merge");
+  // A governing user row is the accepted extra position evidence.
+  const anchored = planProgressMerges([
+    { id: "u", role: "user", body: "Draw a leaf", conversationId: "chatgpt:review", captureIndex: 0 },
+    row("a", "Sketching 40%", 1),
+    row("b", "Adding details 80%", 1),
+  ]);
+  assert.equal(anchored.length, 1, "a preceding user row is enough evidence");
+  assert.equal(anchored[0].keep, "b");
+  assert.deepEqual(anchored[0].drop, ["a"]);
+  // A shared turn id is the other accepted evidence.
+  const turnBound = planProgressMerges([
+    { ...row("a", "Sketching 40%", 1), turnId: "t1" },
+    { ...row("b", "Adding details 80%", 1), turnId: "t1" },
+  ]);
+  assert.equal(turnBound.length, 1, "a shared turn id is enough evidence");
+  assert.equal(turnBound[0].keep, "b");
 });
 
 await check("short legitimate replies and controls are not progress", () => {
@@ -97,7 +139,8 @@ await check("failed migration rolls back and retries", async () => {
   const database = await db.openDb();
   const tx = database.transaction(["conversations", "messages", "meta"], "readwrite");
   tx.objectStore("meta").delete("progressRepair");
-  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 2, updatedAt: 4567 });
+  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 3, updatedAt: 4567 });
+  tx.objectStore("messages").put({ ...row(`${cid}:u`, "Make art", 0, "user"), conversationId: cid, capturedAt: 0 });
   for (const [id, body, time] of [["p", "Creating image 25%", 1], ["final", "Done", 2]]) {
     tx.objectStore("messages").put({ ...row(`${cid}:${id}`, body), conversationId: cid, capturedAt: time });
   }
@@ -120,10 +163,10 @@ await check("failed migration rolls back and retries", async () => {
   };
   try {
     assert.equal((await db.ensureProgressRepair()).done, false);
-    assert.equal((await db.readConversation(cid)).messages.length, 2, "deletions must roll back");
+    assert.equal((await db.readConversation(cid)).messages.length, 3, "deletions must roll back");
   } finally { database.transaction = original; }
   assert.equal((await db.ensureProgressRepair()).done, true);
-  assert.equal((await db.readConversation(cid)).messages.length, 1);
+  assert.equal((await db.readConversation(cid)).messages.length, 2);
   assert.equal((await db.readConversation(cid)).conversation.updatedAt, 4567);
 });
 
@@ -135,7 +178,8 @@ await check("3000 rows and 500 colliding thumbnails remain intact and jumpable",
   const database = await db.openDb();
   const tx = database.transaction(["conversations", "messages", "meta", "images", "tokenMap"], "readwrite");
   tx.objectStore("meta").delete("progressRepair");
-  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 3000, updatedAt: 7890 });
+  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 3001, updatedAt: 7890 });
+  tx.objectStore("messages").put({ id: `${cid}:u`, conversationId: cid, role: "user", body: "Draw a leaf", capturedAt: -1, captureIndex: 0 });
   for (let i = 0; i < 3000; i++) {
     const id = `${cid}:${i}`;
     const body = i === 2999 ? "Final image" : `Creating image ${i % 100}%`;
@@ -157,13 +201,35 @@ await check("3000 rows and 500 colliding thumbnails remain intact and jumpable",
   const heartbeat = setInterval(() => {
     const now = performance.now(); maxGap = Math.max(maxGap, now - lastTick); lastTick = now; ticks += 1;
   }, 10);
-  try { assert.equal((await db.repairProgressDuplicates()).dropped, 2999); }
-  finally { clearInterval(heartbeat); }
+  // Codex BLOCK 1: the tidy runs in bounded background batches and must never
+  // hold the object stores for a whole-database scan. A capture issued while it
+  // is running has to answer well inside the content script's 15s window.
+  const probeConv = {
+    id: "chatgpt:review-probe", platform: "chatgpt", platformId: "review-probe",
+    title: "Probe", url: "https://chatgpt.com/c/review-probe",
+  };
+  const repairPromise = db.ensureProgressRepair();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  let captureMax = 0;
+  for (let k = 0; k < 5; k += 1) {
+    const probeMsgs = [{ id: `${probeConv.id}:m${k}`, role: "user", body: `probe ${k}` }];
+    const t0 = performance.now();
+    await db.upsertMessages(probeConv, probeMsgs, { captureId: `probe-${k}`, pageMessageIds: probeMsgs.map((m) => m.id) });
+    captureMax = Math.max(captureMax, performance.now() - t0);
+  }
+  const captureMs = Math.round(captureMax);
+  const repair = await repairPromise;
+  assert(captureMs < 15000,
+    `a capture must answer within 15s while the tidy runs (slowest ${captureMs}ms)`);
+  console.log("review capture during repair max ms", captureMs, "full index", fullIndex);
+  assert.equal(repair.done, true, "the tidy eventually finishes");
+  assert.equal(repair.dropped, 2999, "every stored progress row is folded away");
+  clearInterval(heartbeat);
   console.log("review migration 3000 rows / 500 thumbnails ms", Math.round(performance.now() - start), "event loop max gap ms", Math.round(maxGap), "full index", fullIndex);
   assert(ticks > 1, "migration must yield to the event loop");
   const images = await db.readImagesForMessages([`${cid}:2999`]);
   assert.equal(images.length, 500);
-  assert.equal((await db.readConversation(cid)).messages.length, 1);
+  assert.equal((await db.readConversation(cid)).messages.length, 2);
   assert.equal((await db.readConversation(cid)).conversation.updatedAt, 7890);
   if (fullIndex) assert.equal((await db.searchConversations({ query: "creating" })).filter(conv => conv.id === cid).length, 0);
   for (const image of images) {
@@ -187,7 +253,8 @@ await check("migration preserves colliding thumbnails and their bytes", async ()
   const database = await db.openDb();
   const tx = database.transaction(["conversations", "messages", "meta", "tokenMap"], "readwrite");
   tx.objectStore("meta").delete("progressRepair");
-  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 3, updatedAt: 1234, updatedAtSource: "observed", tailMessageId: `${cid}:final` });
+  tx.objectStore("conversations").put({ id: cid, platform: "chatgpt", messageCount: 4, updatedAt: 1234, updatedAtSource: "observed", tailMessageId: `${cid}:final` });
+  tx.objectStore("messages").put({ ...row(`${cid}:u`, "Draw a leaf", 0, "user"), capturedAt: 99 });
   [row(`${cid}:p1`, "Creating image 25%"), row(`${cid}:p2`, "Sketching 40%"), row(`${cid}:final`, "Done")].forEach((m, i) => {
     tx.objectStore("messages").put({ ...m, capturedAt: 100 + i });
     for (const token of tokenize(m.body)) tx.objectStore("tokenMap").put({ token, conversationId: cid, source: m.id, role: "assistant", positions: [0] });
@@ -197,13 +264,13 @@ await check("migration preserves colliding thumbnails and their bytes", async ()
   for (const [messageId, value] of [[`${cid}:p1`, 1], [`${cid}:p2`, 2], [`${cid}:final`, 3]]) {
     await db.saveImageRecords(cid, [{ messageId, index: 0, status: "cached", mime: "image/webp", bytes: [value], width: 4, height: 4 }]);
   }
-  const result = await db.repairProgressDuplicates();
+  const result = await repairAll();
   assert.equal(result.done, true);
   const images = await db.readImagesForMessages([`${cid}:final`]);
   assert.equal(images.length, 3);
   assert.deepEqual(images.map(i => new Uint8Array(i.blob)[0]).sort(), [1, 2, 3]);
   const convo = await db.readConversation(cid);
-  assert.equal(convo.messages.length, 1);
+  assert.equal(convo.messages.length, 2);
   assert.equal((await db.searchConversations({ query: "creating" })).filter(conv => conv.id === cid).length, 0, "dropped progress tokens must be gone");
   assert.equal((await db.searchConversations({ query: "Done" })).filter(conv => conv.id === cid).length, 1, "final tokens must remain");
   assert.equal(convo.conversation.updatedAt, 1234);

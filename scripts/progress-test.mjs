@@ -95,11 +95,21 @@ assert(PROGRESS_PHRASES.some((p) => /[\uac00-\ud7af]/.test(p)), "ko phrases pres
   assert(plans.length === 1, "one merge plan");
   assert(plans[0].keep === "final", "the settled turn is kept");
   assert(plans[0].drop.join(",") === "p1,p2,p3", "the progress run is dropped");
+  // Without a settled tail the run keeps its own last row. The governing user
+  // row is the extra position evidence the conservative merge rule requires.
   const tail = planProgressMerges([
+    { id: "tu", role: "user", body: "draw", conversationId: "fixture", captureIndex: 0 },
     { id: "a", role: "assistant", body: "Sketching 40%", conversationId: "fixture", captureIndex: 1 },
     { id: "b", role: "assistant", body: "Adding details 80%", conversationId: "fixture", captureIndex: 1 },
   ]);
   assert(tail.length === 1 && tail[0].keep === "b" && tail[0].drop[0] === "a", "a run without a settled tail keeps its last row");
+  // Same slot but no evidence at all: left alone (keep a duplicate, never
+  // delete a different turn).
+  const noEvidence = planProgressMerges([
+    { id: "a", role: "assistant", body: "Sketching 40%", conversationId: "fixture", captureIndex: 1 },
+    { id: "b", role: "assistant", body: "Adding details 80%", conversationId: "fixture", captureIndex: 1 },
+  ]);
+  assert(noEvidence.length === 0, "same slot with no position evidence is not merged");
   assert(planProgressMerges([{ id: "s", role: "assistant", body: "Sketching 40%" }]).length === 0, "a lone progress row is left alone");
 }
 
@@ -210,6 +220,29 @@ async function seedRows({ conversation, messages, order, images = [] }) {
   }
   for (const img of images) tx.objectStore("images").put(img);
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+}
+
+// The tidy is bounded per transaction, so a test that wants a whole scan clears
+// the resume cursor and keeps calling until it reports done; only that final
+// result carries the cumulative merged/dropped counts.
+async function clearRepairFlag() {
+  const database = await db.openDb();
+  await new Promise((res, rej) => {
+    const tx = database.transaction("meta", "readwrite");
+    tx.objectStore("meta").delete("progressRepair");
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+async function repairAll() {
+  await clearRepairFlag();
+  let last = null;
+  for (let i = 0; i < 500; i += 1) {
+    last = await db.repairProgressDuplicates();
+    if (last.done || last.stalled) return last;
+  }
+  throw new Error("progress repair did not finish");
 }
 
 // ---------------------------------------------------------------- Part A
@@ -369,17 +402,18 @@ async function seedRows({ conversation, messages, order, images = [] }) {
   const T = Date.UTC(2026, 9, 8, 11, 30, 0);
   await seedRows({
     conversation: {
-      ...CONV, id: CONV_C, messageCount: 5, tailMessageId: p(2), captureBaselineTail: p(2),
+      ...CONV, id: CONV_C, messageCount: 6, tailMessageId: p(2), captureBaselineTail: p(2),
       updatedAt: T, updatedAtSource: "observed", lastPreview: TICKS[2], lastPreviewRole: "assistant",
     },
     messages: [
+      { id: `${CONV_C}:u`, conversationId: CONV_C, role: "user", body: USER_TEXT, capturedAt: T - 1, captureIndex: 0 },
       { id: p(1), conversationId: CONV_C, role: "assistant", body: TICKS[0], capturedAt: T, captureIndex: 0 },
       { id: p(2), conversationId: CONV_C, role: "assistant", body: TICKS[1], capturedAt: T + 1, captureIndex: 0 },
       { id: finalId, conversationId: CONV_C, role: "assistant", body: SETTLED_BODY, capturedAt: T + 2, captureIndex: 0 },
       { id: q(1), conversationId: CONV_C, role: "assistant", body: "Sketching 38%", capturedAt: T + 3, captureIndex: 1 },
       { id: q(2), conversationId: CONV_C, role: "assistant", body: "Adding details 80%", capturedAt: T + 4, captureIndex: 1 },
     ],
-    order: [p(1), finalId, p(2), q(1), q(2)],
+    order: [`${CONV_C}:u`, p(1), finalId, p(2), q(1), q(2)],
     images: [
       { messageId: finalId, index: 0, status: "cached", mime: "image/webp", width: 4, height: 4, bytes: 1, conversationId: CONV_C },
       { messageId: p(2), index: 1, status: "cached", mime: "image/webp", width: 4, height: 4, bytes: 1, conversationId: CONV_C },
@@ -387,21 +421,22 @@ async function seedRows({ conversation, messages, order, images = [] }) {
   });
   const before = await db.readConversation(CONV_C);
   console.log("Part C  seeded rows:", before.messages.length);
-  assert(before.messages.length === 5, "seed should hold 5 rows");
+  assert(before.messages.length === 6, "seed should hold 6 rows");
 
-  const first = await db.repairProgressDuplicates();
+  const first = await repairAll();
   console.log("Part C  repair merged:", first.merged, "dropped:", first.dropped, "done:", first.done);
   assert(first.done === true, "repair reports done");
   assert(first.merged >= 2, "the seeded runs were merged");
   const after = await db.readConversation(CONV_C);
   const ids = after.messages.map((m) => m.id);
   console.log("Part C  rows kept:", ids.join("  "));
-  assert(ids.length === 2, `progress runs should collapse to 2 rows, got ${ids.length}`);
+  assert(ids.length === 3, `progress runs should collapse to user + 2 rows, got ${ids.length}`);
+  assert(ids.includes(`${CONV_C}:u`), "the governing user prompt survives");
   assert(ids.includes(finalId), "the settled turn survives (time order, not the stored meta)");
   assert(ids.includes(q(2)), "a run without a settled tail keeps its last row");
   assert(!ids.includes(p(1)) && !ids.includes(p(2)), "the earlier progress rows are gone");
   assert(!ids.includes(q(1)), "the earlier orphan progress row is gone");
-  assert(after.conversation.messageCount === 2, "messageCount follows the merge");
+  assert(after.conversation.messageCount === 3, "messageCount follows the merge");
   assert(after.conversation.tailMessageId === finalId, "the tail pointer remaps off a dropped row");
   assert(after.conversation.captureBaselineTail === finalId, "the capture baseline remaps too");
   assert(after.conversation.updatedAt === T && after.conversation.updatedAtSource === "observed", "updatedAt must not change");
@@ -413,18 +448,11 @@ async function seedRows({ conversation, messages, order, images = [] }) {
   assert(images.every((r) => r.messageId === finalId), "no image row left on a dropped id");
 
   // Idempotent even without the meta flag: a second full scan finds nothing.
-  const database = await db.openDb();
-  await new Promise((res, rej) => {
-    const tx = database.transaction("meta", "readwrite");
-    tx.objectStore("meta").delete("progressRepair");
-    tx.oncomplete = res;
-    tx.onerror = () => rej(tx.error);
-  });
-  const second = await db.repairProgressDuplicates();
+  const second = await repairAll();
   const again = await db.readConversation(CONV_C);
   console.log("Part C  second run merged:", second.merged, "rows:", again.messages.length);
   assert(second.merged === 0, "a re-run with no runs merges nothing");
-  assert(again.messages.length === 2, "repair must be idempotent");
+  assert(again.messages.length === 3, "repair must be idempotent");
 }
 
 // ---------------------------------------------------------------- Part D
