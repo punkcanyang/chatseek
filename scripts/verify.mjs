@@ -3,6 +3,7 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
+import { JSDOM } from "jsdom";
 import { mergeActivityTime, pageShowsNewActivity } from "../src/activity-time.js";
 import { tokenize, queryTokens } from "../src/tokenize.js";
 
@@ -906,6 +907,115 @@ if (!/const DB_VERSION = 4/.test(read("src/db.js"))) {
   fail("1.7.2 must not bump the IndexedDB version (stays 4)");
 }
 if (/DB_VERSION = 5/.test(read("src/db.js"))) fail("1.7.2 must not bump the IndexedDB version");
+
+// 1.7.2 P0: the "copy page structure" diagnostic must expose structure only.
+// Static guard: the generator lives in content/shared.js, the panel asks for it
+// over the existing content->panel channel, and neither side reaches for a url,
+// location, innerHTML, or chrome.scripting.
+const skeletonAt = sharedSrc.indexOf("page skeleton\n * Diagnostic only");
+if (skeletonAt < 0) {
+  fail("shared.js must carry the page-skeleton generator section");
+} else {
+  const skeletonSrc = sharedSrc.slice(skeletonAt);
+  if (!/Chatseek\.buildPageSkeleton\s*=/.test(skeletonSrc)) fail("buildPageSkeleton must be defined");
+  if (!skeletonSrc.includes("COPY_PAGE_SKELETON")) fail("the skeleton listener must answer COPY_PAGE_SKELETON");
+  if (!/SKELETON_NODES\s*=\s*6000/.test(skeletonSrc)) fail("the skeleton node cap must stay 6000");
+  if (!/SKELETON_DEPTH\s*=\s*60/.test(skeletonSrc)) fail("the skeleton depth cap must stay 60");
+  if (!skeletonSrc.includes("#cross-origin") || !skeletonSrc.includes("#same-origin-frame")) {
+    fail("the skeleton must mark cross-origin and same-origin frames");
+  }
+  if (/location\.(href|origin)|innerHTML/.test(skeletonSrc)) {
+    fail("the skeleton generator must not read location or write innerHTML");
+  }
+  if (/chrome\.scripting|executeScript|insertCSS/.test(skeletonSrc)) {
+    fail("the skeleton must not reach for scripting injection");
+  }
+}
+if (!panelSrc.includes("copyStructureBtn") || !panelSrc.includes("copyPageStructure") || !panelSrc.includes("COPY_PAGE_SKELETON")) {
+  fail("the side panel must offer the copy-page-structure button");
+}
+if (!read("sidepanel/index.html").includes('id="copyStructureBtn"')) {
+  fail("sidepanel/index.html must carry the copyStructureBtn button");
+}
+if (/chrome\.scripting|\.executeScript\b/.test(panelSrc)) {
+  fail("the panel must not inject scripts to read the page structure");
+}
+if (/chrome\.scripting|\.executeScript\b/.test(sharedSrc)) {
+  fail("the content script must not inject scripts for the page structure");
+}
+// Runtime guard: an attack fixture must leak nothing while keeping structure.
+{
+  const UUID_V = "11111111-1111-4111-8111-111111111111";
+  const SKEL_PAGE_URL = "https://chatgpt.com/c/" + UUID_V;
+  const SKEL_SECRETS = [
+    UUID_V, SKEL_PAGE_URL, "https://evil.example/path/SKELETONURLSECRET",
+    "SKELETONBODYSECRET", "SKELETONTITLESECRET", "user@example.com",
+    "aria label sentence should not leak", "tooltip title secret", "alt text secret",
+    "srcdoc inner secret", "shadow inner secret", "closed shadow inner secret",
+    "abcdef1234567890abcdef12",
+  ];
+  const skelHtml = "<!DOCTYPE html><html><head><title>SKELETONTITLESECRET</title></head><body>" +
+    '<div id="root" role="main" data-message-author-role="assistant" data-turn="user"' +
+    ' data-message-id="' + UUID_V + '" aria-label="aria label sentence should not leak"' +
+    ' title="tooltip title secret" class="plainword abcdef1234567890abcdef12 hashy-abcdef1234567890abcdef1234567890">' +
+    "<p>SKELETONBODYSECRET user@example.com</p>" +
+    '<a href="' + SKEL_PAGE_URL + '">SKELETONBODYSECRET LINK</a>' +
+    '<img alt="alt text secret" src="https://evil.example/path/SKELETONURLSECRET">' +
+    '<iframe id="same"></iframe><iframe id="cross" src="https://evil.example/path/SKELETONURLSECRET"></iframe>' +
+    '<div id="openHost"></div><div id="closedHost"></div>' +
+    '<iframe srcdoc="&lt;p&gt;srcdoc inner secret&lt;/p&gt;"></iframe></div></body></html>';
+  const skelDom = new JSDOM(skelHtml, { url: SKEL_PAGE_URL });
+  const skelDoc = skelDom.window.document;
+  skelDoc.getElementById("same").contentDocument.body.textContent = "SKELETONBODYSECRET";
+  skelDoc.getElementById("openHost").attachShadow({ mode: "open" }).innerHTML = "<span>shadow inner secret</span>";
+  const closedHostEl = skelDoc.getElementById("closedHost");
+  const closedRootEl = closedHostEl.attachShadow({ mode: "closed" });
+  closedRootEl.innerHTML = "<span>closed shadow inner secret</span>";
+  for (const key of ["__chatseekLoaded", "__chatseekPing", "__chatseekSkeleton", "__chatseekSyncInspect"]) {
+    delete globalThis[key];
+  }
+  const skelFn = new Function(
+    "document", "location", "window", "Node", "NodeFilter", "console", "chrome",
+    sharedSrc + "\nChatseek.autoStart = false;\nreturn Chatseek;",
+  );
+  const Chatseek = skelFn(
+    skelDoc,
+    skelDom.window.location,
+    skelDom.window,
+    skelDom.window.Node,
+    skelDom.window.NodeFilter,
+    { warn() {}, log() {} },
+    { runtime: { id: "verify", sendMessage() {}, onMessage: { addListener() {} } },
+      dom: { openOrClosedShadowRoot: (el) => (el === closedHostEl ? closedRootEl : null) } },
+  );
+  const skelOut = Chatseek.buildPageSkeleton(skelDoc);
+  const skelText = skelOut.text;
+  for (const secret of SKEL_SECRETS) {
+    if (skelText.includes(secret)) fail("the page skeleton leaked: " + secret);
+  }
+  if (skelText.includes("://") || skelText.includes("/path/")) {
+    fail("the page skeleton leaked a url");
+  }
+  // The cross-origin frame may keep its bare hostname (spec allows the domain),
+  // but never the path.
+  if (!skelText.includes("host=evil.example")) {
+    fail("the page skeleton dropped the cross-origin host marker");
+  }
+  if (!/^# chatseek page skeleton v1 nodes=\d+ depth<=60 truncated=false$/.test(skelText.split("\n")[0])) {
+    fail("the page skeleton header drifted");
+  }
+  if (!skelText.includes("role=main")) fail("the page skeleton dropped role=main");
+  if (!skelText.includes("data-message-author-role=assistant")) fail("the page skeleton dropped the author role");
+  if (!skelText.includes("data-message-id=x")) fail("the page skeleton must mask data-message-id");
+  if (!skelText.includes("href=x") || !skelText.includes("alt=x") || !skelText.includes("src=x")) {
+    fail("the page skeleton must mask href/alt/src");
+  }
+  skelDom.window.close();
+  for (const key of ["__chatseekLoaded", "__chatseekPing", "__chatseekSkeleton", "__chatseekSyncInspect"]) {
+    delete globalThis[key];
+  }
+}
+
 if (!read("src/db.js").includes('const IMAGE_BLOB_PREFIX = "imgb:"') || !read("src/db.js").includes("delete next.blob")) {
   fail("thumbnail bytes must be stored apart from the image list row");
 }
