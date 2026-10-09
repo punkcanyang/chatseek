@@ -15,6 +15,9 @@ import puppeteer from "puppeteer-core";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const currentUrl = "https://chatgpt.com/c/11111111-1111-4111-8111-111111111111";
 const hour = 3600000;
+// 1.7.2 sample: a ChatGPT image-generation turn that used to be stored once per
+// progress percentage. Example data only; not a real conversation.
+const MAPLE_ID = "2b2b2b2b-2b2b-4b2b-8b2b-2b2b2b2b2b2b";
 
 function conv(platform, platformId, title, url, updatedAt, extra = {}) {
   return {
@@ -57,6 +60,21 @@ function rows(now) {
         ),
         bot(`chatgpt:${kyoto}:a`, "好的，下面是三天安排。"),
       ],
+    },
+    {
+      conv: conv(
+        "chatgpt",
+        MAPLE_ID,
+        "生圖：橄葉與山脊",
+        `https://chatgpt.com/c/${MAPLE_ID}`,
+        now - 3 * hour,
+        { updatedAtSource: "observed" },
+      ),
+      messages: [
+        user(`chatgpt:${MAPLE_ID}:u`, "畫一張橄葉放在山脊上的圖，背景是清晨的霧。"),
+        bot(`chatgpt:${MAPLE_ID}:a`, "這是你要的橄葉圖。"),
+      ],
+      images: [{ messageId: `chatgpt:${MAPLE_ID}:a`, index: 0, alt: "橄葉與山脊" }],
     },
     {
       conv: conv("claude", invoice, "发票按月汇总", `https://claude.ai/chat/${invoice}`, now - 5 * hour),
@@ -147,15 +165,57 @@ function startServer(seedRows) {
 <script type="module">
 import { upsertConversations, upsertMessages, saveCaptureHealth } from "/src/db.js";
 const rows = ${JSON.stringify(seedRows)};
+function seedMark() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 96;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 96, 64);
+  grad.addColorStop(0, "#d9b26a");
+  grad.addColorStop(1, "#9c4a1f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 96, 64);
+  ctx.fillStyle = "rgba(60, 30, 10, 0.55)";
+  ctx.beginPath();
+  ctx.moveTo(48, 8);
+  ctx.lineTo(60, 30);
+  ctx.lineTo(50, 34);
+  ctx.lineTo(58, 56);
+  ctx.lineTo(38, 34);
+  ctx.lineTo(48, 30);
+  ctx.closePath();
+  ctx.fill();
+  return canvas.toDataURL("image/png");
+}
 for (const row of rows) {
-  if (row.messages) {
-    await upsertMessages(row.conv, row.messages, {
-      pageMessageIds: row.messages.map((msg) => msg.id),
-      captureId: row.conv.id,
+  if (!row.messages) { await upsertConversations([row.conv]); continue; }
+  await upsertMessages(row.conv, row.messages, {
+    pageMessageIds: row.messages.map((msg) => msg.id),
+    captureId: row.conv.id,
+  });
+  if (!row.images?.length) continue;
+  const dataUrl = seedMark();
+  const database = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("chatseek");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const tx = database.transaction("images", "readwrite");
+  for (const img of row.images) {
+    tx.objectStore("images").put({
+      messageId: img.messageId,
+      index: img.index,
+      conversationId: row.conv.id,
+      status: "cached",
+      mime: "image/png",
+      dataUrl,
+      alt: img.alt || "",
+      prompt: "",
+      offset: 0,
+      bytes: dataUrl.length,
     });
-  } else {
-    await upsertConversations([row.conv]);
   }
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
 }
 await saveCaptureHealth("chatgpt", {
   pathKind: "conversation",
@@ -164,7 +224,7 @@ await saveCaptureHealth("chatgpt", {
   selector: "div",
   warn: false,
   at: Date.now(),
-  diag: "[Chatseek] diag v=1.7.1 platform=chatgpt path=conversation hits=none used=div user=1 assistant=1 chars=80 imgCache=0 imgHold=0 imgs=0/0/0 fail=tainted:0,too-big:0,timeout:0,not-loaded:0 archive=banner:1,list:2 health=ok err= at=2026-10-09T00:00:00.000Z",
+  diag: "[Chatseek] diag v=1.7.2 platform=chatgpt path=conversation hits=none used=div user=1 assistant=1 chars=80 imgCache=0 imgHold=0 imgs=0/0/0 fail=tainted:0,too-big:0,timeout:0,not-loaded:0 archive=banner:1,list:2 health=ok err= at=2026-10-09T00:00:00.000Z",
 });
 location.replace("/sidepanel/index.html");
 </script>`;
@@ -273,9 +333,16 @@ async function main() {
 
     await prepare(page, origin);
     const docs = join(root, "docs");
-    const artifacts = "/opt/cursor/artifacts";
+    // Best-effort copy target for CI artifacts. Some sandboxes do not allow
+    // writing outside the workspace, which must not fail the docs screenshots.
+    const artifacts = process.env.CHATSEEK_ARTIFACTS || "/opt/cursor/artifacts";
     await mkdir(docs, { recursive: true });
-    await mkdir(artifacts, { recursive: true });
+    let artifactsOk = true;
+    try {
+      await mkdir(artifacts, { recursive: true });
+    } catch {
+      artifactsOk = false;
+    }
     const shots = {
       active: join(docs, "panel-1.4.0-active.png"),
       archived: join(docs, "panel-1.4.0-archived.png"),
@@ -283,6 +350,7 @@ async function main() {
       remove: join(docs, "panel-1.4.0-remove.png"),
       en: join(docs, "panel-1.4.0-en.png"),
       ja: join(docs, "panel-1.4.0-ja.png"),
+      progressReader: join(docs, "reader-1.7.2-image-progress.png"),
     };
     const order = await page.$$eval(".chip", (els) => els.map((el) => el.textContent));
     if (order.join("|") !== "活躍中|ChatGPT|Claude|Grok|Gemini|已封存|全部|圖片") {
@@ -344,8 +412,30 @@ async function main() {
     }, { timeout: 10000 });
     await page.screenshot({ path: shots.ja, fullPage: true });
 
-    for (const file of Object.values(shots)) {
-      await copyFile(file, join(artifacts, file.split("/").pop()));
+    // 1.7.2: the reader must show the settled image turn once, not a stack of
+    // progress blocks. Example data only.
+    await page.goto(`${origin}/reader/index.html?id=${encodeURIComponent(`chatgpt:${MAPLE_ID}`)}`, {
+      waitUntil: "networkidle0",
+      timeout: 20000,
+    });
+    await page.waitForFunction(() => document.querySelectorAll(".msg.msg-assistant").length === 1, { timeout: 15000 });
+    const progressAssistants = await page.$$eval(".msg.msg-assistant", (els) => els.length);
+    const progressShots = await page.$$eval(".image-slot", (els) => els.length);
+    const progressText = await page.$eval("#app", (el) => el.innerText);
+    if (progressAssistants !== 1 || progressShots !== 1) {
+      throw new Error(`reader showed ${progressAssistants} assistant blocks / ${progressShots} image slots`);
+    }
+    if (/25%|38%|51%|80%/.test(progressText)) {
+      throw new Error("reader still shows image-generation progress text");
+    }
+    await page.screenshot({ path: shots.progressReader, fullPage: true });
+
+    if (artifactsOk) {
+      for (const file of Object.values(shots)) {
+        try {
+          await copyFile(file, join(artifacts, file.split("/").pop()));
+        } catch { /* best-effort mirror only */ }
+      }
     }
     console.log("screenshots", Object.values(shots).join(" "));
   } finally {
