@@ -378,6 +378,18 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 1rem; }
   margin: 0.7em 0;
 }
 
+.image-slot.is-target {
+  outline: 3px solid #c48a00;
+  outline-offset: 4px;
+  border-radius: 12px;
+  animation: chatseek-flash 1.6s ease forwards;
+}
+
+@keyframes chatseek-flash {
+  0% { background: #ffe08a; }
+  100% { background: transparent; }
+}
+
 .thumb-btn {
   display: inline-block;
   padding: 0;

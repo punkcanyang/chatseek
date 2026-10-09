@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "Image non mise en cache (effacée sur cet ordinateur)"
   },
+  "tabImages": {
+    "message": "Images"
+  },
+  "imageEmpty": {
+    "message": "Aucune image en cache pour le moment."
+  },
+  "imageFilterEmpty": {
+    "message": "Aucune image en cache pour cette plateforme."
+  },
+  "showUncached": {
+    "message": "Afficher non mises en cache"
+  },
+  "imageOpenReader": {
+    "message": "Ouvrir cette image dans la page de lecture"
+  },
   "copyDiag": {
     "message": "Copier le diagnostic"
   },

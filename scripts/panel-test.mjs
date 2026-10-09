@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { openDb, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
+import { clearImageCache, openDb, saveImageRecords, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import {
   activeTabUrl,
@@ -372,7 +372,7 @@ const chips = [...document.querySelectorAll(".chip")].map((el) =>
   el.dataset.scope === "platform" ? el.dataset.platform : el.dataset.scope,
 );
 assert(
-  chips.join(",") === "active,chatgpt,claude,grok,gemini,archived,all",
+  chips.join(",") === "active,chatgpt,claude,grok,gemini,archived,all,images",
   `tab order ${chips.join(",")}`,
 );
 assert(document.querySelector(".chip.is-on")?.dataset.scope === "active", "active tab is the default");
@@ -571,6 +571,63 @@ await until(() => sortField.textContent === "相关度" && sortDir.textContent =
 q.value = "";
 q.dispatchEvent(new window.Event("input"));
 await until(() => sortField.textContent === "消息数", "search cleared again");
+
+const shotMessage = `${A.id}:u`;
+await saveImageRecords(A.id, [
+  {
+    messageId: shotMessage,
+    index: 0,
+    status: "cached",
+    mime: "image/webp",
+    width: 8,
+    height: 8,
+    offset: 0,
+    alt: "ridge",
+    bytes: [1, 2, 3, 4, 5, 6, 7, 8],
+  },
+  {
+    messageId: shotMessage,
+    index: 1,
+    status: "uncached",
+    offset: 20,
+    alt: "https://cdn.example/hidden.png",
+  },
+]);
+document.getElementById("filterImages").click();
+await until(() => document.querySelector(".shot-img")?.getAttribute("src")?.startsWith("data:image/"), "image tab shows a cached thumb");
+assert(document.getElementById("list").hidden, "the conversation list steps aside");
+assert(!document.querySelector(".shot-missing"), "placeholders stay hidden");
+assert(document.getElementById("imageEmpty").hidden, "empty copy hides when a thumb exists");
+assert(!document.getElementById("imageGrid").innerHTML.includes("cdn.example"), "the grid does not keep an image address");
+const uncached = document.getElementById("showUncached");
+uncached.checked = true;
+uncached.dispatchEvent(new window.Event("change"));
+await until(() => document.querySelector(".shot-missing")?.dataset.reason === "uncached", "uncached placeholder appears");
+openedTabs.length = 0;
+document.querySelector(".shot-open").click();
+await until(() => openedTabs.length === 1, "thumb opens the reader");
+assert(openedTabs[0].url.includes("m=") && openedTabs[0].url.includes("i=0"), openedTabs[0].url);
+assert(!openedTabs[0].url.includes("cdn.example"), "reader link is not an image address");
+openedTabs.length = 0;
+document.querySelector(".shot-site").click();
+await until(() => openedTabs.length === 1, "site icon reuses the conversation tab path");
+assert(openedTabs[0].url === A.url, openedTabs[0].url);
+document.querySelector('[data-image-platform="gemini"]').click();
+await until(() => !document.getElementById("imageEmpty").hidden, "a platform with no images is empty");
+assert(document.getElementById("imageEmpty").textContent.includes("平台"), document.getElementById("imageEmpty").textContent);
+document.getElementById("imagePlatformAll").click();
+await until(() => document.querySelector(".shot-img"), "all platforms shows the thumb again");
+const oldConfirm = globalThis.confirm;
+globalThis.confirm = () => true;
+document.getElementById("clearImagesBtn").click();
+await until(
+  () => document.querySelector(".shot-missing")?.dataset.reason === "cleared" && !document.querySelector(".shot-img"),
+  "clearing the cache replaces thumbs while the tab is open",
+);
+globalThis.confirm = oldConfirm;
+await clearImageCache();
+document.getElementById("filterActive").click();
+await until(() => document.querySelector(".item") && !document.getElementById("list").hidden, "the conversation list returns");
 
 console.log("panel-test ok", { scrolls: scrolled.length });
 process.exit(0);

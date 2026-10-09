@@ -86,7 +86,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.6.4") fail(`version should be 1.6.4, got ${manifest.version}`);
+if (manifest.version !== "1.6.5") fail(`version should be 1.6.5, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -768,6 +768,37 @@ const archivedOrder = panelHtml.indexOf('data-scope="archived"');
 const allOrder = panelHtml.indexOf('id="filterAll"');
 if (!(tabOrder < gptOrder && gptOrder < archivedOrder && archivedOrder < allOrder)) {
   fail("tab order should be active, platforms, archived, all");
+}
+const imagesOrder = panelHtml.indexOf('data-scope="images"');
+if (!(allOrder < imagesOrder)) fail("the images tab must follow All");
+if (!/id="showUncached"/.test(panelHtml) || !/id="imageGrid"/.test(panelHtml)) {
+  fail("the images tab needs an uncached switch and a grid");
+}
+if (!panelSrc.includes("listImageCards") || !panelSrc.includes("filterImageCards")) {
+  fail("the images tab must list cached rows without a new fetch");
+}
+const gridSrc = read("src/image-grid.js");
+if (/innerHTML|insertAdjacentHTML|outerHTML/.test(gridSrc)) fail("image grid must not assign HTML");
+if (/\bfetch\s*\(/.test(gridSrc) || /\bnew\s+Image\b/.test(gridSrc)) fail("image grid must not fetch or construct an Image");
+if (!gridSrc.includes("dataUrlFromBytes") || !gridSrc.includes("function releaseUrl") || !gridSrc.includes("revokeObjectURL")) {
+  fail("thumbnails stay on data URLs, and an object URL must be revoked");
+}
+if (!gridSrc.includes("visibleRange")) fail("the image grid must virtualize");
+if (!gridSrc.includes('removeAttribute("src")')) fail("leaving a thumbnail must drop its data URL");
+if (!gridSrc.includes("ResizeObserver")) fail("the image grid must refit when the panel width changes");
+if (!/startsWith\("data:image\/"\)/.test(gridSrc)) fail("a thumbnail src must be a data URL");
+if (!read("src/reader-view.js").includes("is-target") || !read("src/reader-url.js").includes('params.set("m"')) {
+  fail("the reader must be able to scroll to a chosen cached image");
+}
+if (!read("src/db.js").includes("listImageCards")) fail("image cards must be listed from IndexedDB");
+if (!read("src/db.js").includes('const IMAGE_BLOB_PREFIX = "imgb:"') || !read("src/db.js").includes("delete next.blob")) {
+  fail("thumbnail bytes must be stored apart from the image list row");
+}
+for (const folder of localeFolders) {
+  const messages = JSON.parse(read(`_locales/${folder}/messages.json`));
+  if (!messages.tabImages?.message || !messages.imageEmpty?.message || !messages.showUncached?.message) {
+    fail(`${folder} is missing the image tab copy`);
+  }
 }
 if (!panelSrc.includes("paintActivityTimes")) {
   fail("the side panel must repaint relative activity labels");

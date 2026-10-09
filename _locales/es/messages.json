@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "Imagen no guardada en caché (se borró en este equipo)"
   },
+  "tabImages": {
+    "message": "Imágenes"
+  },
+  "imageEmpty": {
+    "message": "Aún no hay imágenes en caché."
+  },
+  "imageFilterEmpty": {
+    "message": "Aún no hay imágenes en caché de esta plataforma."
+  },
+  "showUncached": {
+    "message": "Mostrar no guardadas"
+  },
+  "imageOpenReader": {
+    "message": "Abrir esta imagen en la página de lectura"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

@@ -15,6 +15,31 @@ import { normalizeImageRecord } from "./image-cache.js";
 const DB_NAME = "chatseek";
 const DB_VERSION = 4;
 const IMAGE_BYTES_KEY = "imageBytes";
+// Bitmap bytes live here, not on the images row the grid lists.
+const IMAGE_BLOB_PREFIX = "imgb:";
+const IMAGE_SPLIT_KEY = "imgb:split";
+
+function imageBlobKey(messageId, index) {
+  return `${IMAGE_BLOB_PREFIX}${messageId}\u0001${index}`;
+}
+
+function withoutBlob(row) {
+  if (!row || row.blob == null) return row;
+  const next = { ...row };
+  delete next.blob;
+  return next;
+}
+
+function copyBytes(blob) {
+  if (blob instanceof ArrayBuffer) return blob.slice(0);
+  if (ArrayBuffer.isView(blob)) {
+    const view = new Uint8Array(blob.buffer, blob.byteOffset, blob.byteLength);
+    const copy = new Uint8Array(view.byteLength);
+    copy.set(view);
+    return copy.buffer;
+  }
+  return null;
+}
 
 let dbPromise;
 
@@ -418,13 +443,23 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     return rows;
   }
 
+  async function takeImageBytes(messageId, index, inline) {
+    const key = imageBlobKey(messageId, index);
+    const packed = await requestDone(metaStore.get(key));
+    metaStore.delete(key);
+    return copyBytes(packed?.blob) || copyBytes(inline);
+  }
+
   async function moveImages(fromId, toId) {
     if (!imageStore || !fromId || !toId || fromId === toId) return;
     for (const row of await imageRows(fromId)) {
       const dest = await requestDone(imageStore.get([toId, row.index]));
+      const bytes = await takeImageBytes(fromId, row.index, row.blob);
       imageStore.delete([fromId, row.index]);
-      if (!dest) imageStore.put({ ...row, messageId: toId });
-      else if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
+      if (!dest) {
+        imageStore.put(withoutBlob({ ...row, messageId: toId }));
+        if (bytes) metaStore.put({ key: imageBlobKey(toId, row.index), blob: bytes });
+      } else if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
     }
   }
 
@@ -435,6 +470,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     msgStore.delete(messageId);
     for (const row of await imageRows(messageId)) {
       imageStore.delete([messageId, row.index]);
+      metaStore.delete(imageBlobKey(messageId, row.index));
       if (row.bytes) await adjustImageBytes(metaStore, -(Number(row.bytes) || 0));
     }
   }
@@ -1083,8 +1119,12 @@ export async function saveImageRecords(conversationId, images) {
         const prev = await requestDone(store.get([rec.messageId, rec.index]));
         let delta = rec.status === "cached" ? rec.bytes : 0;
         if (prev?.bytes) delta -= Number(prev.bytes) || 0;
+        const blobKey = imageBlobKey(rec.messageId, rec.index);
+        const bitmap = rec.status === "cached" ? copyBytes(rec.blob) : null;
         try {
-          store.put(rec);
+          store.put(withoutBlob(rec));
+          if (bitmap) meta.put({ key: blobKey, blob: bitmap });
+          else meta.delete(blobKey);
         } catch (err) {
           if (!isQuotaError(err)) throw err;
           try { tx.abort(); } catch { /* already aborting */ }
@@ -1104,6 +1144,14 @@ export async function saveImageRecords(conversationId, images) {
   }
 }
 
+async function bytesForRow(meta, row) {
+  if (!row || row.status !== "cached") return row;
+  if (row.blob) return row;
+  const packed = await requestDone(meta.get(imageBlobKey(row.messageId, row.index)));
+  if (!packed?.blob) return row;
+  return { ...row, blob: packed.blob };
+}
+
 export async function readImagesForMessages(ids) {
   const wanted = (Array.isArray(ids) ? ids : [])
     .filter((id) => typeof id === "string" && id)
@@ -1111,16 +1159,147 @@ export async function readImagesForMessages(ids) {
   if (!wanted.length) return [];
   return withDb(async (db) => {
     if (!db.objectStoreNames.contains("images")) return [];
-    const tx = db.transaction("images", "readonly");
+    const tx = db.transaction(["images", "meta"], "readonly");
     const index = tx.objectStore("images").index("messageId");
+    const meta = tx.objectStore("meta");
     const out = [];
     for (const id of wanted) {
+      const rows = [];
       await cursorEach(index, { range: IDBKeyRange.only(id) }, (row) => {
-        if (row) out.push(row);
+        if (row) rows.push(row);
       });
+      for (const row of rows) out.push(await bytesForRow(meta, row));
     }
     out.sort((a, b) => (a.index || 0) - (b.index || 0));
     return out;
+  });
+}
+
+async function imageBlobsSplit() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("meta")) return true;
+    const tx = db.transaction("meta", "readonly");
+    const flag = await requestDone(tx.objectStore("meta").get(IMAGE_SPLIT_KEY));
+    return flag?.done === true;
+  });
+}
+
+/** Move at most `limit` legacy inline bitmaps off the list rows. */
+async function detachImageBlobBatch(limit) {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images") || !db.objectStoreNames.contains("meta")) return false;
+    const tx = db.transaction(["images", "meta"], "readwrite");
+    const store = tx.objectStore("images");
+    const meta = tx.objectStore("meta");
+    let moved = 0;
+    await cursorEach(store, {}, (row, cursor) => {
+      if (!row?.blob) return;
+      const bitmap = copyBytes(row.blob);
+      const next = { ...row };
+      delete next.blob;
+      if (bitmap) meta.put({ key: imageBlobKey(row.messageId, row.index), blob: bitmap });
+      cursor.update(next);
+      moved += 1;
+      return moved >= limit;
+    });
+    await txDone(tx);
+    return moved >= limit;
+  });
+}
+
+async function markImageBlobsSplit() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("meta")) return;
+    const tx = db.transaction("meta", "readwrite");
+    tx.objectStore("meta").put({ key: IMAGE_SPLIT_KEY, done: true });
+    await txDone(tx);
+  });
+}
+
+/**
+ * Older 1.6.x rows kept the bitmap on the same record the list has to scan.
+ * One pass parks those bytes beside the row. The database stays version 4.
+ */
+async function ensureImageBytesDetached() {
+  try {
+    if (await imageBlobsSplit()) return;
+    let more = false;
+    for (let i = 0; i < 10000; i += 1) {
+      more = await detachImageBlobBatch(32);
+      if (!more) break;
+    }
+    if (!more) await markImageBlobsSplit();
+  } catch {
+    // The list still accepts an inline bitmap. A later open tries again.
+  }
+}
+
+/**
+ * Metadata for the image tab. Bitmap bytes stay out of this cursor.
+ * Archived conversations are included: this grid is the cache, and it sits
+ * after All, which already shows archived chats. Image addresses are not
+ * copied onto the card.
+ */
+export async function listImageCards() {
+  await ensureImageBytesDetached();
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images")) return [];
+    const tx = db.transaction(["images", "conversations", "meta"], "readonly");
+    const raw = [];
+    await cursorEach(tx.objectStore("images"), {}, (row) => {
+      if (!row?.conversationId || !row.messageId) return;
+      raw.push({
+        messageId: row.messageId,
+        index: row.index,
+        conversationId: row.conversationId,
+        status: row.status || "",
+        alt: row.alt || "",
+        offset: Number(row.offset) || 0,
+        width: Number(row.width) || 0,
+        height: Number(row.height) || 0,
+        mime: row.mime || "",
+        bytes: Number(row.bytes) || 0,
+      });
+    });
+    const convStore = tx.objectStore("conversations");
+    const meta = tx.objectStore("meta");
+    const convs = new Map();
+    const ranks = new Map();
+    for (const id of new Set(raw.map((row) => row.conversationId))) {
+      const conv = await requestDone(convStore.get(id));
+      if (conv) convs.set(id, conv);
+      const order = await requestDone(meta.get(ORDER_PREFIX + id));
+      const ids = order?.ids || conv?.messageOrder || [];
+      ids.forEach((mid, index) => {
+        if (mid && !ranks.has(mid)) ranks.set(mid, index);
+      });
+    }
+    return raw.map((row) => {
+      const conv = convs.get(row.conversationId);
+      return {
+        ...row,
+        platform: conv?.platform || "",
+        title: conv?.title || "",
+        chatUrl: typeof conv?.url === "string" ? conv.url : "",
+        updatedAt: Number(conv?.updatedAt) || 0,
+        messageRank: ranks.has(row.messageId) ? ranks.get(row.messageId) : null,
+      };
+    });
+  });
+}
+
+export async function readImageBytes(messageId, index) {
+  if (typeof messageId !== "string" || !messageId || !Number.isInteger(index)) return null;
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images")) return null;
+    const tx = db.transaction(["images", "meta"], "readonly");
+    const row = await requestDone(tx.objectStore("images").get([messageId, index]));
+    if (!row || row.status !== "cached") return null;
+    const packed = await bytesForRow(tx.objectStore("meta"), row);
+    const blob = packed?.blob;
+    const size = blob?.byteLength || blob?.length || 0;
+    if (!size) return null;
+    return { mime: row.mime || "", blob };
   });
 }
 
@@ -1139,9 +1318,11 @@ export async function clearImageCache() {
     const store = tx.objectStore("images");
     // Keep the slot. Dropping the row would leave a blank gap in the reader,
     // because the message text does not store an image address.
+    const meta = tx.objectStore("meta");
     await cursorEach(store, {}, (row, cursor) => {
       if (!row || row.status === "cleared") return;
       if (row.status !== "cached" && !row.blob && !(Number(row.bytes) > 0)) return;
+      meta.delete(imageBlobKey(row.messageId, row.index));
       const next = {
         messageId: row.messageId,
         index: row.index,
@@ -1191,8 +1372,10 @@ export async function removeConversation(id) {
     if (db.objectStoreNames.contains("images")) {
       const imageIndex = tx.objectStore("images").index("conversationId");
       let freed = 0;
+      const meta = tx.objectStore("meta");
       await cursorEach(imageIndex, { range: IDBKeyRange.only(id) }, (row, cursor) => {
         freed += Number(row?.bytes) || 0;
+        if (row?.messageId) meta.delete(imageBlobKey(row.messageId, row.index));
         cursor.delete();
       });
       if (freed) await adjustImageBytes(tx.objectStore("meta"), -freed);

@@ -275,7 +275,7 @@ async function main() {
       ja: join(docs, "panel-1.4.0-ja.png"),
     };
     const order = await page.$$eval(".chip", (els) => els.map((el) => el.textContent));
-    if (order.join("|") !== "活躍中|ChatGPT|Claude|Grok|Gemini|已封存|全部") {
+    if (order.join("|") !== "活躍中|ChatGPT|Claude|Grok|Gemini|已封存|全部|圖片") {
       throw new Error(`tab order ${order.join("|")}`);
     }
     await page.screenshot({ path: shots.active, fullPage: true });

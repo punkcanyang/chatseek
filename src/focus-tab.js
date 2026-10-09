@@ -86,7 +86,8 @@ export function readerRefreshUrl(currentUrl, wantedUrl, id, base) {
     return "";
   }
   const q = (url) => (url.searchParams.get("q") || "").trim();
-  return q(now) === q(next) ? "" : next.href;
+  const image = (url) => `${url.searchParams.get("m") || ""}\n${url.searchParams.get("i") || ""}`;
+  return q(now) === q(next) && image(now) === image(next) ? "" : next.href;
 }
 
 /**

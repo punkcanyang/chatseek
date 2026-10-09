@@ -179,7 +179,9 @@ body {
   box-shadow: 0 8px 24px rgba(23, 34, 31, 0.12);
 }
 
-.sort-menu[hidden] {
+.sort-menu[hidden],
+.sort[hidden],
+.search[hidden] {
   display: none;
 }
 
@@ -201,7 +203,8 @@ body {
   font-weight: 600;
 }
 
-.chip {
+.chip,
+.plat-chip {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
@@ -211,10 +214,134 @@ body {
   cursor: pointer;
 }
 
-.chip.is-on {
+.chip.is-on,
+.plat-chip.is-on {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+}
+
+.image-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.image-pane[hidden] {
+  display: none;
+}
+
+body.is-images {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.is-images .image-pane {
+  flex: 1;
+}
+
+.image-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.image-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.image-grid {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.image-spacer {
+  width: 1px;
+}
+
+.image-pool {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+.shot {
+  position: absolute;
+  min-width: 0;
+}
+
+.shot-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: inherit;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+}
+
+.shot-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.shot-open.is-missing {
+  display: flex;
+  align-items: center;
+}
+
+.shot-missing {
+  margin: 0;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.shot-site {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.shot-open:focus-visible,
+.shot-site:focus-visible,
+.plat-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .status {
@@ -518,6 +645,7 @@ body {
 }
 
 .empty,
+.image-empty,
 .error {
   margin: 28px 8px;
   color: var(--muted);
