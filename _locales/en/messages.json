@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "This tab has not loaded Chatseek. Refresh the tab and confirm the extension is allowed to access this site."
+  },
+  "syncPlatform": {
+    "message": "Platform"
+  },
+  "syncStart": {
+    "message": "Start sync"
+  },
+  "syncPause": {
+    "message": "Pause"
+  },
+  "syncResume": {
+    "message": "Resume"
+  },
+  "syncStop": {
+    "message": "Stop"
+  },
+  "syncIdle": {
+    "message": "Not started"
+  },
+  "syncWaiting": {
+    "message": "Waiting"
+  },
+  "syncResting": {
+    "message": "Resting"
+  },
+  "syncPaused": {
+    "message": "Paused"
+  },
+  "syncRunning": {
+    "message": "Syncing"
+  },
+  "syncDone": {
+    "message": "Sync finished"
+  },
+  "syncStopped": {
+    "message": "Stopped: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "This platform has no conversations to sync"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · saved $ARG3$ · skipped $ARG4$ · failed $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "under 1 min"
+  },
+  "syncEtaMin": {
+    "message": "about $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "Captcha or Cloudflare check"
+  },
+  "syncReasonLogin": {
+    "message": "Login page"
+  },
+  "syncReasonError": {
+    "message": "Error page"
+  },
+  "syncReasonRate": {
+    "message": "Rate limit"
+  },
+  "syncReasonEmpty": {
+    "message": "Three conversations in a row had no messages"
+  },
+  "syncReasonTab": {
+    "message": "Sync tab was closed"
+  },
+  "syncReasonPanel": {
+    "message": "Side panel was closed"
+  },
+  "syncReasonUser": {
+    "message": "Stopped by you"
+  },
+  "syncReasonUncertain": {
+    "message": "Page status was not clear"
+  },
+  "syncReasonStartup": {
+    "message": "Paused because the browser restarted"
+  },
+  "syncHint": {
+    "message": "Sync runs only while this panel is open. Closing the panel pauses it. Closing the sync tab stops it."
   }
 }

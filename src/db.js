@@ -1091,11 +1091,45 @@ export async function readCaptureHealth() {
   });
 }
 
-/**
- * Deletes one conversation, its messages, and its inverted-index rows.
- * Does not message the page. A tombstone in meta keeps sidebar rescans from
- * adding it back; opening the chat with messages on screen captures it again.
- */
+const SYNC_SESSION_KEY = "sync:session";
+
+/** Conversation rows only. Does not open the messages store. */
+export async function listSyncCandidates(platform) {
+  if (typeof platform !== "string" || !platform) return [];
+  return withDb(async (db) => {
+    const tx = db.transaction("conversations", "readonly");
+    const items = [];
+    await cursorEach(tx.objectStore("conversations"), {}, (conv) => {
+      if (!conv || conv.platform !== platform) return;
+      items.push({
+        id: conv.id,
+        url: typeof conv.url === "string" ? conv.url : "",
+        updatedAt: typeof conv.updatedAt === "number" ? conv.updatedAt : 0,
+        messageCount: Number(conv.messageCount) || 0,
+      });
+    });
+    return items;
+  });
+}
+
+export async function readSyncSession() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("meta")) return null;
+    const tx = db.transaction("meta", "readonly");
+    const row = await requestDone(tx.objectStore("meta").get(SYNC_SESSION_KEY));
+    return row?.session && typeof row.session === "object" ? row.session : null;
+  });
+}
+
+export async function writeSyncSession(session) {
+  if (!session || typeof session !== "object") return;
+  return withDb(async (db) => {
+    const tx = db.transaction("meta", "readwrite");
+    tx.objectStore("meta").put({ key: SYNC_SESSION_KEY, session });
+    await txDone(tx);
+  });
+}
+
 async function adjustImageBytes(metaStore, delta) {
   const row = await requestDone(metaStore.get(IMAGE_BYTES_KEY));
   const next = Math.max(0, (Number(row?.bytes) || 0) + delta);
@@ -1343,6 +1377,11 @@ export async function clearImageCache() {
   });
 }
 
+/**
+ * Deletes one conversation, its messages, and its inverted-index rows.
+ * Does not message the page. A tombstone in meta keeps sidebar rescans from
+ * adding it back; opening the chat with messages on screen captures it again.
+ */
 export async function removeConversation(id) {
   if (typeof id !== "string" || !id) return;
   return withDb(async (db) => {

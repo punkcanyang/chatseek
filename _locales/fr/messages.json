@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "Cet onglet n'a pas chargé Chatseek. Actualisez-le et vérifiez que l'extension peut accéder à ce site."
+  },
+  "syncPlatform": {
+    "message": "Plateforme"
+  },
+  "syncStart": {
+    "message": "Démarrer la synchro"
+  },
+  "syncPause": {
+    "message": "Pause"
+  },
+  "syncResume": {
+    "message": "Reprendre"
+  },
+  "syncStop": {
+    "message": "Arrêter"
+  },
+  "syncIdle": {
+    "message": "Pas commencée"
+  },
+  "syncWaiting": {
+    "message": "En attente"
+  },
+  "syncResting": {
+    "message": "En pause longue"
+  },
+  "syncPaused": {
+    "message": "En pause"
+  },
+  "syncRunning": {
+    "message": "Synchronisation"
+  },
+  "syncDone": {
+    "message": "Synchronisation terminée"
+  },
+  "syncStopped": {
+    "message": "Arrêtée : $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "Cette plateforme n'a aucune conversation à synchroniser"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · enregistrées $ARG3$ · ignorées $ARG4$ · échecs $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "moins d'1 min"
+  },
+  "syncEtaMin": {
+    "message": "environ $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "Captcha ou contrôle Cloudflare"
+  },
+  "syncReasonLogin": {
+    "message": "Page de connexion"
+  },
+  "syncReasonError": {
+    "message": "Page d'erreur"
+  },
+  "syncReasonRate": {
+    "message": "Limite de débit"
+  },
+  "syncReasonEmpty": {
+    "message": "Trois conversations de suite sans message"
+  },
+  "syncReasonTab": {
+    "message": "L'onglet de synchro a été fermé"
+  },
+  "syncReasonPanel": {
+    "message": "Le panneau latéral a été fermé"
+  },
+  "syncReasonUser": {
+    "message": "Arrêt manuel"
+  },
+  "syncReasonUncertain": {
+    "message": "État de la page incertain"
+  },
+  "syncReasonStartup": {
+    "message": "En pause après le redémarrage du navigateur"
+  },
+  "syncHint": {
+    "message": "La synchro ne tourne que pendant que ce panneau est ouvert. Le fermer met en pause. Fermer l'onglet de synchro arrête."
   }
 }

@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "이 탭에는 Chatseek이 로드되지 않았습니다. 탭을 새로고침하고 확장 프로그램이 이 사이트에 접근할 수 있는지 확인하세요."
+  },
+  "syncPlatform": {
+    "message": "플랫폼"
+  },
+  "syncStart": {
+    "message": "동기화 시작"
+  },
+  "syncPause": {
+    "message": "일시중지"
+  },
+  "syncResume": {
+    "message": "계속"
+  },
+  "syncStop": {
+    "message": "중지"
+  },
+  "syncIdle": {
+    "message": "시작 전"
+  },
+  "syncWaiting": {
+    "message": "대기 중"
+  },
+  "syncResting": {
+    "message": "쉬는 중"
+  },
+  "syncPaused": {
+    "message": "일시중지됨"
+  },
+  "syncRunning": {
+    "message": "동기화 중"
+  },
+  "syncDone": {
+    "message": "동기화 완료"
+  },
+  "syncStopped": {
+    "message": "중지됨: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "이 플랫폼에서 동기화할 대화가 없습니다"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · 저장 $ARG3$ · 건너뜀 $ARG4$ · 실패 $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "1분 미만"
+  },
+  "syncEtaMin": {
+    "message": "약 $ARG1$분",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "보안 확인 또는 Cloudflare 검사"
+  },
+  "syncReasonLogin": {
+    "message": "로그인 페이지"
+  },
+  "syncReasonError": {
+    "message": "오류 페이지"
+  },
+  "syncReasonRate": {
+    "message": "요청 제한"
+  },
+  "syncReasonEmpty": {
+    "message": "3개 대화에서 연속으로 메시지가 없습니다"
+  },
+  "syncReasonTab": {
+    "message": "동기화 탭이 닫혔습니다"
+  },
+  "syncReasonPanel": {
+    "message": "사이드 패널이 닫혔습니다"
+  },
+  "syncReasonUser": {
+    "message": "직접 중지함"
+  },
+  "syncReasonUncertain": {
+    "message": "페이지 상태를 확인할 수 없습니다"
+  },
+  "syncReasonStartup": {
+    "message": "브라우저가 다시 시작되어 일시중지됨"
+  },
+  "syncHint": {
+    "message": "이 패널이 열려 있을 때만 동기화합니다. 패널을 닫으면 일시중지되고, 동기화 탭을 닫으면 중지됩니다."
   }
 }

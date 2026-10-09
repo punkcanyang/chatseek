@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "Esta aba não carregou o Chatseek. Atualize a aba e confirme que a extensão pode acessar este site."
+  },
+  "syncPlatform": {
+    "message": "Plataforma"
+  },
+  "syncStart": {
+    "message": "Iniciar sincronização"
+  },
+  "syncPause": {
+    "message": "Pausar"
+  },
+  "syncResume": {
+    "message": "Continuar"
+  },
+  "syncStop": {
+    "message": "Parar"
+  },
+  "syncIdle": {
+    "message": "Não iniciada"
+  },
+  "syncWaiting": {
+    "message": "Aguardando"
+  },
+  "syncResting": {
+    "message": "Em descanso"
+  },
+  "syncPaused": {
+    "message": "Pausada"
+  },
+  "syncRunning": {
+    "message": "Sincronizando"
+  },
+  "syncDone": {
+    "message": "Sincronização concluída"
+  },
+  "syncStopped": {
+    "message": "Parada: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "Esta plataforma não tem conversas para sincronizar"
+  },
+  "syncProgress": {
+    "message": "$ARG1$ / $ARG2$ · salvas $ARG3$ · ignoradas $ARG4$ · falhas $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "menos de 1 min"
+  },
+  "syncEtaMin": {
+    "message": "cerca de $ARG1$ min",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "Captcha ou verificação da Cloudflare"
+  },
+  "syncReasonLogin": {
+    "message": "Página de login"
+  },
+  "syncReasonError": {
+    "message": "Página de erro"
+  },
+  "syncReasonRate": {
+    "message": "Limite de taxa"
+  },
+  "syncReasonEmpty": {
+    "message": "Três conversas seguidas sem mensagens"
+  },
+  "syncReasonTab": {
+    "message": "A aba de sincronização foi fechada"
+  },
+  "syncReasonPanel": {
+    "message": "O painel lateral foi fechado"
+  },
+  "syncReasonUser": {
+    "message": "Parada manualmente"
+  },
+  "syncReasonUncertain": {
+    "message": "Não foi possível confirmar a página"
+  },
+  "syncReasonStartup": {
+    "message": "Pausada porque o navegador reiniciou"
+  },
+  "syncHint": {
+    "message": "Só sincroniza enquanto este painel está aberto. Fechar o painel pausa. Fechar a aba de sincronização para."
   }
 }

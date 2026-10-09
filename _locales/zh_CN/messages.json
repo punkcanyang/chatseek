@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "此标签页未加载 Chatseek：请刷新页面，并确认扩展的网站访问权限允许此网站"
+  },
+  "syncPlatform": {
+    "message": "平台"
+  },
+  "syncStart": {
+    "message": "开始同步"
+  },
+  "syncPause": {
+    "message": "暂停"
+  },
+  "syncResume": {
+    "message": "继续"
+  },
+  "syncStop": {
+    "message": "停止"
+  },
+  "syncIdle": {
+    "message": "尚未开始"
+  },
+  "syncWaiting": {
+    "message": "等待中"
+  },
+  "syncResting": {
+    "message": "休息中"
+  },
+  "syncPaused": {
+    "message": "已暂停"
+  },
+  "syncRunning": {
+    "message": "同步中"
+  },
+  "syncDone": {
+    "message": "同步完成"
+  },
+  "syncStopped": {
+    "message": "已停止：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "这一家没有可同步的对话"
+  },
+  "syncProgress": {
+    "message": "第 $ARG1$／$ARG2$ 段 · 已收 $ARG3$ · 跳过 $ARG4$ · 失败 $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "不到 1 分钟"
+  },
+  "syncEtaMin": {
+    "message": "约 $ARG1$ 分钟",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "遇到验证码或 Cloudflare 检查"
+  },
+  "syncReasonLogin": {
+    "message": "遇到登录页"
+  },
+  "syncReasonError": {
+    "message": "遇到错误页"
+  },
+  "syncReasonRate": {
+    "message": "遇到速率限制"
+  },
+  "syncReasonEmpty": {
+    "message": "连续 3 段没有收到消息"
+  },
+  "syncReasonTab": {
+    "message": "同步标签页已关闭"
+  },
+  "syncReasonPanel": {
+    "message": "侧栏已关闭"
+  },
+  "syncReasonUser": {
+    "message": "已手动停止"
+  },
+  "syncReasonUncertain": {
+    "message": "无法确认页面状态"
+  },
+  "syncReasonStartup": {
+    "message": "浏览器重新打开，已暂停"
+  },
+  "syncHint": {
+    "message": "只在这个侧栏开着时同步。关掉侧栏会暂停，关掉同步标签页会停止。"
   }
 }

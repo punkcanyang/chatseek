@@ -208,7 +208,7 @@
     return selector;
   }
 
-  function packMessages(chosen, selector, selectorsTried, selectorHits) {
+  function packMessages(chosen, selector, selectorsTried, selectorHits, collectImages = true) {
     chosen.sort((a, b) => {
       if (!a.node.compareDocumentPosition) return 0;
       const pos = a.node.compareDocumentPosition(b.node);
@@ -219,7 +219,7 @@
     const messages = [];
     for (const item of chosen) {
       messages.push(item.message);
-      imageHosts.push(item.host);
+      if (collectImages) imageHosts.push(item.host);
     }
     if (!selector && chosen[0]) selector = chosen[0].layer;
     return { messages, selector, selectorsTried, selectorHits };
@@ -285,12 +285,12 @@
     return chosen.length ? "heuristic" : null;
   }
 
-  function extractMessages(conversationId, doc) {
+  function extractMessages(conversationId, doc, collectImages = true) {
     const root = doc || document;
     const selectorsTried = MESSAGE_LAYERS.map((layer) => layer.name);
     const selectorHits = Chatseek.countSelectors(root, MESSAGE_LAYERS);
     const scopes = Chatseek.readScopes(root);
-    imageHosts = [];
+    if (collectImages) imageHosts = [];
     const chosen = [];
     chosen.conversationId = conversationId;
     let selector = null;
@@ -303,7 +303,7 @@
       }
     }
     if (!chosen.length) selector = takeHeuristic(scopes, chosen, conversationId);
-    return packMessages(chosen, selector, selectorsTried, selectorHits);
+    return packMessages(chosen, selector, selectorsTried, selectorHits, collectImages);
   }
 
   async function extractMessagesPaced(conversationId, doc) {
@@ -476,6 +476,23 @@
     inspect,
     capture,
     healthFor,
+  };
+
+  Chatseek.syncProbe = () => {
+    const signals = Chatseek.syncPageSignals(document, location);
+    const sidebar = extractSidebar(document);
+    const platformId = conversationIdFromLocation(location);
+    let messageCount = 0;
+    if (platformId) {
+      try {
+        const extracted = extractMessages(platformId, document, false);
+        messageCount = extracted?.messages?.length || 0;
+      } catch {
+        messageCount = 0;
+      }
+    }
+    const storedCount = platformId ? Chatseek.syncStoredCount(`${PLATFORM}:${platformId}`) : 0;
+    return Chatseek.syncProbeResult(signals, sidebar, messageCount, storedCount);
   };
 
   if (Chatseek.autoStart !== false) {

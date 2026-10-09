@@ -376,5 +376,116 @@
   },
   "injectMissing": {
     "message": "此分頁未載入 Chatseek：請重新整理分頁，並確認擴充的網站存取權允許此網站"
+  },
+  "syncPlatform": {
+    "message": "平台"
+  },
+  "syncStart": {
+    "message": "開始同步"
+  },
+  "syncPause": {
+    "message": "暫停"
+  },
+  "syncResume": {
+    "message": "繼續"
+  },
+  "syncStop": {
+    "message": "停止"
+  },
+  "syncIdle": {
+    "message": "尚未開始"
+  },
+  "syncWaiting": {
+    "message": "等待中"
+  },
+  "syncResting": {
+    "message": "休息中"
+  },
+  "syncPaused": {
+    "message": "已暫停"
+  },
+  "syncRunning": {
+    "message": "同步中"
+  },
+  "syncDone": {
+    "message": "同步完成"
+  },
+  "syncStopped": {
+    "message": "已停止：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncNothing": {
+    "message": "這一家沒有可同步的對話"
+  },
+  "syncProgress": {
+    "message": "第 $ARG1$／$ARG2$ 段 · 已收 $ARG3$ · 跳過 $ARG4$ · 失敗 $ARG5$ · $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "syncEtaSoon": {
+    "message": "不到 1 分鐘"
+  },
+  "syncEtaMin": {
+    "message": "約 $ARG1$ 分鐘",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "syncReasonCaptcha": {
+    "message": "遇到驗證碼或 Cloudflare 檢查"
+  },
+  "syncReasonLogin": {
+    "message": "遇到登入頁"
+  },
+  "syncReasonError": {
+    "message": "遇到錯誤頁"
+  },
+  "syncReasonRate": {
+    "message": "遇到速率限制"
+  },
+  "syncReasonEmpty": {
+    "message": "連續 3 段沒有收到訊息"
+  },
+  "syncReasonTab": {
+    "message": "同步分頁已關閉"
+  },
+  "syncReasonPanel": {
+    "message": "側欄已關閉"
+  },
+  "syncReasonUser": {
+    "message": "已手動停止"
+  },
+  "syncReasonUncertain": {
+    "message": "無法確認頁面狀態"
+  },
+  "syncReasonStartup": {
+    "message": "瀏覽器重新開啟，已暫停"
+  },
+  "syncHint": {
+    "message": "只在這個側欄開著時同步。關掉側欄會暫停，關掉同步分頁會停止。"
   }
 }

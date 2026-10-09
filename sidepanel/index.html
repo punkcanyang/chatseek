@@ -39,6 +39,25 @@
       <button type="button" role="tab" aria-selected="false" class="chip" data-scope="images" id="filterImages"></button>
     </div>
 
+    <section class="sync" id="syncBox">
+      <div class="sync-row">
+        <label class="sync-label" id="syncPlatformLabel" for="syncPlatform"></label>
+        <select id="syncPlatform">
+          <option value="chatgpt">ChatGPT</option>
+          <option value="claude">Claude</option>
+          <option value="grok">Grok</option>
+          <option value="gemini">Gemini</option>
+        </select>
+        <button type="button" class="btn sync-go" id="syncStart"></button>
+        <button type="button" class="btn" id="syncPause" hidden></button>
+        <button type="button" class="btn sync-go" id="syncResume" hidden></button>
+        <button type="button" class="btn" id="syncStop" hidden></button>
+      </div>
+      <p class="sync-status" id="syncStatus"></p>
+      <p class="sync-progress" id="syncProgress"></p>
+      <p class="sync-hint" id="syncHint"></p>
+    </section>
+
     <div class="sort" id="sortBar">
       <button type="button" id="sortField" class="sort-field" aria-haspopup="menu" aria-expanded="false" aria-controls="sortMenu"></button>
       <button type="button" id="sortDir" class="sort-dir"></button>
