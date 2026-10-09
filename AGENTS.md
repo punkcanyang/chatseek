@@ -28,8 +28,9 @@ Chatseek：Chrome 側欄擴充（MV3），把老闆在 ChatGPT、Claude、Grok�
 4. 不用 `innerHTML` 塞未消毒內容。診斷（diag、複製診斷）只放命中數，**不含內文、標題、對話 id、網址**。
 5. 資料庫版本（目前 4）盡量不升；要升就寫遷移和 `test:upgrade` 測試。
 6. **不在共享機器上登入老闆的真實帳號**。真站測試一律由老闆在自己的 Chrome 做；開發用 `fixtures/`、本機模擬頁、Chrome for Testing（不連外網）。
-7. 花費 $0。任何要花錢的（含 Chrome Web Store US$5）先問。repo 保持 private。
+7. 花費 $0。任何要花錢的（含 Chrome Web Store US$5）先問。
 8. 不碰 code 以外的東西：不推 secret，不改別人的分支。
+9. **公開 repo**（老闆 2026-10-10 拍板維持公開）：絕不提交 secret、token、真實對話內容、帳號 handle 或老闆的任何真實資料；截圖一律用範例資料。
 
 ## 怎麼工作
 
