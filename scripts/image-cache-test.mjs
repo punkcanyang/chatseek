@@ -116,6 +116,28 @@ assert(
   }) == null,
   "a bitmap over 150KB is rejected",
 );
+const fromList = normalizeImageRecord(convId, {
+  messageId: msgId,
+  index: 5,
+  status: "cached",
+  mime: "image/webp",
+  width: 8,
+  height: 8,
+  bytes: [9, 8, 7, 6],
+});
+assert(fromList && fromList.bytes === 4 && fromList.blob.byteLength === 4, "a number array survives the extension message");
+assert(
+  normalizeImageRecord(convId, {
+    messageId: msgId,
+    index: 6,
+    status: "cached",
+    mime: "image/webp",
+    width: 8,
+    height: 8,
+    bytes: { 0: 1, 1: 2 },
+  }) == null,
+  "a plain object is not a bitmap",
+);
 
 const tiny = new Uint8Array([1, 2, 3, 4, 5]);
 const saved = await db.saveImageRecords(convId, [

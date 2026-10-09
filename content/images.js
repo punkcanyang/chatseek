@@ -422,6 +422,14 @@
     return "";
   }
 
+  function byteList(value) {
+    let view = null;
+    if (value instanceof ArrayBuffer) view = new Uint8Array(value);
+    else if (ArrayBuffer.isView(value)) view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (!view || !view.byteLength) return null;
+    return Array.from(view);
+  }
+
   function storedStatus(encoded) {
     if (encoded?.status === "cached" || encoded?.status === "oversized" || encoded?.status === "uncached") {
       return encoded.status;
@@ -520,7 +528,8 @@
       mime: encoded.mime || "",
       width: encoded.width || 0,
       height: encoded.height || 0,
-      bytes: status === "cached" ? encoded.bytes : null,
+      // A raw ArrayBuffer arrives in the service worker as an empty object.
+      bytes: status === "cached" ? byteList(encoded.bytes) : null,
     };
     let res = null;
     try {
@@ -536,7 +545,7 @@
       done.set(key, fp);
       return;
     }
-    if (!res?.ok) return;
+    if (!res?.ok || !(res.saved > 0)) return;
     done.set(key, fp);
     noteOutcome(job.conversationId, `${job.conversationId}:${key}`, status);
   }

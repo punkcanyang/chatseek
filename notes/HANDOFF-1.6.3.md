@@ -32,6 +32,8 @@
 
 沒有用 `navigator.storage.estimate`。用量來自 IndexedDB `meta.imageBytes`。讀取失敗被 catch 住之後，快取標籤不會留在畫面上。
 
+端到端在真的 Chrome 裡又量到第二件事。內容腳本把縮圖的 `ArrayBuffer` 用 `chrome.runtime.sendMessage` 送給 service worker 時，對面收到的是空的普通物件，`byteLength` 是 0。`normalizeImageRecord` 因此把這筆丟掉。背景仍回 `ok: true`，內容腳本照樣把診斷記成已快取。所以就算圖有被掃到、也轉成了縮圖，IndexedDB 還是沒有那一列，閱讀頁一樣空白。佔位沒有 bytes，這條路徑不受影響。這次改成送數字陣列，並且只有真正寫入的筆數大於 0 才算進診斷。
+
 ## 這版改了什麼
 
 權限仍恰好是 `["sidePanel"]`。`host_permissions` 與 CSP 沒有改。沒有新的網路請求，不重新抓圖，不存圖片網址，不用 `innerHTML`。資料庫仍是版本 4。
@@ -42,3 +44,57 @@
 - 診斷多一段 `imgs=detected/saved/placeholder fail=tainted:N,too-big:N,timeout:N,not-loaded:N`。放在診斷前段，裁切後還在。不含網址、alt、內文。「複製診斷」讀的是同一行。
 - 側欄「圖片快取」在讀取結束後一定出現。0 顯示「圖片快取 0 KB」，清除按鈕停用。讀取失敗顯示「圖片快取 —」，清除按鈕停用。
 - 九種語言補上「轉檔逾時」和「圖還沒載完」。
+- 縮圖的位元組改以數字陣列送進 service worker。只有 `saved > 0` 才算進診斷。
+
+## 測試與效能
+
+```bash
+npm run verify
+npm run test:search
+npm run test:fixture
+npm run test:gemini
+npm run test:upgrade
+npm run test:e2e
+node scripts/screenshot-images.mjs
+node scripts/reader-bench.mjs /workspace /tmp/chatseek-162
+```
+
+以上都過。`scripts/verify.mjs` 只加嚴：版本 1.6.3、封閉 shadow、48px、`imgs=`、`0 KB`、清除按鈕停用、縮圖必須以位元組清單過訊息。i18n 九種語言、83 個鍵。
+
+端到端用 Chrome for Testing 155.0.8059.39，`--load-extension`，`--host-resolver-rules` 把 `chatgpt.com:443` 和 `files.oaiusercontent.com:443` 指到本機 HTTPS。沒有加 `host_permissions`。同一支腳本蓋過的案例：
+
+- 選擇器路徑：兩張同源圖進縮圖，按鈕裡的大圖也收；跨源、沒有 CORS 的圖是 `uncached`。診斷 `imgs=3/2/1 fail=tainted:1,too-big:0,timeout:0,not-loaded:0`，沒有網址。
+- 備援區塊旁邊只有圖的兄弟節點、開放 shadow、封閉 shadow、同源 iframe，各收進一張縮圖。
+- 圖還沒回應時先寫 `not-loaded`，回應之後同一則改成縮圖。
+- 側欄先是「Image cache 0 KB」且清除停用，有縮圖之後變成 1 KB 且清除可按。
+- 閱讀頁同一則裡有兩張縮圖和「原網站限制」；另一則是「檔案過大」。
+
+「檔案過大」在這台 Chrome 上要每一檔品質都超過 150KB 才會出現。512px 的雜訊圖壓到 webp q=0.2 大約 100KB，會變成縮圖，不會變成佔位。端到端為了走到這條路徑，在內容腳本的 isolated world 把寬高至少 400 的 canvas `toBlob` 換成 160KB。這不是放寬產品的上限。跨源的 ChatGPT 生圖會走「原網站限制」。同源、壓得下去的圖會變成縮圖。
+
+3000 則、沒有圖片的閱讀頁，同一台機器、同一個瀏覽器、各跑 3 次取中位數。這版掛載 34ms、跳轉 2.28ms、捲動 p50 1.4ms / p95 2.5ms / 最大 3.8ms。緊接著的 `530acd0` 是掛載 36ms、跳轉 2.37ms、捲動 p50 1.5ms / p95 2.6ms / 最大 4.0ms。兩邊都是命中 900、畫面上 3 則、136 個節點。沒有變慢。
+
+## 截圖
+
+端到端是真的擴充套件，介面跟 Chrome 語言，這次是英文：
+
+- `docs/panel-1.6.3-image-cache-zero.png`：頁腳「Image cache 0 KB」，清除按鈕停用。
+- `docs/panel-1.6.3-image-cache.png`：同一頁腳在收進縮圖後是 1 KB，清除可按。
+- `docs/panel-1.6.3-diag-imgs.png`：複製出來的診斷含 `imgs=3/2/1 fail=tainted:1,too-big:0,timeout:0,not-loaded:0`，沒有網址。
+- `docs/reader-1.6.3-placeholders.png`：兩張縮圖，加上「the original site doesn’t allow it」。
+- `docs/reader-1.6.3-images.png`：「the file is too large」。
+
+範例資料是繁體中文，四種佔位都在同一則：
+
+- `docs/reader-1.6.3-examples.png`：縮圖、原網站限制、檔案過大、轉檔逾時、圖還沒載完。
+- `docs/reader-1.6.3-thumb.png`：同一則的近照。
+- `docs/panel-1.6.3-image-cache-zero-zh.png`：「圖片快取 0 KB」。
+- `docs/panel-1.6.3-image-cache-zh.png`：「圖片快取 5.0 KB」。
+- `docs/panel-1.6.3-diag-imgs-zh.png`：`imgs=5/1/4 fail=tainted:1,too-big:1,timeout:1,not-loaded:1`。
+
+## 老闆實測
+
+1. 到 `chrome://extensions` 重新載入，確認版本 1.6.3，權限只有側邊欄。已經開著的 ChatGPT 分頁重新整理。
+2. 打開一則有圖的對話。側欄頁腳要出現「圖片快取 0 KB」或更大的數字。是 0 的時候「清除圖片快取」不能按。
+3. 打開這則的閱讀頁。每個圖片位置要是縮圖，或「原網站限制／檔案過大／轉檔逾時／圖還沒載完」其中一句。不能是空白。網路面板不該為了這些圖多出新的圖片請求。
+4. 按「複製診斷」。那一行要有 `imgs=` 和 `fail=tainted:`，不能有網址、alt 或對話內文。
+5. 各打開一則 Claude、Gemini、Grok。不該要求新權限。Claude 仍不收助理圖。Gemini、Grok 原本看得到的圖還在。

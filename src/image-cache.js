@@ -28,6 +28,18 @@ function asBytes(value) {
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
+  // chrome.runtime.sendMessage delivers an ArrayBuffer to the service worker
+  // as a plain object, so the content script sends a number array instead.
+  if (Array.isArray(value)) {
+    if (value.length < 1 || value.length > IMAGE_MAX_BYTES) return null;
+    const copy = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i += 1) {
+      const n = value[i];
+      if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+      copy[i] = n;
+    }
+    return copy;
+  }
   return null;
 }
 

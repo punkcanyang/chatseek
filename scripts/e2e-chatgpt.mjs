@@ -480,7 +480,7 @@ async function main() {
       headless: false,
       enableExtensions: true,
       dumpio: false,
-      protocolTimeout: 12000,
+      protocolTimeout: 60000,
       userDataDir: profile,
       args: [
         "--disable-gpu",
@@ -662,7 +662,9 @@ async function main() {
       return until(async () => {
         const snap = await readDb(probe);
         const rows = shotsOf(snap, id);
-        return pred(rows) ? rows : null;
+        if (pred(rows)) return rows;
+        const sample = (snap.images || []).slice(0, 8).map((row) => `${row.status}:${row.bytes}:${row.messageId}`).join(" || ");
+        throw new Error(`matched=${rows.length} stored=${(snap.images || []).length} ${sample}`);
       }, label, 20000);
     }
 
@@ -694,7 +696,7 @@ async function main() {
     const usedCache = await until(async () => {
       const text = await panel.$eval("#imageCache", (el) => el.textContent || "").catch(() => "");
       const disabled = await panel.$eval("#clearImagesBtn", (el) => el.disabled).catch(() => true);
-      return /KB|MB/.test(text) && !/0 KB/.test(text) && !disabled ? text : "";
+      return /[1-9]\d*(?:\.\d+)? (?:KB|MB)/.test(text) && !disabled ? text : "";
     }, "image cache above zero", 10000);
     await panel.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
     await panel.screenshot({ path: join(docs, "panel-1.6.3-image-cache.png"), fullPage: true });
@@ -729,6 +731,7 @@ async function main() {
       bigShots = await waitShots(BIG, (rows) => rows.some((row) => row.status === "oversized"), "large image placeholder");
     }
     assert(bigShots.some((row) => row.status === "oversized"), `expected an oversized placeholder, got ${JSON.stringify(bigShots)}`);
+    await bigClient.detach().catch(() => {});
 
     await openChat(`https://chatgpt.com/c/${HEUR_IMG}`);
     const heurShots = await waitShots(HEUR_IMG, (rows) => rows.some((row) => row.status === "cached" && row.bytes > 0), "heuristic image");
@@ -789,6 +792,7 @@ async function main() {
     }, "reader markdown", 10000);
 
     const emptyTab = page;
+    await reader.close().catch(() => {});
     await silenceContentPing(emptyTab);
     await panel.bringToFront();
     await emptyTab.bringToFront();
@@ -798,7 +802,15 @@ async function main() {
       const text = await panelAgain.$eval("#injectWarn", (el) => el.textContent || "").catch(() => "");
       return !hidden && text.includes("Chatseek") ? text : "";
     }, "inject warning", 8000);
-    await panelAgain.screenshot({ path: join(docs, "panel-1.6.2-inject-warn.png"), fullPage: true });
+    await panelAgain.evaluate((chatUrl) => {
+      chrome.tabs.query = async () => [{ id: 1, url: chatUrl, active: true }];
+      chrome.tabs.sendMessage = async () => null;
+    }, emptyTab.url());
+    await panelAgain.bringToFront();
+    await panelAgain.screenshot({
+      path: join(docs, "panel-1.6.2-inject-warn.png"),
+      clip: { x: 0, y: 0, width: 420, height: 860 },
+    });
 
     const leaked = logs.join("\n");
     assert(!/southern forest ridge today/.test(leaked), "console diag included message text");

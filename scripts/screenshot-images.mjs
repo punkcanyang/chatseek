@@ -242,7 +242,7 @@ async function main() {
     await page.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
     const docsEarly = join(root, "docs");
     await mkdir(docsEarly, { recursive: true });
-    await page.screenshot({ path: join(docsEarly, "panel-1.6.3-image-cache-zero.png"), fullPage: true });
+    await page.screenshot({ path: join(docsEarly, "panel-1.6.3-image-cache-zero-zh.png"), fullPage: true });
 
     await page.setViewport({ width: 760, height: 920, deviceScaleFactor: 2 });
     await page.goto(`${origin}/__shot/bootstrap.html`, { waitUntil: "networkidle0", timeout: 20000 });
@@ -307,7 +307,7 @@ async function main() {
         && notes.includes("圖還沒載完");
     }, { timeout: 10000 });
     await page.evaluate(() => document.fonts?.ready);
-    const statesReader = join(docs, "reader-1.6.3-placeholders.png");
+    const statesReader = join(docs, "reader-1.6.3-examples.png");
     const statesThumb = join(docs, "reader-1.6.3-thumb.png");
     await page.screenshot({ path: statesReader, fullPage: true });
     await page.screenshot({ path: statesThumb, clip: await clipOf(".cached-thumb") });
@@ -317,10 +317,10 @@ async function main() {
     await page.waitForFunction(() => {
       const usage = document.getElementById("imageCache")?.textContent || "";
       const button = document.getElementById("clearImagesBtn");
-      return /圖片快取\s+\d/.test(usage) && !usage.includes("0 KB") && button && button.disabled === false;
+      return /圖片快取\s+[1-9]/.test(usage) && button && button.disabled === false;
     }, { timeout: 10000 });
     await page.evaluate(() => document.querySelector(".foot")?.scrollIntoView({ block: "end" }));
-    const cachePath = join(docs, "panel-1.6.3-image-cache.png");
+    const cachePath = join(docs, "panel-1.6.3-image-cache-zh.png");
     await page.screenshot({ path: cachePath, fullPage: true });
     await page.evaluate(() => {
       if (navigator.clipboard) navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
@@ -330,9 +330,9 @@ async function main() {
       const box = document.getElementById("diagBox");
       return box && !box.hidden && /imgs=5\/1\/4 fail=tainted:1,too-big:1,timeout:1,not-loaded:1/.test(box.value || "");
     }, { timeout: 10000 });
-    const diagPath = join(docs, "panel-1.6.3-diag-imgs.png");
+    const diagPath = join(docs, "panel-1.6.3-diag-imgs-zh.png");
     await page.screenshot({ path: diagPath, fullPage: true });
-    console.log("screenshots", { thumbPath, placeholderPath, panelPath, statesReader, statesThumb, cachePath, diagPath, zero: join(docs, "panel-1.6.3-image-cache-zero.png") });
+    console.log("screenshots", { thumbPath, placeholderPath, panelPath, statesReader, statesThumb, cachePath, diagPath, zero: join(docs, "panel-1.6.3-image-cache-zero-zh.png") });
   } finally {
     await browser.close();
     server.close();

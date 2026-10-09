@@ -214,6 +214,9 @@ if (!/not-loaded/.test(read("content/images.js")) || !/"timeout"/.test(read("con
 if (!/const MIN_EDGE = 48/.test(read("content/images.js"))) {
   fail("decorative images are those under 48px");
 }
+if (!/function byteList/.test(read("content/images.js")) || !/Array.isArray\(value\)/.test(read("src/image-cache.js"))) {
+  fail("cached thumbnails must cross the extension message as a byte list");
+}
 if (!/imgs=\$\{detected\}\/\$\{saved\}\/\$\{hold\} fail=tainted:/.test(read("content/shared.js"))) {
   fail("diag must include imgs= detected/saved/placeholder and fail counts");
 }
