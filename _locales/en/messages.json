@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "Image wasn’t cached (cleared on this computer)"
   },
+  "tabImages": {
+    "message": "Images"
+  },
+  "imageEmpty": {
+    "message": "No cached images yet."
+  },
+  "imageFilterEmpty": {
+    "message": "No cached images for this platform yet."
+  },
+  "showUncached": {
+    "message": "Show uncached"
+  },
+  "imageOpenReader": {
+    "message": "Open this image in the reader"
+  },
   "copyDiag": {
     "message": "Copy diagnostics"
   },

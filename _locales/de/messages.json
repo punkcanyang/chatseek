@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "Bild nicht zwischengespeichert (auf diesem Computer gelöscht)"
   },
+  "tabImages": {
+    "message": "Bilder"
+  },
+  "imageEmpty": {
+    "message": "Noch keine zwischengespeicherten Bilder."
+  },
+  "imageFilterEmpty": {
+    "message": "Für diese Plattform gibt es noch keine zwischengespeicherten Bilder."
+  },
+  "showUncached": {
+    "message": "Nicht zwischengespeicherte anzeigen"
+  },
+  "imageOpenReader": {
+    "message": "Dieses Bild in der Leseansicht öffnen"
+  },
   "copyDiag": {
     "message": "Diagnose kopieren"
   },

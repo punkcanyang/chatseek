@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "图片未缓存（已清除）"
   },
+  "tabImages": {
+    "message": "图片"
+  },
+  "imageEmpty": {
+    "message": "还没有缓存的图。"
+  },
+  "imageFilterEmpty": {
+    "message": "这个平台还没有缓存的图。"
+  },
+  "showUncached": {
+    "message": "显示未缓存"
+  },
+  "imageOpenReader": {
+    "message": "在阅读页打开这张图"
+  },
   "copyDiag": {
     "message": "复制诊断"
   },

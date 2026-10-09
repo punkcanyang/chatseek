@@ -36,6 +36,7 @@
       <button type="button" role="tab" aria-selected="false" class="chip" data-scope="platform" data-platform="gemini">Gemini</button>
       <button type="button" role="tab" aria-selected="false" class="chip" data-scope="archived" id="filterArchived"></button>
       <button type="button" role="tab" aria-selected="false" class="chip" data-scope="all" id="filterAll"></button>
+      <button type="button" role="tab" aria-selected="false" class="chip" data-scope="images" id="filterImages"></button>
     </div>
 
     <div class="sort" id="sortBar">
@@ -45,6 +46,23 @@
     </div>
 
     <p class="status" id="status" hidden></p>
+    <div id="imagePane" class="image-pane" hidden>
+      <div class="image-tools">
+        <label class="switch" for="showUncached">
+          <input type="checkbox" id="showUncached" />
+          <span id="showUncachedLabel"></span>
+        </label>
+        <div class="image-platforms" id="imagePlatforms" role="group">
+          <button type="button" class="plat-chip is-on" data-image-platform="" id="imagePlatformAll" aria-pressed="true"></button>
+          <button type="button" class="plat-chip" data-image-platform="chatgpt" aria-pressed="false">ChatGPT</button>
+          <button type="button" class="plat-chip" data-image-platform="claude" aria-pressed="false">Claude</button>
+          <button type="button" class="plat-chip" data-image-platform="gemini" aria-pressed="false">Gemini</button>
+          <button type="button" class="plat-chip" data-image-platform="grok" aria-pressed="false">Grok</button>
+        </div>
+      </div>
+      <p id="imageEmpty" class="image-empty" hidden></p>
+      <div id="imageGrid" class="image-grid"></div>
+    </div>
     <ul class="list" id="list"></ul>
 
     <footer class="foot">

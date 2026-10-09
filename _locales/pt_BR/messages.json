@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "Imagem não armazenada em cache (apagada neste computador)"
   },
+  "tabImages": {
+    "message": "Imagens"
+  },
+  "imageEmpty": {
+    "message": "Ainda não há imagens em cache."
+  },
+  "imageFilterEmpty": {
+    "message": "Ainda não há imagens em cache desta plataforma."
+  },
+  "showUncached": {
+    "message": "Mostrar não armazenadas"
+  },
+  "imageOpenReader": {
+    "message": "Abrir esta imagem na página de leitura"
+  },
   "copyDiag": {
     "message": "Copiar diagnóstico"
   },

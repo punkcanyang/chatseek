@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "圖片未快取（已清除）"
   },
+  "tabImages": {
+    "message": "圖片"
+  },
+  "imageEmpty": {
+    "message": "還沒有快取的圖。"
+  },
+  "imageFilterEmpty": {
+    "message": "這個平台還沒有快取的圖。"
+  },
+  "showUncached": {
+    "message": "顯示未快取"
+  },
+  "imageOpenReader": {
+    "message": "在閱讀頁打開這張圖"
+  },
   "copyDiag": {
     "message": "複製診斷"
   },

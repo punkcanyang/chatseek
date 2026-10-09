@@ -4,11 +4,17 @@
  * The original site URL is opened unchanged, including Gemini /u/N/.
  */
 
-export function readerPageUrl(id, query, runtime) {
+export function readerPageUrl(id, query, runtime, focus) {
   const params = new URLSearchParams();
   params.set("id", String(id || ""));
   const q = String(query || "").trim();
   if (q) params.set("q", q);
+  const messageId = String(focus?.messageId || "");
+  const index = focus?.index;
+  if (messageId && messageId.length <= 400 && Number.isInteger(index) && index >= 0 && index < 24) {
+    params.set("m", messageId);
+    params.set("i", String(index));
+  }
   const getURL = runtime?.getURL;
   if (typeof getURL === "function") {
     const base = getURL("reader/index.html");
@@ -21,9 +27,13 @@ export function readerPageUrl(id, query, runtime) {
 
 export function parseReaderSearch(search) {
   const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
+  const rawIndex = params.get("i");
+  const imageIndex = /^\d{1,2}$/.test(rawIndex || "") ? Number(rawIndex) : -1;
   return {
     id: params.get("id") || "",
     query: params.get("q") || "",
+    messageId: (params.get("m") || "").slice(0, 400),
+    imageIndex: imageIndex >= 0 && imageIndex < 24 ? imageIndex : -1,
   };
 }
 

@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "이미지를 캐시하지 못했습니다(이 컴퓨터에서 지움)"
   },
+  "tabImages": {
+    "message": "이미지"
+  },
+  "imageEmpty": {
+    "message": "아직 캐시된 이미지가 없습니다."
+  },
+  "imageFilterEmpty": {
+    "message": "이 플랫폼에는 아직 캐시된 이미지가 없습니다."
+  },
+  "showUncached": {
+    "message": "캐시되지 않은 항목 표시"
+  },
+  "imageOpenReader": {
+    "message": "읽기 페이지에서 이 이미지 열기"
+  },
   "copyDiag": {
     "message": "진단 복사"
   },

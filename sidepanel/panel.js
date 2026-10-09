@@ -7,8 +7,11 @@ import {
   attachPreviews,
   imageCacheUsage,
   clearImageCache,
+  listImageCards,
+  readImageBytes,
 } from "../src/db.js";
 import { formatCacheSize } from "../src/image-cache.js";
+import { filterImageCards, mountImageGrid, thumbUrl } from "../src/image-grid.js";
 import { formatActivityLabel, formatHealthEntries } from "../src/activity-time.js";
 import { fillHighlight } from "../src/preview.js";
 import { conversationKeyFromUrl, shouldAutoScroll } from "../src/conversation-url.js";
@@ -77,6 +80,11 @@ function bundle(code) {
     active: say("tabActive"),
     archived: say("tabArchived"),
     all: say("tabAll"),
+    images: say("tabImages"),
+    imageEmpty: say("imageEmpty"),
+    imageFilterEmpty: say("imageFilterEmpty"),
+    showUncached: say("showUncached"),
+    imageOpenReader: say("imageOpenReader"),
     empty: say("empty"),
     none: say("none"),
     loading: say("loading"),
@@ -148,6 +156,15 @@ const searchLabel = document.getElementById("searchLabel");
 const filterActive = document.getElementById("filterActive");
 const filterArchived = document.getElementById("filterArchived");
 const filterAll = document.getElementById("filterAll");
+const filterImages = document.getElementById("filterImages");
+const imagePane = document.getElementById("imagePane");
+const imageGrid = document.getElementById("imageGrid");
+const imageEmpty = document.getElementById("imageEmpty");
+const showUncachedEl = document.getElementById("showUncached");
+const showUncachedLabel = document.getElementById("showUncachedLabel");
+const imagePlatforms = document.getElementById("imagePlatforms");
+const imagePlatformAll = document.getElementById("imagePlatformAll");
+const sortBar = document.getElementById("sortBar");
 const langLabel = document.getElementById("langLabel");
 const langEl = document.getElementById("lang");
 const removeDialog = document.getElementById("removeDialog");
@@ -163,6 +180,10 @@ let sortPref = readSortPref();
 
 let scope = "active";
 let platform = "";
+let imagePlatform = "";
+let showUncached = false;
+let imageView = null;
+let imageSeq = 0;
 let searchTimer = 0;
 let requestSeq = 0;
 let loadedOnce = false;
@@ -209,6 +230,12 @@ function applyStatic() {
   if (filterActive) filterActive.textContent = t.active;
   if (filterArchived) filterArchived.textContent = t.archived;
   if (filterAll) filterAll.textContent = t.all;
+  if (filterImages) filterImages.textContent = t.images;
+  if (showUncachedLabel) showUncachedLabel.textContent = t.showUncached;
+  if (imagePlatformAll) imagePlatformAll.textContent = t.all;
+  if (imageEmpty && !imageEmpty.hidden) {
+    imageEmpty.textContent = imagePlatform ? t.imageFilterEmpty : t.imageEmpty;
+  }
   if (langLabel) langLabel.textContent = t.langLabel;
   if (removeTitle) removeTitle.textContent = t.confirmRemoveTitle;
   if (removeCancel) removeCancel.textContent = t.cancel;
@@ -433,10 +460,11 @@ async function reuseOpenTab(message) {
   }
 }
 
-async function openReader(conv) {
+async function openReader(conv, focus, query) {
   if (!conv?.id) return;
   // Extension page in a new tab. chrome.tabs.create does not need the tabs permission.
-  const url = readerPageUrl(conv.id, qEl.value, chrome.runtime);
+  const q = query === undefined ? qEl.value : query;
+  const url = readerPageUrl(conv.id, q, chrome.runtime, focus);
   if (await reuseOpenTab({ type: "FOCUS_READER", id: conv.id, url })) return;
   try {
     if (chrome.tabs?.create) {
@@ -613,7 +641,93 @@ function toggleSortDir() {
   refresh();
 }
 
+function showImagePane(on) {
+  document.body.classList.toggle("is-images", on);
+  if (imagePane) imagePane.hidden = !on;
+  if (listEl) listEl.hidden = on;
+  if (sortBar) sortBar.hidden = on;
+  const searchWrap = qEl?.closest(".search");
+  if (searchWrap) searchWrap.hidden = on;
+  if (searchLabel) searchLabel.hidden = on;
+  if (on && statusEl) statusEl.hidden = true;
+  if (!on && imageView) {
+    imageView.destroy();
+    imageView = null;
+  }
+}
+
+async function loadThumb(card) {
+  const rec = await readImageBytes(card.messageId, card.index);
+  if (!rec?.blob) return null;
+  const packed = thumbUrl(rec.blob, rec.mime);
+  if (!packed.url) {
+    packed.release();
+    return null;
+  }
+  return packed;
+}
+
+async function refreshImagePane() {
+  const seq = ++imageSeq;
+  showImagePane(true);
+  if (imageEmpty) imageEmpty.hidden = true;
+  let rows = [];
+  try {
+    rows = await listImageCards();
+  } catch {
+    if (seq !== imageSeq) return;
+    if (imageView) {
+      imageView.destroy();
+      imageView = null;
+    }
+    if (imageEmpty) {
+      imageEmpty.hidden = false;
+      imageEmpty.textContent = t.error;
+    }
+    return;
+  }
+  if (seq !== imageSeq) return;
+  const cards = filterImageCards(rows, { platform: imagePlatform, showUncached });
+  if (imageEmpty) {
+    const filtered = !!imagePlatform && !cards.length && rows.some((row) => row.status === "cached" && row.bytes > 0);
+    imageEmpty.hidden = cards.length > 0;
+    imageEmpty.textContent = filtered ? t.imageFilterEmpty : t.imageEmpty;
+  }
+  if (!imageGrid) return;
+  if (imageView) {
+    imageView.destroy();
+    imageView = null;
+  }
+  imageView = mountImageGrid(imageGrid, {
+    cards,
+    locale: localeCode,
+    width: imageGrid.clientWidth || 292,
+    viewHeight: imageGrid.clientHeight || 480,
+    loadThumb,
+    onOpenReader: (card) => openReader(
+      { id: card.conversationId },
+      { messageId: card.messageId, index: card.index },
+      "",
+    ),
+    onOpenSite: (url) => openChat(url),
+  });
+  try {
+    const s = await stats();
+    if (seq !== imageSeq) return;
+    countsEl.textContent = t.counts(s.conversations, s.messages);
+  } catch {
+    if (seq === imageSeq && !loadedOnce) countsEl.textContent = t.error;
+  }
+  await refreshImageCache();
+  await renderHealth();
+}
+
 async function refresh() {
+  if (scope === "images") {
+    await refreshImagePane();
+    return;
+  }
+  showImagePane(false);
   renderSortControls();
   const seq = ++requestSeq;
   const query = qEl.value;
@@ -663,6 +777,23 @@ qEl.addEventListener("compositionend", () => {
 });
 qEl.addEventListener("input", () => {
   if (!composing) scheduleRefresh();
+});
+
+showUncachedEl?.addEventListener("change", () => {
+  showUncached = !!showUncachedEl.checked;
+  if (scope === "images") refreshImagePane();
+});
+
+imagePlatforms?.addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-image-platform]");
+  if (!btn || !imagePlatforms.contains(btn)) return;
+  imagePlatform = btn.dataset.imagePlatform || "";
+  for (const el of imagePlatforms.querySelectorAll("[data-image-platform]")) {
+    const on = el === btn;
+    el.classList.toggle("is-on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  if (scope === "images") refreshImagePane();
 });
 
 document.querySelectorAll(".chip").forEach((chip) => {
@@ -730,6 +861,7 @@ clearImagesBtn?.addEventListener("click", async () => {
     return;
   }
   await refreshImageCache();
+  if (scope === "images") await refreshImagePane();
   const sent = chrome.runtime?.sendMessage?.({ type: "IMAGE_CACHE_UPDATED" });
   if (sent && typeof sent.catch === "function") sent.catch(() => {});
 });
@@ -959,6 +1091,7 @@ if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
     if (msg?.type === "IMAGE_CACHE_UPDATED") {
       refreshImageCache();
+      if (scope === "images") refreshImagePane();
       return;
     }
     if (msg?.type === "INDEX_UPDATED") scheduleRefresh();

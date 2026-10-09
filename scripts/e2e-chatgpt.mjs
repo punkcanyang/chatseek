@@ -539,7 +539,7 @@ async function main() {
     }
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.4 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.6.5 platform=chatgpt")), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);
@@ -788,6 +788,57 @@ async function main() {
       return thumbs >= 1 && site >= 1;
     }, "reader mixed image states", 10000);
     await reader.screenshot({ path: join(docs, "reader-1.6.3-placeholders.png"), fullPage: true });
+
+    await panel.setViewport({ width: 320, height: 720 });
+    await panel.bringToFront();
+    await panel.click("#filterImages");
+    await until(async () => {
+      const srcs = await panel.$$eval(".shot-img", (nodes) => nodes.map((node) => node.getAttribute("src") || "")).catch(() => []);
+      const missing = await panel.$$eval(".shot-missing", (nodes) => nodes.length).catch(() => 0);
+      return srcs.length >= 1 && missing === 0 && srcs.every((src) => src.startsWith("data:image/")) ? srcs.length : 0;
+    }, "image tab cached thumbs", 15000);
+    const gridText = await panel.$eval("#imageGrid", (el) => el.innerText || "");
+    assert(!/https?:\/\/|oaiusercontent/i.test(gridText), `image grid leaked ${gridText.slice(0, 200)}`);
+    await panel.screenshot({ path: join(docs, "panel-1.6.5-e2e-images-320.png") });
+    await panel.click("#showUncached");
+    await until(async () => {
+      const reason = await panel.$eval(".shot-missing", (el) => el.dataset.reason || "").catch(() => "");
+      return reason ? reason : "";
+    }, "image tab placeholders", 10000);
+    await panel.screenshot({ path: join(docs, "panel-1.6.5-e2e-uncached.png") });
+    const opened = await panel.evaluate(async () => {
+      const urls = [];
+      const originalSend = chrome.runtime.sendMessage;
+      const originalCreate = chrome.tabs.create;
+      chrome.runtime.sendMessage = async () => ({ focused: false });
+      chrome.tabs.create = async (opts) => {
+        urls.push(opts?.url || "");
+        return { id: 9 };
+      };
+      document.querySelector(".shot-site")?.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const site = urls[0] || "";
+      urls.length = 0;
+      const btn = document.querySelector(".shot-img")?.closest(".shot-open") || document.querySelector(".shot-open");
+      btn?.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const readerUrl = urls[0] || "";
+      chrome.runtime.sendMessage = originalSend;
+      chrome.tabs.create = originalCreate;
+      return { site, readerUrl };
+    });
+    assert(/chatgpt\.com|claude\.ai|grok\.com|gemini\.google\.com/.test(opened.site), `site icon opened ${opened.site}`);
+    assert(!/oaiusercontent|\.png|\.webp/i.test(opened.site), `site icon opened an image ${opened.site}`);
+    assert(opened.readerUrl.includes("/reader/index.html") && opened.readerUrl.includes("m=") && /(?:^|[?&])i=\d+/.test(opened.readerUrl), `reader target ${opened.readerUrl}`);
+    assert(!/oaiusercontent|\.png|\.webp/i.test(opened.readerUrl), `reader opened an image ${opened.readerUrl}`);
+    await reader.goto(opened.readerUrl, { waitUntil: "domcontentloaded" });
+    await until(async () => {
+      const hit = await reader.$eval(".image-slot.is-target", (el) => el.getAttribute("data-image-index") || "0").catch(() => "");
+      return hit !== "" ? hit : "";
+    }, "reader highlights the image", 10000);
+    await reader.screenshot({ path: join(docs, "reader-1.6.5-e2e-scrolled.png") });
+    await panel.setViewport({ width: 420, height: 860 });
+    await panel.evaluate(() => document.querySelector("#filterActive")?.click());
 
     await reader.setViewport({ width: 900, height: 800 });
     await reader.goto(`chrome-extension://${extensionId}/reader/index.html?id=${encodeURIComponent(`chatgpt:${CLASSIC}`)}`, {

@@ -170,6 +170,8 @@ function shiftHits(hits, from, to) {
 function imageSlot(doc, shot, locale, onOpen) {
   const fig = doc.createElement("figure");
   fig.className = "image-slot";
+  if (shot?.messageId) fig.dataset.messageId = String(shot.messageId);
+  if (Number.isInteger(shot?.index)) fig.dataset.imageIndex = String(shot.index);
   const cachedUrl = shot?.status === "cached"
     ? (shot.dataUrl || dataUrlFromBytes(shot.blob, shot.mime))
     : "";
@@ -296,6 +298,11 @@ export function mountReader(root, options = {}) {
     ? []
     : collectHits(conversation.title || conversation.platformId || "", messages, query, imageMap);
   let hitIndex = hits.length ? 0 : -1;
+  const focus = options.focus && options.focus.messageId && Number.isInteger(options.focus.index)
+    ? { messageId: String(options.focus.messageId), index: options.focus.index }
+    : null;
+  let focusDone = false;
+  let flashTimer = 0;
   const heights = messages.map(estimateHeight);
   let prefix = buildPrefix(heights);
   let live = new Map();
@@ -638,8 +645,57 @@ function focusHit() {
     }).observe(scroller);
   }
 
+  function findFocusSlot() {
+    if (!focus) return null;
+    for (const fig of root.querySelectorAll(".image-slot")) {
+      if (fig.dataset.messageId === focus.messageId && Number(fig.dataset.imageIndex) === focus.index) return fig;
+    }
+    return null;
+  }
+
+  function focusMessageIndex() {
+    if (!focus) return -1;
+    return messages.findIndex((msg) => msg.id === focus.messageId);
+  }
+
+  function revealFocus() {
+    if (focusDone || !focus) return false;
+    const idx = focusMessageIndex();
+    if (idx >= 0) {
+      setViewTop(Math.max(0, prefix[idx] - HIT_MARGIN_PX));
+      renderWindow({ anchor: idx, offset: -HIT_MARGIN_PX, force: true });
+    }
+    const fig = findFocusSlot();
+    if (!fig) return false;
+    fig.classList.add("is-target");
+    if (hasLayout() && typeof fig.getBoundingClientRect === "function") {
+      const box = fig.getBoundingClientRect();
+      const host = scroller.getBoundingClientRect();
+      if (box.height && host.height) {
+        const delta = box.top - host.top - HIT_MARGIN_PX;
+        if (Math.abs(delta) > 4) {
+          setViewTop(viewTop() + delta);
+          renderWindow({ force: true });
+        }
+      }
+    }
+    const marked = findFocusSlot();
+    if (marked && marked !== fig) marked.classList.add("is-target");
+    focusDone = true;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      findFocusSlot()?.classList.remove("is-target");
+    }, 4000);
+    return true;
+  }
+
   applyCopy();
-  if (hits.length) go(0);
+  const focusIdx = focusMessageIndex();
+  if (focusIdx >= 0) {
+    setViewTop(Math.max(0, prefix[focusIdx] - HIT_MARGIN_PX));
+    renderWindow({ anchor: focusIdx, offset: -HIT_MARGIN_PX, force: true });
+    revealFocus();
+  } else if (hits.length) go(0);
   else renderWindow({ force: true });
 
   return {
@@ -654,7 +710,19 @@ function focusHit() {
       live = new Map();
       renderedStart = -1;
       renderedEnd = -1;
-      renderWindow({ force: true });
+      const idx = focusMessageIndex();
+      if (idx >= 0 && !focusDone) {
+        setViewTop(Math.max(0, prefix[idx] - HIT_MARGIN_PX));
+        renderWindow({ anchor: idx, offset: -HIT_MARGIN_PX, force: true });
+        revealFocus();
+      } else {
+        renderWindow({ force: true });
+      }
+    },
+    targetImage() {
+      const fig = root.querySelector(".image-slot.is-target");
+      if (!fig) return null;
+      return { messageId: fig.dataset.messageId || "", index: Number(fig.dataset.imageIndex) };
     },
     setActivity(conv, now = Date.now()) {
       if (!clockConv || !conv) return;

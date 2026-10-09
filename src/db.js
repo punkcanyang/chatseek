@@ -1124,6 +1124,70 @@ export async function readImagesForMessages(ids) {
   });
 }
 
+/**
+ * Metadata for the image tab. The bitmap stays in IndexedDB until a visible
+ * cell reads it. Image addresses are not copied onto the card.
+ */
+export async function listImageCards() {
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images")) return [];
+    const tx = db.transaction(["images", "conversations", "meta"], "readonly");
+    const raw = [];
+    await cursorEach(tx.objectStore("images"), {}, (row) => {
+      if (!row?.conversationId || !row.messageId) return;
+      raw.push({
+        messageId: row.messageId,
+        index: row.index,
+        conversationId: row.conversationId,
+        status: row.status || "",
+        alt: row.alt || "",
+        offset: Number(row.offset) || 0,
+        width: Number(row.width) || 0,
+        height: Number(row.height) || 0,
+        mime: row.mime || "",
+        bytes: Number(row.bytes) || 0,
+      });
+    });
+    const convStore = tx.objectStore("conversations");
+    const meta = tx.objectStore("meta");
+    const convs = new Map();
+    const ranks = new Map();
+    for (const id of new Set(raw.map((row) => row.conversationId))) {
+      const conv = await requestDone(convStore.get(id));
+      if (conv) convs.set(id, conv);
+      const order = await requestDone(meta.get(ORDER_PREFIX + id));
+      const ids = order?.ids || conv?.messageOrder || [];
+      ids.forEach((mid, index) => {
+        if (mid && !ranks.has(mid)) ranks.set(mid, index);
+      });
+    }
+    return raw.map((row) => {
+      const conv = convs.get(row.conversationId);
+      return {
+        ...row,
+        platform: conv?.platform || "",
+        title: conv?.title || "",
+        chatUrl: typeof conv?.url === "string" ? conv.url : "",
+        updatedAt: Number(conv?.updatedAt) || 0,
+        messageRank: ranks.has(row.messageId) ? ranks.get(row.messageId) : null,
+      };
+    });
+  });
+}
+
+export async function readImageBytes(messageId, index) {
+  if (typeof messageId !== "string" || !messageId || !Number.isInteger(index)) return null;
+  return withDb(async (db) => {
+    if (!db.objectStoreNames.contains("images")) return null;
+    const tx = db.transaction("images", "readonly");
+    const row = await requestDone(tx.objectStore("images").get([messageId, index]));
+    if (!row || row.status !== "cached" || !row.blob) return null;
+    const size = row.blob.byteLength || row.blob.length || 0;
+    if (!size) return null;
+    return { mime: row.mime || "", blob: row.blob };
+  });
+}
+
 export async function imageCacheUsage() {
   return withDb(async (db) => {
     if (!db.objectStoreNames.contains("meta")) return 0;

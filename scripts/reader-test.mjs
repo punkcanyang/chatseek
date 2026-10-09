@@ -552,6 +552,40 @@ assert(tombAfter?.removedAt === tomb.removedAt, "reader did not touch the tombst
 const msgLeft = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m1`));
 assert(msgLeft == null, "removed messages stay gone");
 
+const late = Array.from({ length: 40 }, (_, i) => ({
+  id: `pic-${i}`,
+  role: i % 2 ? "assistant" : "user",
+  body: `turn ${i} stays short`,
+}));
+const targetId = "pic-30";
+const focused = mount({
+  viewportHeight: 220,
+  conversation: {
+    id: "chatgpt:pics",
+    platform: "chatgpt",
+    title: "pics",
+    url: "https://chatgpt.com/c/pics",
+    updatedAt: Date.now(),
+    updatedAtSource: "observed",
+  },
+  messages: late,
+  images: new Map([[targetId, [{
+    messageId: targetId,
+    index: 2,
+    status: "cached",
+    mime: "image/webp",
+    blob: new Uint8Array([1, 2, 3, 4]).buffer,
+    offset: 0,
+    alt: "leaf",
+  }]]]),
+  focus: { messageId: targetId, index: 2 },
+});
+assert(focused.view.targetImage()?.messageId === targetId, "reader highlights the requested image");
+assert(focused.view.targetImage()?.index === 2, "reader highlights that image index");
+const mountedIndexes = [...focused.host.querySelectorAll(".msg")].map((el) => el.dataset.index);
+assert(mountedIndexes.includes("30"), `image message is mounted ${mountedIndexes.join(",")}`);
+assert(!mountedIndexes.includes("0"), "scrolling to an image does not mount the whole thread");
+
 const readerSrc = readFileSync(join(root, "reader/reader.js"), "utf8");
 const viewSrc = readFileSync(join(root, "src/reader-view.js"), "utf8");
 assert(!/upsert|removeConversation|clearAll|readwrite|\.put\(/.test(readerSrc + viewSrc), "reader modules do not write");

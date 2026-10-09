@@ -77,6 +77,24 @@ assert(
   "the same search only switches tabs",
 );
 assert(
+  readerRefreshUrl(
+    "chrome-extension://abc/reader/index.html?id=chatgpt%3Ax",
+    "chrome-extension://abc/reader/index.html?id=chatgpt%3Ax&m=chatgpt%3Ax%3Au&i=1",
+    "chatgpt:x",
+    "chrome-extension://abc/",
+  ).includes("i=1"),
+  "a different image reloads the open reader",
+);
+assert(
+  readerRefreshUrl(
+    "chrome-extension://abc/reader/index.html?id=chatgpt%3Ax&m=chatgpt%3Ax%3Au&i=1",
+    "chrome-extension://abc/reader/index.html?id=chatgpt%3Ax&m=chatgpt%3Ax%3Au&i=1",
+    "chatgpt:x",
+    "chrome-extension://abc/",
+  ) === "",
+  "the same image only switches tabs",
+);
+assert(
   readerRefreshUrl("chrome-extension://abc/reader/index.html?id=a", "https://evil.example/reader/index.html?id=a&q=x", "a", "chrome-extension://abc/") === "",
   "only this extension's reader URL is loaded",
 );

@@ -126,6 +126,9 @@ function show() {
     locale,
     query: parsed.query,
     images: imageMap,
+    focus: parsed.imageIndex >= 0 && parsed.messageId
+      ? { messageId: parsed.messageId, index: parsed.imageIndex }
+      : null,
     onWindow: (ids) => {
       shownIds = ids || [];
       loadImages(shownIds);
@@ -142,6 +145,7 @@ function bootPlaceholder() {
 bootPlaceholder();
 await load();
 show();
+if (parsed.imageIndex >= 0 && parsed.messageId) loadImages([parsed.messageId]);
 
 function applyClock(conv) {
   if (!conv || !row?.conversation || !view?.setActivity) return;

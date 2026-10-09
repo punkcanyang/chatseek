@@ -347,6 +347,21 @@
   "imageCleared": {
     "message": "画像はキャッシュされていません（この端末で消去しました）"
   },
+  "tabImages": {
+    "message": "画像"
+  },
+  "imageEmpty": {
+    "message": "キャッシュされた画像はまだありません。"
+  },
+  "imageFilterEmpty": {
+    "message": "このプラットフォームにはまだキャッシュされた画像がありません。"
+  },
+  "showUncached": {
+    "message": "未キャッシュを表示"
+  },
+  "imageOpenReader": {
+    "message": "リーダーでこの画像を開く"
+  },
   "copyDiag": {
     "message": "診断をコピー"
   },
