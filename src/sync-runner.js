@@ -5,6 +5,7 @@
  */
 
 import { listSyncCandidates, readSyncSession, writeSyncSession } from "./db.js";
+import { rememberDeletedVisit } from "./deleted-visits.js";
 import {
   emptySyncState,
   homeUrl,
@@ -104,6 +105,7 @@ async function applyEffect(state, effect, now, pace) {
     }
     try {
       const tab = await chrome.tabs.create({ url: effect.url, active: false });
+      rememberDeletedVisit(tab?.id, effect.url);
       const id = tab?.id;
       if (!Number.isInteger(id)) {
         return { ...state, status: "stopped", reason: "uncertain", phase: "idle" };
@@ -118,6 +120,7 @@ async function applyEffect(state, effect, now, pace) {
       return stepSync(state, { type: "tab-closed" }, now, pace).state;
     }
     try {
+      rememberDeletedVisit(state.tabId, effect.url);
       await chrome.tabs.update(state.tabId, { url: effect.url, active: false });
       return state;
     } catch {

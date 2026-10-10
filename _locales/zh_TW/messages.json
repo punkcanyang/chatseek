@@ -91,6 +91,9 @@
   "archivedBadge": {
     "message": "已封存"
   },
+  "siteDeleted": {
+    "message": "原網站已刪除"
+  },
   "restoreActive": {
     "message": "恢復活躍"
   },

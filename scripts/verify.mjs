@@ -88,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.4") fail(`version should be 1.7.4, got ${manifest.version}`);
+if (manifest.version !== "1.7.5") fail(`version should be 1.7.5, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -152,6 +152,7 @@ const referenced = new Set([
   "src/search-query.js",
   "src/activity-time.js",
   "src/preview.js",
+  "src/deleted-visits.js",
   "src/conversation-url.js",
   "src/current-tab.js",
   "src/i18n.js",
@@ -191,6 +192,7 @@ for (const rel of [
   "content/gemini.js",
   "content/shared.js",
   "content/images.js",
+  "content/deleted.js",
 ]) {
   const src = read(rel);
   if (/XMLHttpRequest|prototype\.fetch|window\.fetch\s*=/.test(src)) {
@@ -1198,6 +1200,7 @@ for (const rel of [
   "content/gemini.js",
   "content/shared.js",
   "content/images.js",
+  "content/deleted.js",
 ]) {
   if (/innerHTML|insertAdjacentHTML|outerHTML|\beval\s*\(/.test(read(rel))) {
     fail(`${rel} must not use innerHTML or eval`);

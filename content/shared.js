@@ -1138,6 +1138,20 @@ const Chatseek = {
 
   async runCapture(state, { platform, sidebar, archivedRows, conversation, messages, health, restoreOnNewMessages, identity, completePage = false }) {
     const captureHref = typeof location !== "undefined" ? location.href : "";
+    const deleted = await Chatseek.checkDeletedPage?.(platform);
+    if (captureHref && location.href !== captureHref) return false;
+    if (deleted?.suppressCapture) {
+      const diag = Chatseek.publishDiag(Chatseek.diagFields({ platform, pathKind: health?.pathKind || "conversation", deleted: deleted.hits }));
+      if (state.lastDeletedDiag !== deleted.hits) {
+        const response = await Chatseek.send({ type: "CAPTURE_HEALTH", platform, health: {
+          pathKind: health?.pathKind || "conversation", sidebarCount: (sidebar || []).length,
+          messageCount: 0, selector: "none", warn: false, diag, at: Date.now(),
+        } });
+        if (response?.ok) state.lastDeletedDiag = deleted.hits;
+      }
+      return false;
+    }
+    state.lastDeletedDiag = null;
     const stillHere = () => (!captureHref || location.href === captureHref) && (!identity || identity.check());
     const hold = () => { state.spaHeld = (state.spaHeld || 0) + 1; return false; };
     if (!stillHere()) return hold();
@@ -1264,6 +1278,7 @@ const Chatseek = {
         report.assistantCount || 0,
         health.archiveBanner || 0,
         health.archiveList || 0,
+        Chatseek._deletedHits || 0,
       ].join("|");
       const now = Date.now();
       if (healthFp !== state.lastHealthFp || now - (state.lastHealthAt || 0) >= 60000) {
@@ -1351,6 +1366,7 @@ const Chatseek = {
       if (!stillHere()) return hold();
       identity?.accept();
       Chatseek.noteSyncStored(conversation.id, msgs.length);
+      await Chatseek.restoreDeletedPage?.(conversation, msgs, identity);
       const restored = await restorePending();
       return ok && restored;
     }
@@ -1398,6 +1414,7 @@ const Chatseek = {
     state.lastMsgConvId = conversation.id;
     identity?.accept();
     Chatseek.noteSyncStored(conversation.id, msgs.length);
+    if (stillHere()) await Chatseek.restoreDeletedPage?.(conversation, msgs, identity);
     // The sidebar was written before this anchor existed. Rewrite it now so
     // its neighbours are estimated from the new time, even if the order did not move.
     if (observed && inSidebar) {
@@ -2758,6 +2775,7 @@ Chatseek.diagFields = (fields) => {
     structure: src.structure || null,
     archiveBanner: Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0))),
     archiveList: Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0))),
+    deleted: Math.max(0, Math.min(40, Math.floor(Number(src.deleted ?? Chatseek._deletedHits) || 0))),
     progressSkipped: Math.max(0, Math.min(9999, Math.floor(Number(src.progressSkipped) || 0))),
     at: Number(src.at) || Date.now(),
   };
@@ -2796,6 +2814,7 @@ Chatseek.formatDiag = (fields) => {
     `imgHold=${Number(src.imagesPlaceholder) || 0}`,
     imageCountLine(src),
     `archive=banner:${Math.max(0, Math.min(40, Math.floor(Number(src.archiveBanner) || 0)))},list:${Math.max(0, Math.min(500, Math.floor(Number(src.archiveList) || 0)))}`,
+    `deleted=${Math.max(0, Math.min(40, Math.floor(Number(src.deleted) || 0)))}`,
     `health=${scrubDiag(src.healthState, 16) || "ok"}`,
     `err=${oneWord(src.errorName)}`,
     `at=${iso}`,

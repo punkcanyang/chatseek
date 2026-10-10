@@ -91,6 +91,9 @@
   "archivedBadge": {
     "message": "已归档"
   },
+  "siteDeleted": {
+    "message": "原网站已删除"
+  },
   "restoreActive": {
     "message": "恢复活跃"
   },

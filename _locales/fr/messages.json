@@ -91,6 +91,9 @@
   "archivedBadge": {
     "message": "Archivée"
   },
+  "siteDeleted": {
+    "message": "Supprimée du site d’origine"
+  },
   "restoreActive": {
     "message": "Restaurer"
   },

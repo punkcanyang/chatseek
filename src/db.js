@@ -251,6 +251,7 @@ function applyArchiveState(next, old, incoming, now) {
     const changed = old?.archived !== true || old?.archiveSource !== source;
     next.archived = true;
     next.archiveSource = source;
+    if (source !== "site-deleted") delete next.deletedPreviousArchiveSource;
     next.archivedAt = !changed && isValidPageMs(old?.archivedAt) ? old.archivedAt : now;
     return;
   }
@@ -258,6 +259,7 @@ function applyArchiveState(next, old, incoming, now) {
     next.archived = false;
     delete next.archiveSource;
     delete next.archivedAt;
+    delete next.deletedPreviousArchiveSource;
     return;
   }
   if (old?.archived === true) {
@@ -1699,6 +1701,36 @@ export async function clearImageCache() {
  * messages, or the page. A later banner or archive-list capture can mark
  * the chat archived again.
  */
+/** Only an existing row can acquire this state. No index/schema change. */
+export async function setSiteDeletedState(id, deleted) {
+  return withDb(async (db) => {
+    const tx = db.transaction("conversations", "readwrite");
+    const store = tx.objectStore("conversations");
+    const old = await requestDone(store.get(id));
+    if (!old || (!deleted && old.archiveSource !== "site-deleted")) {
+      await txDone(tx); return { changed: false };
+    }
+    const next = { ...old };
+    if (deleted) {
+      if (old.archived === true && /^chatgpt:/.test(old.archiveSource || "")) {
+        next.deletedPreviousArchiveSource = old.archiveSource;
+      }
+      next.archived = true;
+      next.archiveSource = "site-deleted";
+      next.archivedAt = old.archiveSource === "site-deleted" ? old.archivedAt : Date.now();
+    } else {
+      next.archived = !!old.deletedPreviousArchiveSource;
+      if (next.archived) next.archiveSource = old.deletedPreviousArchiveSource;
+      else { delete next.archiveSource; delete next.archivedAt; }
+      delete next.deletedPreviousArchiveSource;
+    }
+    const changed = JSON.stringify(next) !== JSON.stringify(old);
+    if (changed) store.put(next);
+    await txDone(tx);
+    return { changed };
+  });
+}
+
 export async function restoreConversation(id) {
   if (typeof id !== "string" || !id) return false;
   return withDb(async (db) => {
@@ -1712,6 +1744,7 @@ export async function restoreConversation(id) {
     const next = { ...row, archived: false };
     delete next.archiveSource;
     delete next.archivedAt;
+    delete next.deletedPreviousArchiveSource;
     store.put(next);
     await txDone(tx);
     return true;

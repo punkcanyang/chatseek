@@ -91,6 +91,9 @@
   "archivedBadge": {
     "message": "보관됨"
   },
+  "siteDeleted": {
+    "message": "원래 사이트에서 삭제됨"
+  },
   "restoreActive": {
     "message": "되돌리기"
   },
