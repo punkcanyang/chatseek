@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { clearImageCache, openDb, saveImageRecords, searchConversations, setSiteDeletedState, upsertConversations, upsertMessages } from "../src/db.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
+import { activeSort, readSortPref } from "../src/sort-list.js";
 import {
   activeTabUrl,
   eventInWindow,
@@ -773,6 +774,19 @@ await setSiteDeletedState(deletedSample.id, false);
 for (let i = 0; i < 100; i++) message({ type: "INDEX_UPDATED" });
 await until(() => !rowFor(deletedSample.id), "recovery removes the archive row after index burst");
 document.getElementById("filterActive").click();
+// Earlier sort tests leave count ascending, and the 85 zero-message filler
+// rows put this one-message sample outside the idle list's first 80 results.
+// Verify the scope refresh against the real capped query, then search for the
+// recovered sample instead of assuming every active row must be mounted.
+const activeRows = await searchConversations({ scope: "active", limit: 1000,
+  sort: activeSort(readSortPref(), { locale: document.documentElement.lang }) });
+assert(activeRows.findIndex((row) => row.id === deletedSample.id) >= 80, "recovered sample is active beyond the idle list limit");
+const expectedActiveIds = activeRows.slice(0, 80).map((row) => row.id).join(",");
+await until(() => [...document.querySelectorAll("#list .item")].map((row) => row.dataset.id).join(",") === expectedActiveIds,
+  "active scope refreshes the correct 80 sorted rows after recovery");
+assert(document.getElementById("filterActive").getAttribute("aria-selected") === "true", "active scope remains selected after index burst");
+q.value = deletedSample.title;
+q.dispatchEvent(new window.Event("input"));
 await until(() => rowFor(deletedSample.id), "active scope responds after recovery");
 assert(!rowFor(deletedSample.id).querySelector(".deleted-note") && !rowFor(deletedSample.id).querySelector(".badge-archived"), "recovered row has neither archive label");
 renderObserver.disconnect();

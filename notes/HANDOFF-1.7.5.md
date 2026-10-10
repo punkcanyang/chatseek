@@ -1,6 +1,6 @@
 # HANDOFF — Chatseek 1.7.5 原網站已刪除就封存
 
-2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；前輪由使用者保底為 `b27ec61`。前次實作後使用者已 commit／push `2d3fd17`。本輪修復其外部 E2E 的靜態錯誤頁 timeout，未 commit／push／開 PR／合併；Chrome 重跑、刪除範例截圖與真站實測仍待完成，不能視為已發布。
+2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；使用者先後提交 `b27ec61`、`2d3fd17`、`21f70d7`、`76235a8`。**外部 Chrome for Testing 155 的 `test:e2e` 與 `test:e2e-sync` 已通過（使用者回報，exit 0），四張 1.7.5 範例截圖已產生。** 本輪修正 panel 回歸的清單上限假設，產品碼未變；未 commit／push／開 PR／合併，真站實測仍待完成，不能視為已發布。
 
 ## 行為與範圍
 
@@ -73,15 +73,23 @@
 
 ## E2E 與外部執行
 
-`scripts/e2e-chatgpt.mjs` 增加人工 ChatGPT fixture：正常頁先收錄兩則→同網址改成「Conversation not found」→等待穩定封存→側欄已封存與英文小字→恢復同一正常正文→回活躍。另確認兩則原訊息與活動時間保留。預定輸出 `docs/panel-1.7.5-deleted.png`，全部人工資料。
+`scripts/e2e-chatgpt.mjs` 增加人工 ChatGPT fixture：正常頁先收錄兩則→同網址改成「Conversation not found」→等待穩定封存→側欄已封存與英文小字→恢復同一正常正文→回活躍。另確認兩則原訊息與活動時間保留。已輸出 `docs/panel-1.7.5-deleted.png`，全部人工資料。
 
-沙箱不能 listen，這裡只做 node --check。使用者已外部跑過 Chrome for Testing 155：SPA selector／heuristic 與搜尋語法通過，1.7.5 靜態錯誤頁 timeout；本輪已修復，**仍待外部重跑，刪除截圖尚未產生**。由使用者在外部執行：
+沙箱不能 listen，這裡只做 node --check。使用者以 Chrome for Testing 155 外部驗證 `76235a8`：完整 `test:e2e` 與 `test:e2e-sync` 均 exit 0，包括 SPA selector／heuristic、搜尋語法、刪除封存與恢復。兩次先前失敗與根因見本文後段。外部執行方式：
 
 ```bash
 CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run test:e2e
+CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run test:e2e-sync
 ```
 
-既有 e2e 也會覆寫舊版 `docs/*.png`；只保留新的 `panel-1.7.5-deleted.png`，其餘 tracked 舊截圖應還原，不要夾帶覆寫內容。本輪沒有改任何圖片與 `docs/readme-assets/`。
+使用者外部執行後的範例截圖已在工作區（尚未追蹤）；本輪只記錄，沒有重寫或暫存進 Git：
+
+- [刪除封存側欄](../docs/panel-1.7.5-deleted.png)：405×1180。
+- [SPA 範例側欄](../docs/panel-1.7.5-spa.png)：405×1199。
+- [SPA 範例閱讀頁 A](../docs/reader-1.7.5-spa-A.png)：900×720。
+- [SPA 範例閱讀頁 B](../docs/reader-1.7.5-spa-B.png)：900×720。
+
+SPA 截圖依 manifest 版號產生，因此這次檔名是 1.7.5。若外部 e2e 也覆寫 tracked 舊版截圖，應還原舊檔，保留上述本版人工範例。本輪沒有改任何圖片與 `docs/readme-assets/`。
 
 ## 效能
 
@@ -139,7 +147,7 @@ permissions 恰好 `["sidePanel"]`；與 main `b707eb0` 對照 host_permissions�
 
 獨立 session `/root/review_175` 本輪複審 **PASS**，獨立 775 checks／node --check 通過。全部人工資料，無權限／host／CSP／DB 變動；版本保持 1.7.5，DB 4。
 
-本輪 Node v26.10.0，verify 與 package.json 全部 10 個離線 `test:*` 皆 exit 0；通過數是串接腳本數，不是斷言總數。
+以下是 `21f70d7` 修復時的歷史結果，最新結果見本文末節。該輪 Node v26.10.0，verify 與 package.json 全部 10 個離線 `test:*` 皆 exit 0；通過數是串接腳本數，不是斷言總數。
 
 | 指令 | 通過腳本數 | exit |
 |---|---:|---:|
@@ -157,4 +165,46 @@ permissions 恰好 `["sidePanel"]`；與 main `b707eb0` 對照 host_permissions�
 
 其中 `test:search` 與 `test:deleted` 均含 **775 checks**（新增 44）；panel 303、parser 85、syntax 44、Markdown 攻擊樣本314。`node --check content/deleted.js`、`scripts/deleted-test.mjs`、`scripts/e2e-chatgpt.mjs`、`scripts/e2e-sync.mjs` 與 `git diff --check` 通過。
 
-Chrome `test:e2e` 與 `test:e2e-sync` 在沙箱僅做 node --check，沒有 listen／實跑或生成／覆寫截圖。外部請重跑上列指令。嚴重背景 timer 節流或 service worker 回應延遲仍可能耗盡預算而漏判；保持原本保守防抖，不擅自放寬觀察間隔或判定門檻。此前 3000 則／500 縮圖離線效能表為前次實作的量測，本輪沒有重測；正常無候選頁不新增排程，候選最多12次只讀證據核對，真 Chrome 成本仍待外部驗證。
+當時 Chrome `test:e2e` 與 `test:e2e-sync` 在沙箱僅做 node --check，沒有 listen／實跑或生成／覆寫截圖；後續外部通過結果見下節。嚴重背景 timer 節流或 service worker 回應延遲仍可能耗盡預算而漏判；保持原本保守防抖，不擅自放寬觀察間隔或判定門檻。此前 3000 則／500 縮圖離線效能表為前次實作的量測，本輪沒有重測；正常無候選頁不新增排程，候選最多12次只讀證據核對，真 Chrome 成本仍待外部驗證。
+
+## 外部背景側欄 click timeout（修正已提交為 `76235a8`）
+
+`21f70d7` 已讓靜態錯誤頁在防抖後取得 `archived=true`／`site-deleted`。後續 CfT 155 卡在背景 `panel.click('[data-scope="archived"]')` 的 `Runtime.callFunctionOn`，不是資料庫判定失敗。Puppeteer 25.12.0 的 `ElementHandle.click()` 先跑 `scrollIntoViewIfNeeded()`／`isIntersectingViewport()`，其中 evaluate 的 Promise 等待 IntersectionObserver 回呼；這個 Promise 未完成不等於 renderer 無法執行其他 JS。
+
+使用者外部插樁取得：
+
+| 時機 | hidden | intersectionDelivered | INDEX_UPDATED 次數 | 清單替換次數 |
+|---|---|---|---:|---:|
+| before focus | true | false | 2 | 2 |
+| after focus | false | true | 2 | 4 |
+
+背景時 plain evaluate 能回傳，廣播維持兩次，切到前景後 IO 交付且真實 click、完整 E2E 通過，**確認根因是測試背景分頁的 IntersectionObserver 等待，不是 renderer 卡死或產品刷新風暴**。e2e 將側欄 HTML 開成獨立普通分頁，真實 Chrome 側欄則與網站並排可見；`clickForeground()` 先 `bringToFront()` 再使用原本 Puppeteer click，讓測試互動符合實際可見 UI。沒有改 fixture／防抖門檻／等待上限或狀態斷言。
+
+四家實際 shared observer／adapter 的離線回歸亦確認：靜態錯誤頁只廣播兩次（health 一次、封存一次），再等 60 秒與40次並發確認不追加；40次並發恢復只一筆 changed、一次廣播。`deleted-test` 共 **795 checks**。實際安裝的 Puppeteer 配合模擬 IO 交付的 `e2e-ui-test` 為 **8 checks**；此模擬原本只證明等待路徑，CfT 根因現在由上述外部結果補齊。
+
+## panel 回歸 timeout 修正（本輪基準 `76235a8`）
+
+`active scope responds after recovery` 是新增測試的錯誤假設。較早的排序案例留下 `count asc`；85筆零訊息填充列會先於一則訊息的「Sample deleted garden」。原測試清空 query、恢復後就要求範例必須出現在清單，但側欄 idle 清單固定只顯示排序後前80筆。
+
+使用同一 fixture 的臨時診斷重現：活躍查詢 **92筆**，該範例零基排序 **87（第88筆）**，資料庫 `archived=false`、畫面 **80筆**、活躍控制的 `aria-selected=true`。證明 DB 恢復、scope 切換、刷新都已成功，缺少範例是正常的筆數上限；增加 timeout 或改產品刷新不會讓第88筆出現在前80筆。
+
+僅修 `scripts/panel-test.mjs`：保持100次 INDEX_UPDATED 合併、刷新停止、封存小字與恢復回歸；恢復後先比對活躍 DOM 全部80列與真 DB 排序結果前80筆，確認超出上限的範例仍屬活躍，再以其範例標題搜尋，驗證活躍列出現且封存標籤／小字消失。沒有清掉排序或減少填充資料，也沒有放寬斷言。產品碼與三種誤判防護不變；權限／host／CSP／DB版本仍未變。
+
+本輪 Node v26.10.0；verify 與 package.json 全部 **11個離線 `test:*`** 皆 exit 0。下表計數是指令串接的腳本數，不是斷言總數。
+
+| 指令 | 通過腳本數 | exit |
+|---|---:|---:|
+| `npm run verify` | 2/2 | 0 |
+| `npm run test:search` | 30/30 | 0 |
+| `npm run test:fixture` | 4/4 | 0 |
+| `npm run test:integrity` | 3/3 | 0 |
+| `npm run test:upgrade` | 5/5 | 0 |
+| `npm run test:sync` | 1/1 | 0 |
+| `npm run test:gemini` | 2/2 | 0 |
+| `npm run test:spa` | 5/5 | 0 |
+| `npm run test:skeleton` | 2/2 | 0 |
+| `npm run test:progress` | 2/2 | 0 |
+| `npm run test:deleted` | 1/1 | 0 |
+| `npm run test:e2e-ui` | 1/1 | 0 |
+
+panel 回歸 **310 checks**，主 session 單獨跑兩次及完整 test:search 都通過；獨立 session `/root/review_175` 本輪複審 **PASS**、另跑310 checks／diff檢查通過。deleted **795 checks**、e2e-ui **8 checks**；兩項瀏覽器 e2e 的 node --check 及 git diff --check 亦通過。完整結果留在 `/tmp/chatseek-175-recovery-tests.json` 與同前綴測試 log（不提交）。本輪未重新啟動 Chrome／listen，也未重測效能：產品碼沒有改變，上面的效能表為前次量測。
