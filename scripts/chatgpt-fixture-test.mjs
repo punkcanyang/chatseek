@@ -249,10 +249,14 @@ const noise = load(noiseHtml, threadUrl);
 assertTopMisses(noise.dom.window.document, "noise page");
 const noiseHit = noise.api.platforms.chatgpt.inspect();
 assert(noiseHit.selector === "heuristic", `noise page selector ${noiseHit.selector}`);
-assert(noiseHit.messages.length === 2, `chrome leaked into messages: ${noiseHit.messages.length} ${noiseHit.messages.map((m) => m.body).join(" | ")}`);
-assert(noiseHit.messages.map((m) => m.role).join(",") === "user,assistant", `noise roles ${noiseHit.messages.map((m) => m.role)}`);
+// Two distinct user blocks are legitimate repeats, even with identical text.
+// Cookie/composer/footer chrome is still excluded by its structure below.
+assert(noiseHit.messages.length === 3, `repeat lost or chrome leaked: ${noiseHit.messages.length}`);
+assert(noiseHit.messages.map((m) => m.role).join(",") === "user,user,assistant", `noise roles ${noiseHit.messages.map((m) => m.role)}`);
+assert(noiseHit.messages[0].id !== noiseHit.messages[1].id, "repeated user blocks need distinct identities");
+assert(noiseHit.messages[0].body === noiseHit.messages[1].body, "both repeated prompts survive");
 assert(noiseHit.messages[0].body.includes("southern forest ridge"), "noise user missing");
-assert(noiseHit.messages[1].body.includes("rolls into a ball"), "noise assistant missing");
+assert(noiseHit.messages[2].body.includes("rolls into a ball"), "noise assistant missing");
 assert(!noiseHit.messages.some((m) => /cookie|upgrade|must not be stored|footer|follow up|regenerate|make mistakes/i.test(m.body)), "sidebar, composer, cookie, or hint was stored");
 
 const selectorWins = load(`<main>

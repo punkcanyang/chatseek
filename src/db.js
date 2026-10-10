@@ -463,6 +463,8 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   let storedRows = null;
   const pageIds = Array.isArray(meta.pageMessageIds) ? meta.pageMessageIds : [];
   const pageCount = pageIds.length;
+  const completeSnapshot = meta.identityVerified === true && meta.completePage === true &&
+    pageIds.length === messages.length && messages.every((m, i) => !m.progress && m.id === pageIds[i]);
   const imageStore = db.objectStoreNames.contains("images") ? tx.objectStore("images") : null;
 
   async function imageRows(messageId) {
@@ -548,7 +550,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     }
   }
   const maybeClones = !!(
-    conv && baselineCount > 0 && !titleOnly &&
+    completeSnapshot && conv && baselineCount > 0 && !titleOnly &&
     pageIds.length >= 2 && baselineCount >= pageIds.length * 2 &&
     baselineCount % pageIds.length === 0
   );
@@ -566,8 +568,8 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     const rest = [...byId.values()].sort((a, b) => (a.capturedAt || 0) - (b.capturedAt || 0));
     let storedOrdered = ordered.concat(rest);
 
-    if (maybeClones) {
-      const moves = planCloneDrops(storedOrdered, pageIds, messages);
+    if (maybeClones && completeSnapshot) {
+      const moves = planCloneDrops(storedOrdered, pageIds, messages, { completePage: true });
       if (moves.length) {
         identityChanged = true;
         const dropIds = new Set(moves.map((move) => move.from));
@@ -594,7 +596,7 @@ async function writeMessages(db, conversation, messages, meta = {}) {
           index: indexOf.has(msg.id) ? indexOf.get(msg.id) : pageItems.length,
         });
       }
-      const alias = alignRekeyedTurns(storedOrdered, pageItems);
+      const alias = alignRekeyedTurns(storedOrdered, pageItems, { pageIds, completePage: completeSnapshot });
       for (const [pageId, storedId] of alias) {
         if (!pageId || !storedId || pageId === storedId) continue;
         const existing = await requestDone(msgStore.get(storedId));
@@ -627,8 +629,6 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   // Preserve stable native ids and same-body rekeys; a dom<N> row missing
   // from a proved full transcript has no enduring website identity.
   let repaired = false;
-  const completeSnapshot = meta.identityVerified === true && meta.completePage === true &&
-    pageIds.length === messages.length && messages.every((m, i) => !m.progress && m.id === pageIds[i]);
   if (completeSnapshot) {
     const ids = new Set(pageIds);
     const bodies = new Set(messages.map(m => m.body));
@@ -680,7 +680,9 @@ async function writeMessages(db, conversation, messages, meta = {}) {
         }
         const fragment = (storedRows || []).some((row) => {
           const body = String(row?.body || "");
-          return body.length > needle.length && body.startsWith(needle);
+          return row.role === (msg.role === "user" ? "user" : "assistant") &&
+            !!row.turnId && row.turnId === msg.turnId &&
+            body.length > needle.length && body.startsWith(needle);
         });
         if (fragment) {
           skippedIds.add(msg.id);

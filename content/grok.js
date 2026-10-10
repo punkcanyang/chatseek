@@ -2,6 +2,7 @@
   const PLATFORM = "grok";
   // grok.com history is the normal list, not an archive. No banner to read.
   const state = { lastListFp: "", lastMsgFp: "" };
+  const turnIdentity = Chatseek.createTurnIdentity(PLATFORM);
   const MESSAGE_SELECTORS = [
     "[data-message-author-role]",
     "[data-role]",
@@ -10,6 +11,7 @@
   ];
   let cachedJsonTimes = null;
   let cachedJsonAt = 0;
+  let cachedJsonHref = "";
 
   function canonicalUrl(id) {
     return `https://grok.com/c/${id}`;
@@ -35,7 +37,8 @@
 
   function jsonTimes() {
     const now = Date.now();
-    if (!cachedJsonTimes || now - cachedJsonAt > 15000) {
+    if (!cachedJsonTimes || cachedJsonHref !== location.href || now - cachedJsonAt > 15000) {
+      cachedJsonHref = location.href;
       cachedJsonTimes = Chatseek.pageTimesFromDocument();
       cachedJsonAt = now;
     }
@@ -141,7 +144,7 @@
 
   let imageHosts = [];
 
-  async function extractMessages(conversationId, collectImages = true) {
+  function extractMessages(conversationId, collectImages = true, pace = true) {
     if (collectImages) imageHosts = [];
     const candidates = [];
     const pushUnique = (el, role) => {
@@ -197,15 +200,13 @@
 
     const seen = new Set();
     const messages = [];
-    Chatseek._paceAt = Date.now();
-    for (let index = 0; index < leaves.length; index += 1) {
-      const item = leaves[index];
-      if (seen.has(item.el)) continue;
+    const nodes = [];
+    const pushItem = (item, index) => {
+      if (seen.has(item.el)) return;
       seen.add(item.el);
       const rendered = Chatseek.safeDomText(item.el, item.role === "user");
       const body = rendered.text;
-      await Chatseek.paceDom();
-      if (!Chatseek.isSubstantive(body)) continue;
+      if (!Chatseek.isSubstantive(body)) return;
       item.offsets = rendered.offsets;
       const role =
         item.role ||
@@ -218,24 +219,37 @@
             : "assistant");
       const platformMessageId = item.el.getAttribute("data-message-id") ||
         item.el.querySelector?.("[data-message-id]")?.getAttribute("data-message-id") ||
-        item.el.id ||
-        Chatseek.hash(role + ":" + body.slice(0, 180));
-      const id = `${PLATFORM}:${conversationId}:${platformMessageId}`;
+        item.el.id;
+      const id = turnIdentity(item.el, conversationId, role, body, platformMessageId);
       messages.push({
         id,
         role,
         body,
+        turnId: id,
       });
+      nodes.push(item.el);
       if (collectImages) imageHosts.push({ el: item.el, messageId: id, role, body, offsets: item.offsets });
+    };
+    if (!pace) {
+      leaves.forEach(pushItem);
+      return { messages, nodes };
     }
-    return messages;
+    return (async () => {
+      Chatseek._paceAt = Date.now();
+      for (let index = 0; index < leaves.length; index++) {
+        pushItem(leaves[index], index); await Chatseek.paceDom();
+      }
+      return { messages, nodes };
+    })();
   }
 
   async function capture() {
+    const captureHref = location.href;
     const sidebar = extractSidebar();
     const platformId = conversationIdFromLocation();
     let conversation = null;
     let messages = [];
+    let extracted = { messages: [], nodes: [] };
     let titled = "";
     if (platformId) {
       const fromSidebar = sidebar.find((c) => c.platformId === platformId);
@@ -249,8 +263,15 @@
         url: canonicalUrl(platformId),
       };
       Chatseek.applyStoredTime(conversation, fromSidebar, jsonTimes());
-      messages = await extractMessages(platformId);
+      const initial = extractMessages(platformId, false, false);
+      if (initial.messages.length || state.pageIdentity) Chatseek.pageIdentity(state, document, captureHref, platformId, initial, idFromHref, id => id.toLowerCase());
+      extracted = await extractMessages(platformId);
+      messages = extracted.messages;
     }
+    if (location.href !== captureHref) return false;
+    const identity = platformId && (messages.length || state.pageIdentity)
+      ? Chatseek.pageIdentity(state, document, captureHref, platformId, extracted, idFromHref, id => id.toLowerCase()) : null;
+    if (identity?.check()) identity.accept();
     const selectorHits = {};
     let selector = null;
     for (const sel of MESSAGE_SELECTORS) {
@@ -267,6 +288,7 @@
         sidebar,
         conversation,
         messages,
+        identity,
         health: {
           pathKind: Chatseek.pageKind(location, !!platformId),
           selector,
@@ -286,9 +308,10 @@
       }));
       return false;
     }
-    if (conversation) {
+    if (conversation && result && identity?.check()) {
       Chatseek.safeScheduleImages({
         conversationId: conversation.id,
+        isCurrent: identity.check,
         items: imageHosts,
       });
     }
@@ -302,8 +325,8 @@
     let messageCount = 0;
     if (platformId) {
       try {
-        const messages = await extractMessages(platformId, false);
-        messageCount = Array.isArray(messages) ? messages.length : 0;
+        const extracted = await extractMessages(platformId, false);
+        messageCount = extracted.messages.length;
       } catch {
         messageCount = 0;
       }

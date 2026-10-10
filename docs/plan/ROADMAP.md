@@ -1,6 +1,6 @@
 # Chatseek 路線圖
 
-更新：2026-10-09（UTC+8）。main 基準 `213dde2`（1.7.2）。
+更新：2026-10-10（UTC）。1.7.2.2 合并基準 `a11aa7b`（1.7.2.1 ＋公开仓库文档决议）。
 接手前先讀根目錄 `AGENTS.md`。每版細節在 `notes/HANDOFF-*.md`、`notes/CHANGELOG-*.md`；開工卡在 `docs/plan/cards/`。
 
 ## 已出版本（都已合進 main）
@@ -25,8 +25,13 @@
 | 1.7.1 | #17 | ChatGPT 多語系封存訊號，恢復須有新訊息。 |
 | 1.7.2 | #19 | 生圖進度不入庫、穩定後就地更新；保守整理、結構診斷去識別化。main `213dde2`，已出。 |
 | 1.7.2.1 | #20 | 熱修：ChatGPT SPA 切換不再把上一段內文寫進下一段（頁面身分＋5 秒 hash 守門）、缺網站日期改顯示「收錄於」、保守清污染列。 |
+| 1.7.2.2 | [#22](https://github.com/punkcanyang/chatseek/pull/22) | 收录完整性：保护重复正常轮次，约束流式消息身份，验证四家 SPA 与异步图片归属，避免备用 ID 冲突。 |
 
 權限從頭到尾都是 `permissions: ["sidePanel"]`，加上 8 個 host（四家網域）。資料庫版本 4。
+
+## 1.7.2.2（收录完整性修复，PR #22）
+
+用户授权修复并要求检查后合并，分支 `fix/capture-integrity`：重复正常轮次保护、流式消息身份约束、四家 SPA 页面归属、Claude／Grok 备用消息 ID、ChatGPT heuristic 重复消息，以及相关异步图片归属。完整离线测试、28 项新增回归、独立 session 代码复审通过；原系统 Chromium 的加载限制已通过官方 Chrome for Testing 的两项完整扩展 e2e 补齐，样例截图及三个性能对照已完成。按授权经 PR 合入 main，PR／merge 信息见 PR 说明。范围与证据见 `docs/plan/cards/开工卡-Chatseek-1.7.2.2-收录完整性-2026-10-10.md`、`notes/HANDOFF-1.7.2.2.md`。
 
 ## 已合：1.7.2.1（P0 SPA 切換串內文熱修，PR #20）
 

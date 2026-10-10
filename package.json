@@ -5,7 +5,7 @@
   "scripts": {
     "verify": "node scripts/verify.mjs && node scripts/chatgpt-fixture-test.mjs",
     "test:skeleton": "node scripts/skeleton-test.mjs && node scripts/skeleton-review-test.mjs",
-    "test:search": "node scripts/search-test.mjs && node scripts/activity-test.mjs && node scripts/upgrade-test.mjs && node scripts/preview-test.mjs && node scripts/sort-test.mjs && node scripts/relevance-test.mjs && node scripts/panel-test.mjs && node scripts/archive-test.mjs && node scripts/i18n-test.mjs && node scripts/reader-test.mjs && node scripts/markdown-test.mjs && node scripts/markdown-attack-test.mjs && node scripts/focus-tab-test.mjs && node scripts/icon-a11y-test.mjs && node scripts/image-cache-test.mjs && node scripts/image-grid-test.mjs && node scripts/progress-test.mjs && node scripts/progress-review-test.mjs && node scripts/skeleton-test.mjs && node scripts/skeleton-review-test.mjs && node scripts/sync-test.mjs && node scripts/spa-switch-test.mjs && node scripts/spa-review-test.mjs",
+    "test:search": "node scripts/search-test.mjs && node scripts/activity-test.mjs && node scripts/upgrade-test.mjs && node scripts/preview-test.mjs && node scripts/sort-test.mjs && node scripts/relevance-test.mjs && node scripts/panel-test.mjs && node scripts/archive-test.mjs && node scripts/i18n-test.mjs && node scripts/reader-test.mjs && node scripts/markdown-test.mjs && node scripts/markdown-attack-test.mjs && node scripts/focus-tab-test.mjs && node scripts/icon-a11y-test.mjs && node scripts/image-cache-test.mjs && node scripts/image-grid-test.mjs && node scripts/progress-test.mjs && node scripts/progress-review-test.mjs && node scripts/skeleton-test.mjs && node scripts/skeleton-review-test.mjs && node scripts/sync-test.mjs && node scripts/spa-switch-test.mjs && node scripts/spa-review-test.mjs && node scripts/capture-integrity-test.mjs && node scripts/image-integrity-test.mjs",
     "test:progress": "node scripts/progress-test.mjs && node scripts/progress-review-test.mjs",
     "test:sync": "node scripts/sync-test.mjs",
     "test:e2e-sync": "node scripts/e2e-sync.mjs",
@@ -14,7 +14,8 @@
     "test:e2e": "node scripts/e2e-chatgpt.mjs",
     "test:gemini": "node scripts/gemini-fixture-test.mjs && node scripts/gemini-capture-test.mjs",
     "screenshot": "node scripts/screenshot-panel.mjs",
-    "test:spa": "node scripts/spa-switch-test.mjs && node scripts/spa-review-test.mjs"
+    "test:spa": "node scripts/spa-switch-test.mjs && node scripts/spa-review-test.mjs && node scripts/capture-integrity-test.mjs && node scripts/image-integrity-test.mjs",
+    "test:integrity": "node scripts/capture-integrity-test.mjs && node scripts/image-integrity-test.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",
