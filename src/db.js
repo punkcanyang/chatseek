@@ -1696,11 +1696,6 @@ export async function clearImageCache() {
   });
 }
 
-/**
- * Manual restore from the side panel. Does not change last-activity time,
- * messages, or the page. A later banner or archive-list capture can mark
- * the chat archived again.
- */
 /** Only an existing row can acquire this state. No index/schema change. */
 export async function setSiteDeletedState(id, deleted) {
   return withDb(async (db) => {
@@ -1731,6 +1726,8 @@ export async function setSiteDeletedState(id, deleted) {
   });
 }
 
+/** Manual restore does not change activity/messages/the page. A later
+ * banner or archive-list capture can archive the chat again. */
 export async function restoreConversation(id) {
   if (typeof id !== "string" || !id) return false;
   return withDb(async (db) => {

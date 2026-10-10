@@ -151,6 +151,8 @@ function applyClock(conv) {
   if (!conv || !row?.conversation || !view?.setActivity) return;
   row.conversation.updatedAt = conv.updatedAt;
   row.conversation.updatedAtSource = conv.updatedAtSource;
+  row.conversation.archived = conv.archived;
+  row.conversation.archiveSource = conv.archiveSource;
   if (conv.olderThanAt) row.conversation.olderThanAt = conv.olderThanAt;
   else delete row.conversation.olderThanAt;
   if (conv.firstSeenAt) row.conversation.firstSeenAt = conv.firstSeenAt;

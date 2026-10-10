@@ -8,7 +8,7 @@ import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
-const root = resolve(process.argv.slice(2).find((arg) => arg !== "--images") || ".");
+const root = resolve(process.argv.slice(2).find((arg) => !arg.startsWith("--")) || ".");
 const load = (file) => import(pathToFileURL(join(root, file)).href);
 if (process.argv.includes("--images")) {
   const { mountImageGrid } = await load("src/image-grid.js");
@@ -54,7 +54,7 @@ const { tokenize, tokenSpans } = await load("src/tokenize.js");
 const { indexPlain } = await load("src/markdown.js");
 const { mountReader } = await load("src/reader-view.js");
 const version = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")).version;
-const syntax = version === "1.7.4";
+const syntax = /^1\.7\.[4-9](?:\.|$)/.test(version);
 const count = 3000;
 const runs = 5;
 await clearAll();
@@ -89,8 +89,8 @@ const cases = [
   { name: "title", query: "title:camera", baseline: "camera" },
   { name: "combined", query: '"blue orchid" chat* -title:draft', baseline: "blue orchid" },
 ];
-out.baselineNote = "1.7.2.3 lacks syntax; baseline uses the listed ordinary query, with matching sample vocabulary. Exclusion has 300 candidates versus 276 results; phrase has 600 term highlights versus 300 phrase highlights. Ratios measure added work, not equivalent semantics.";
-for (const sample of cases) {
+out.baselineNote = syntax ? "Syntax enabled; identical queries for 1.7.4 and 1.7.5." : "1.7.2.3 lacks syntax; baseline uses ordinary queries with matching sample vocabulary, not equivalent semantics.";
+for (const sample of cases.filter((entry) => !process.argv.includes("--ordinary") || entry.name === "ordinary")) {
   const query = syntax ? sample.query : sample.baseline;
   const search = [], mount = [], scroll = [];
   let found = 0, hits = 0;

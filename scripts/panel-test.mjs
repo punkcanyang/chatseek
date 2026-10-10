@@ -453,7 +453,7 @@ await sleep(300);
 document.querySelector('[data-scope="archived"]').click();
 await until(() => rowFor(archivedId), "archived tab lists the archived chat");
 assert(rowFor(archivedId).querySelector(".badge-archived")?.textContent === "已归档", "zh-CN grey label says 已归档");
-await upsertConversations([{ ...chatgpt(77), archived: true, archiveSource: "site-deleted" }]);
+await upsertConversations([{ ...chatgpt(77), title: "Archived fern notes", archived: true, archiveSource: "site-deleted" }]);
 message({ type: "INDEX_UPDATED" });
 await until(() => rowFor(archivedId)?.querySelector(".deleted-note"), "deleted note appears next to archived badge");
 for (const code of LOCALE_ORDER) {
@@ -464,7 +464,7 @@ for (const code of LOCALE_ORDER) {
 }
 document.getElementById("lang").value = "zh-CN";
 document.getElementById("lang").dispatchEvent(new window.Event("change"));
-await upsertConversations([{ ...chatgpt(77), archived: true, archiveSource: "chatgpt:banner" }]);
+await upsertConversations([{ ...chatgpt(77), title: "Archived fern notes", archived: true, archiveSource: "chatgpt:banner" }]);
 message({ type: "INDEX_UPDATED" });
 await until(() => rowFor(archivedId) && !rowFor(archivedId).querySelector(".deleted-note"), "site archive removes deleted note");
 assert(!rowFor(A.id), "archived tab hides active chats");

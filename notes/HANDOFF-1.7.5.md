@@ -1,0 +1,121 @@
+# HANDOFF — Chatseek 1.7.5 原網站已刪除就封存
+
+2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；前輪由使用者保底為 `b27ec61`。本輪接續工作未 commit／push／開 PR／合併。實作已做，外部 Chrome E2E／範例截圖與真站實測仍待完成，不能視為已發布。
+
+## 行為與範圍
+
+四家共用 `content/deleted.js` 只讀頁面，背景以 `src/deleted-visits.js` 的網址解析、分頁身分與背景時鐘核對。只有打開具體對話網址的頂層分頁能送出有效判定；不是用網站側欄列是否消失判斷。使用者打開、擴充的「原網站」按鈕，以及 sync-runner 導航都可提供本頁證據。網站 DOM 不改、不點網站按鈕、不打 API。
+
+確定後僅更新已存在的 `conversations` 列：`archived=true`、`archiveSource="site-deleted"`。未知 id 不新增列；錯誤頁不走一般正文寫入。保留標題、內文、搜尋索引、圖片與最後活動時間。側欄「已封存」頁及閱讀頁顯示九語小字「原網站已刪除」，已開啟的閱讀頁也會隨 `INDEX_UPDATED` 更新。
+
+恢復需要當下正常可見正文、擷取身分守門通過、非登入／載入／錯誤頁。只恢復 `site-deleted`；一般 ChatGPT 橫幅／歸檔清單來源不因打開正文就恢復。若刪除前已有 `chatgpt:*` 封存來源，用同一列的普通欄位 `deletedPreviousArchiveSource` 保留，正常正文恢復時仍回到原 ChatGPT 封存來源；後續明確橫幅／清單可覆蓋，手動恢復會清除。恢復前再讀當下 ChatGPT 橫幅與歸檔清單，防等待期間才出現的封存訊號。1.7.1 的「無封存訊號且有新訊息才恢復」規則不改；1.7.3 封存骨架部分不改。
+
+## 所用訊號（推定，未經真實帳號驗證）
+
+**四家刪除／無權限頁的文字及結構，都是依公開知識推定的人工 fixture，未使用真實帳號，也未經四家真站頁面驗證。不能宣稱已涵蓋現行所有 DOM／文案。** 同一組保守文字可用於四家，平台／id 一律由原本共用網址解析器限定。
+
+| 平台 | 對話網址 | 正文明確結構（須可見且身分吻合） | 刪除／無權限證據 |
+|---|---|---|---|
+| ChatGPT | `/c/<uuid>`，含 `/g/.../c/<uuid>` | `data-message-author-role`、`data-message-id`、conversation-turn、`data-turn` | 具體對話錯誤文字；主內容 H1 的 not found／404；conversation/chat 專用 not-found/deleted/access-denied 結構 |
+| Claude | `/chat/<uuid>` | user/human/assistant/ai-message testid、user/claude message 字體類別 | 同上（推定），不靠側欄消失 |
+| Grok | `/c/<id>`、`/chat/<id>`，既有允許網域 | `data-turn`、message-bubble、`data-message-id`、markdown/prose | 同上（推定），不靠側欄消失 |
+| Gemini | `/app/<id>`、`/gem/<gem>/<id>`，保留 `/u/N/` | `user-query`、`model-response`、query-text/model-response-text | 同上（推定），不使用網站內部 API |
+
+明確文字以 NFKC、小寫、空白與句尾標點正規化後**整個短元素相等**，最多 240 字元，不用子字串命中對話內容。樣本包含英文 `Conversation not found`／`This conversation has been deleted`／`You do not have access to this conversation`，及以下九語代表文案（完整表在 `content/deleted.js`）：
+
+| 語言 | 範例明確訊號 |
+|---|---|
+| zh-TW | 找不到這段對話、此對話已刪除、無權限存取此對話 |
+| zh-CN | 找不到此会话、此对话已删除、无权访问此对话 |
+| en | Conversation not found、This chat was deleted、You do not have access to this conversation |
+| ja | この会話が見つかりません、このチャットは削除されました |
+| ko | 대화를 찾을 수 없습니다、이 대화는 삭제되었습니다 |
+| es | conversación no encontrada、esta conversación se ha eliminado |
+| fr | conversation introuvable、cette conversation a été supprimée |
+| de | unterhaltung nicht gefunden、diese unterhaltung wurde gelöscht |
+| pt-BR | conversa não encontrada、esta conversa foi excluída |
+
+通用「Access denied／403」不能單憑一般 H1 判定，必須有對話專用錯誤結構。正文、引用、程式碼、表單、網站 nav／aside／menu 內文字不算刪除訊號。掃描錯誤節點上限 2000，diag 命中數上限 40。
+
+首頁重導採組合證據：60 秒內有該分頁的具體對話 visit、同源且為允許的首頁／新對話路徑、目前 document 的 navigation entry `name` 精確等於目前網址、`redirectCount>0`，並有健康主內容＋可見輸入框、沒有正文／登入／載入／錯誤。**這不是直接取得完整 browser redirect chain**；沒有 HTTP redirect 證據的 SPA 重導寧可漏判。正常正文會清掉 visit；所有 trusted click／keydown 都取消 redirect intent，舊 navigation entry 不可沿用來判手動回首頁。無待判對話 visit 的首頁重導也不計入 deleted。
+
+## 防抖與誤判防護
+
+- 背景自行計時：訊號至少持續 **8000ms**，至少 **3 次**觀察；相鄰計入的觀察至少相隔 **1000ms**，超過 **6000ms** 未觀察就重新起算。頁面每約 **1200ms** 請求重掃，仍受原擷取排程控制。任何零命中／阻擋／改網址／改對話皆重設證據。
+- 登入頁／按鈕九語及常見變體、password/login form、登入 href／aria-label、驗證碼/challenge、網路錯誤、限速、offline、readyState 未 complete、aria-busy/progressbar/loading、暫時空白一律不算。登入按鈕也不能把首頁 shell 變成重導證據。
+- `hidden`、`aria-hidden`、CSS display:none／visibility:hidden、不同 conversation-id、切換 URL 後仍保留的原正文節點都視為**未知狀態**，同時暫停刪除與恢復；不把它們當存在，也不拿不存在推論刪除。節點消失／重新掛載且正常身分確認後才可恢復。
+- 背景重新讀取分頁現址，拒絕舊 URL 延遲回覆、iframe、來源平台不符。恢復另需目前 id 一致與正訊息數；內容端做當下身分及可見正文檢查。
+- diag 僅新增 `deleted=N`，數值正規化；不含任何標題、正文、對話 id、網址。測試用人工 garden／pond 資料與人工 id。
+
+## 測試與複審
+
+執行環境 Node **v26.10.0**。完整結果在本節下方補列；全部以 exit 0 為通過。
+
+「通過腳本數」是 package.json 串接的測試程式數，**不是合併斷言總數**；各程式沒有一致斷言計數器。括號中的數字沿用實際輸出。
+
+| 指令 | 通過腳本數 | exit | 實際驗證數字／範圍 |
+|---|---:|---:|---|
+| `npm run verify` | 2/2 | 0 | 守門＋ChatGPT fixture（2 則） |
+| `npm run test:search` | 29/29 | 0 | 新增刪除 731 checks；panel 303；parser 85；syntax 44；攻擊樣本 314 |
+| `npm run test:fixture` | 4/4 | 0 | Markdown 15 pieces；ChatGPT 2 則；Gemini 4／6 則 |
+| `npm run test:integrity` | 3/3 | 0 | 42 個具名 PASS 場景 |
+| `npm run test:upgrade` | 5/5 | 0 | DB 1→4、1.4、圖片、生圖進度／複審 |
+| `npm run test:sync` | 1/1 | 0 | 3000 條人工佇列合併 |
+| `npm run test:gemini` | 2/2 | 0 | 4 則擷取、6 則正文 capture、4 條側欄 |
+| `npm run test:spa` | 5/5 | 0 | 既有 SPA ＋ 8 個複審場景＋42 個完整性場景 |
+| `npm run test:skeleton` | 2/2 | 0 | 節點 cap 6000／深度 cap 60；複審 55 nodes |
+| `npm run test:progress` | 2/2 | 0 | 3000 rows／500 thumbnails 遷移；8 個具名複審 PASS |
+| `npm run test:deleted` | 1/1 | 0 | 731 checks；4 平台、9 語；防抖 8000ms |
+
+新增 `scripts/deleted-test.mjs`，納入 `test:search` 並可單跑 `test:deleted`。四家正負頁面、九語與登入變體、8 秒防抖／長間隔重設、重導／手動返回／舊 navigation entry、hidden/CSS/SPA 殘留、未知 id 真正 adapter 不寫入、正文恢復、ChatGPT 來源共存／晚到橫幅、九語閱讀頁與即時標示、DB 4、diag 去識別化均有回歸。側欄九語小字另由 panel-test 檢查，catalog 與九個 `_locales` 由 i18n-test／verify 對齊。
+
+獨立 Codex session `/root/review_175`：第一輪 BLOCK 的手動返回、隱藏正文、四種語言登入按鈕問題皆修；本輪複審 **PASS**，獨立 deleted-test **619 checks**（最後表單／導覽／側邊登入補強另唯讀複查；主 session 最終 **731 checks**）、兩項 node --check、git diff --check 與 manifest 保護欄位對照通過。複審未跑真站／Chrome E2E，提醒重導證據的限制如上。
+
+## E2E 與外部執行
+
+`scripts/e2e-chatgpt.mjs` 增加人工 ChatGPT fixture：正常頁先收錄兩則→同網址改成「Conversation not found」→等待穩定封存→側欄已封存與英文小字→恢復同一正常正文→回活躍。另確認兩則原訊息與活動時間保留。預定輸出 `docs/panel-1.7.5-deleted.png`，全部人工資料。
+
+沙箱不能 listen，**本輪只做 node --check，尚未跑 Chrome E2E，也尚未產生此截圖**。由使用者在外部執行：
+
+```bash
+CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run test:e2e
+```
+
+既有 e2e 也會覆寫舊版 `docs/*.png`；只保留新的 `panel-1.7.5-deleted.png`，其餘 tracked 舊截圖應還原，不要夾帶覆寫內容。本輪沒有改任何圖片與 `docs/readme-assets/`。
+
+## 效能
+
+對 main `b707eb0`（1.7.4）以同一 `scripts/search-syntax-bench.mjs` 依序量測，Node v26.10.0 + fake-indexeddb + JSDOM。暖機一次、五次量測取中位數；閱讀頁 3000 則人工訊息、720px 視窗、100 次模擬捲動，捲動數字為每輪 p95 再取中位數。清單搜尋是 3000 段各一則訊息、query `blue orchid`、300 結果／600 高亮，limit 3000；**不含實際側欄清單 DOM 掛載**。500 張縮圖使用人工 cached 佔位。這些數字不包含圖片解碼、Chrome layout／paint，不能當成真 Chrome 效能。
+
+| 項目 | 1.7.4 ms | 1.7.5 ms | 變動 |
+|---|---:|---:|---:|
+| 3000 段清單搜尋 | 475.61 | 478.05 | +0.5% |
+| 3000 則閱讀頁掛載 | 7.63 | 7.25 | -5.0% |
+| 3000 則閱讀頁捲動 p95 | 1.60 | 1.77 | +10.6% |
+| 500 張縮圖掛載 | 3.86 | 3.41 | -11.7% |
+| 500 張縮圖捲動 p95 | 2.12 | 1.81 | -14.6% |
+
+沒有超過 30% 的變慢；差異包含離線計時波動。本次未改搜尋或圖片演算法。Chrome 側欄完整 DOM／實際 layout、capture 新增證據掃描的真站成本仍待外部量測。既有瀏覽器效能腳本需要 listen，此沙箱無法執行。
+
+```bash
+node scripts/search-syntax-bench.mjs /tmp/chatseek-175-baseline --ordinary
+node scripts/search-syntax-bench.mjs --ordinary
+node scripts/search-syntax-bench.mjs /tmp/chatseek-175-baseline --images
+node scripts/search-syntax-bench.mjs --images
+```
+
+baseline 是 read-only `git archive b707eb0` 解開到 `/tmp/chatseek-175-baseline`；沒有改 Git branch／index。
+
+## 保護欄位與限制
+
+permissions 恰好 `["sidePanel"]`；與 main `b707eb0` 對照 host_permissions、content_scripts.matches、CSP／注入時機／world 均不變，只增加共用 content script 檔名。DB **4**，沒有新 index／migration。verify 只新增守門、版本改 **1.7.5**；無網路請求、無 HTML 字串注入、無真實資料、花費 **$0**。不動未追蹤舊 notes、`.codewhale/`、`docs/readme-assets/`。
+
+已知限制：真站文案／DOM 未驗證；只接受精確短文案與保守結構，因此未知語言／改版／無結構錯誤可能漏判。SPA 無可核對 HTTP redirect、worker 重啟失去 pending visit、跨來源重導、60 秒外重導均保守漏判。隱藏或舊正文長留會延後判定／恢復；正文僅在 shadow／iframe 而頂層無可見正文時，這版共用 helper 不據此恢復。`redirectCount` 可能因瀏覽器隱私限制為零，會漏判。HTTP redirect chain 並非直接取得，組合證據仍須真站／外部 E2E 驗证。原有手動同步遇錯誤的暫停規則不變。
+
+## 老闆實測（≤6 步）
+
+1. 在自己的 Chrome 載入 1.7.5，先打開一段可丟棄的範例對話讓擴充收錄。
+2. 在原網站刪掉該範例，再打開其原網址；等至少 8 秒，核對「已封存」小字與 `deleted=N`，本機正文仍在。
+3. 對其他三家以同樣可丟棄資料重做；若沒判定，回傳只含命中數的診斷，勿回傳真實內容。
+4. 核對登入／驗證／離線／手動回首頁都不封存；已有 ChatGPT 封存橫幅的對話正常讀取也不被恢復。
+5. 用外部 fixture e2e 核對同網址恢復正文後回活躍、小字消失及範例截圖。

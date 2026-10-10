@@ -18,6 +18,22 @@
   ];
   const normalized = (text) => String(text || "").toLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim().replace(/[.!。！]+$/, "");
   const phrases = new Set(exact.map(normalized));
+  const loginWords = new Set([
+    "sign in", "signin", "log in", "login", "sign in to continue", "log in to continue", "continue with google", "continue with apple",
+    "登入", "登錄", "登入以繼續", "繼續使用 google", "登录", "登陆", "登录以继续", "使用 google 继续",
+    "ログイン", "サインイン", "ログインして続行", "google で続行", "로그인", "로그인하여 계속", "google로 계속하기",
+    "iniciar sesión", "inicia sesión", "acceder", "continuar con google", "se connecter", "connexion", "connectez-vous", "continuer avec google",
+    "anmelden", "einloggen", "mit google fortfahren", "entrar", "iniciar sessão", "fazer login", "continuar com o google",
+  ].map(normalized));
+  const observations = new WeakMap();
+  function loginLabel(text) {
+    const value = normalized(text);
+    if (value.length > 160) return false;
+    return loginWords.has(value)
+      || /^(?:sign[- ]?in|log[- ]?in|continue with (?:google|apple|microsoft)|iniciar sesión|inicia sesión|acceder|se connecter|connexion|connectez-vous|anmelden|einloggen|entrar|iniciar sessão|fazer login)(?:$|\s|[:：])/i.test(value)
+      || /^(?:登入|登錄|登录|登陆|ログイン|サインイン|로그인)/.test(value)
+      || /^(?:使用|繼續使用|继续使用).*(?:google|apple|microsoft).*(?:登入|登录|继续|繼續)/i.test(value);
+  }
   const GENERIC = new Set(["page not found", "not found", "404", "403", "access denied", "permission denied",
     "找不到網頁", "页面不存在", "ページが見つかりません", "페이지를 찾을 수 없습니다", "página no encontrada", "page introuvable", "seite nicht gefunden", "página não encontrada"]);
   const blockers = /sign in|log in|login|verify you are human|captcha|cloudflare|checking your browser|too many requests|rate limit|try again later|network error|connection error|something went wrong|offline|loading|try again|登入|登录|驗證|验证|網路錯誤|网络错误|稍後再試|稍后再试|載入中|加载中|離線|离线|ログイン|読み込み|認証|ネットワーク|로그인|로딩|인증|네트워크|iniciar sesión|inicia sesión|cargando|error de red|connexion|chargement|réessayez|anmelden|wird geladen|netzwerk|entrar|carregando|erro de rede|\b(?:429|500|502|503|504)\b/i;
@@ -38,17 +54,31 @@
   }
   Chatseek.readDeletedPage = (doc = document, loc = location) => {
     const main = doc.querySelector("main, [role='main']");
-    const body = [...doc.querySelectorAll(TRANSCRIPT)].some((node) => visibleTranscript(node) && (node.textContent || "").trim().length > 0);
+    const transcripts = [...doc.querySelectorAll(TRANSCRIPT)].filter((node) => !node.closest("nav, aside, [role='navigation']") && (node.textContent || "").trim());
+    let observation = observations.get(doc);
+    if (!observation) observations.set(doc, observation = { href: loc.href, nodes: [], residual: new WeakSet() });
+    if (observation.href !== loc.href) {
+      for (const node of observation.nodes) observation.residual.add(node);
+      observation.href = loc.href;
+    }
+    observation.nodes = transcripts;
+    const currentId = (loc.pathname || "").match(/\/(?:c|chat|app)\/([A-Za-z0-9_-]+)/)?.[1]
+      || (/\/gem\//.test(loc.pathname || "") ? loc.pathname.split("/").pop() : "");
+    // Hidden/old SPA turns are uncertain evidence, never proof of either
+    // presence or absence. Hold deletion and recovery until they disappear.
+    const ambiguous = transcripts.some((node) => !visibleTranscript(node) || observation.residual.has(node)
+      || (node.closest("[data-conversation-id]") && node.closest("[data-conversation-id]").getAttribute("data-conversation-id").toLowerCase() !== String(currentId).toLowerCase()));
+    const body = !ambiguous && transcripts.some(visibleTranscript);
     const selector = "h1, h2, [role='alert'], [role='status'], [data-testid*='not-found'], [data-testid*='deleted'], [data-testid*='error'], [data-error-code]" + (body ? "" : ", p, div");
     const nodes = [...doc.querySelectorAll(selector)].slice(0, 2000).filter(visible);
     const signals = Chatseek.syncPageSignals(doc, loc);
-    const blocked = doc.readyState !== "complete" || doc.defaultView?.navigator.onLine === false
+    const blocked = ambiguous || doc.readyState !== "complete" || doc.defaultView?.navigator.onLine === false
       || /\/(?:login|signin|auth|challenge)(?:\/|$)/i.test(loc.pathname || "")
       || signals.hasPassword || signals.hasLoginForm || signals.hasChallengeNode || signals.hasRateBanner
       || !!doc.querySelector("[aria-busy='true'], [role='progressbar'], [data-testid='loading']")
       || nodes.some((node) => blockers.test(normalized(node.textContent)));
     let hits = 0;
-    if (!blocked && !body) for (const node of nodes) {
+    if (!body) for (const node of nodes) {
       const value = normalized(node.textContent);
       if (!value || value.length > 240) continue;
       const structured = node.getAttribute("data-error-code") === "404"
@@ -58,10 +88,12 @@
     }
     // A redirect requires a healthy application shell; an empty/error document
     // and a standalone sign-in button are insufficient.
-    const login = [...doc.querySelectorAll("a, button")].some((node) => outside(node)
-      && /^(?:sign in|log in|登入|登录|ログイン|로그인)$/i.test((node.textContent || "").trim()));
+    const login = [...doc.querySelectorAll("a, button, h1, h2, [role='button'], [role='heading']")].some((node) => !node.closest(`${TRANSCRIPT}, pre, code, blockquote, [hidden], [aria-hidden='true']`) && displayed(node)
+      && (loginLabel(node.textContent) || loginLabel(node.getAttribute("aria-label"))
+        || /\/(?:login|log-in|signin|sign-in|auth)(?:\/|[?#]|$)/i.test(node.getAttribute("href") || "")));
     const shell = !!main && [...main.querySelectorAll("textarea, [contenteditable='true'], [role='textbox']")].some((node) => displayed(node));
-    return { hits: Math.min(40, hits), blocked: !!blocked || login, body, homeReady: !blocked && !login && !body && shell };
+    return { hits: blocked || login ? 0 : Math.min(40, hits), error: hits > 0,
+      blocked: !!blocked || login, body, homeReady: !blocked && !login && !body && shell };
   };
   function visibleTranscript(node) {
     return !node.closest("nav, aside, [hidden], [aria-hidden='true'], [aria-busy='true']")
@@ -78,13 +110,13 @@
     const context = await Chatseek.send({ type: "DELETED_VISIT_CONTEXT", platform });
     if (location.href !== href) return { hits: 0 };
     const navigation = document.defaultView?.performance.getEntriesByType?.("navigation")?.[0];
-    const redirected = !context?.direct && Number(navigation?.redirectCount) > 0
+    const redirected = !!context?.id && !context.direct && Number(navigation?.redirectCount) > 0
       && navigation.name === href && page.homeReady;
     redirectContext = context;
     if (context?.direct && page.body) await Chatseek.send({ type: "DELETED_VISIT_CANCEL" });
     const hits = page.blocked ? 0 : page.hits || (redirected ? 1 : 0);
     Chatseek._deletedHits = hits;
-    const suppressCapture = !!page.hits; // Do not store an error as a new chat.
+    const suppressCapture = page.error; // Even uncertain errors must not become new chats.
     if (context?.id) {
       await Chatseek.send({ type: "DELETED_OBSERVATION", platform, id: context.id,
         hits, blocked: page.blocked, redirected });
@@ -98,6 +130,11 @@
     if (!conversation || !messages?.length || !identity?.check() || conversation.archived === true) return;
     const page = Chatseek.readDeletedPage();
     if (!page.body || page.blocked || page.hits) return;
+    if (conversation.platform === "chatgpt") {
+      const archive = Chatseek.readArchiveSignals(document, location, "chatgpt");
+      if (archive.banner || archive.archiveRoots.some((root) => Chatseek._archiveListIds(root).includes(conversation.platformId || conversation.id.split(":")[1]))) return;
+    }
+    if (!identity.check()) return;
     await Chatseek.send({ type: "RESTORE_SITE_DELETED", platform: conversation.platform, id: conversation.id,
       messageCount: messages.length });
   };

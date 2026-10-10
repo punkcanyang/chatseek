@@ -734,6 +734,8 @@ function focusHit() {
       return { messageId: fig.dataset.messageId || "", index: Number(fig.dataset.imageIndex) };
     },
     setActivity(conv, now = Date.now()) {
+      badge.hidden = conv?.archived !== true;
+      deletedNote.hidden = conv?.archived !== true || conv?.archiveSource !== "site-deleted";
       if (!clockConv || !conv) return;
       if (conv.updatedAt != null) clockConv.updatedAt = conv.updatedAt;
       if (conv.updatedAtSource) clockConv.updatedAtSource = conv.updatedAtSource;

@@ -18,6 +18,7 @@ const version = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")).ve
 const docs = join(root, "docs");
 const chromePath = process.env.CHROME_PATH || "/tmp/chrome-for-testing/chrome-linux64/chrome";
 const CLASSIC = "11111111-1111-4111-8111-111111111111";
+const DELETED = "75757575-7575-4575-8575-757575757575";
 const HEUR = "13131313-1313-4131-8131-131313131313";
 const IFRAME = "22222222-2222-4222-8222-222222222222";
 const SHADOW = "33333333-3333-4333-8333-333333333333";
@@ -235,7 +236,7 @@ function titleOnlyPage() {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Seeded habitat title</title></head><body><main><p>Welcome back</p></main></body></html>`;
 }
 
-const phase = { titleBody: false, banner: true };
+const phase = { titleBody: false, banner: true, deleted: false };
 let releaseSlow = () => {};
 const slowGate = new Promise((resolve) => {
   releaseSlow = resolve;
@@ -434,6 +435,13 @@ function route(url) {
       user: "classic user line about the pangolin habitat",
       assistant: "The pangolin rolls tightly.",
     });
+  }
+  if (path === `/c/${DELETED}`) {
+    return phase.deleted
+      ? '<!doctype html><html lang="en"><title>Sample unavailable chat</title><body><main><h1>Conversation not found</h1></main></body></html>'
+      : pageHtml({ title: "Sample garden recovery", classic: true,
+        user: "Sample garden: a silver fern beside a quiet pond.",
+        assistant: "Sample recovery notes: the pond reflects a small paper lantern." });
   }
   if (path === `/c/${IFRAME}`) return iframePage();
   if (path === `/c/${SHADOW}`) return shadowPage("open");
@@ -1431,6 +1439,44 @@ async function main() {
     await syntaxReader.screenshot({ path: join(docs, "reader-1.7.4-jump.png"), fullPage: true });
     await syntaxReader.close();
     console.log("e2e search syntax ok", { samples: 3, operators: 4, screenshots: 3, keyboardHelp: true, narrowWidth: 320 });
+
+    // 1.7.5: real extension capture -> stable error at the SAME fixture URL
+    // -> deletion label -> normal visible transcript restores active. No accounts.
+    await panel.evaluate(() => {
+      document.getElementById("q").value = "";
+      document.getElementById("q").dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await openChat(`https://chatgpt.com/c/${DELETED}`);
+    await waitMsgs(DELETED, 2);
+    const beforeDeleted = convOf(await readDb(probe), DELETED);
+    phase.deleted = true;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await until(async () => {
+      const conv = convOf(await readDb(probe), DELETED);
+      return conv?.archived === true && conv.archiveSource === "site-deleted";
+    }, "stable deleted fixture archives the existing conversation", 30000);
+    assert(msgsOf(await readDb(probe), DELETED).length === 2, "error page never replaces the two sample messages");
+    assert(convOf(await readDb(probe), DELETED).updatedAt === beforeDeleted.updatedAt, "deletion keeps activity time");
+    await panel.click('[data-scope="archived"]');
+    await panel.waitForFunction((id) => {
+      const row = [...document.querySelectorAll("#list .item")].find((el) => el.dataset.id === id);
+      return row?.querySelector(".badge-archived") && row.querySelector(".deleted-note")?.textContent === "Deleted on original site";
+    }, { timeout: 10000 }, `chatgpt:${DELETED}`);
+    await panel.bringToFront();
+    await panel.screenshot({ path: join(docs, "panel-1.7.5-deleted.png"), fullPage: true });
+    phase.deleted = false;
+    await page.bringToFront();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await until(async () => {
+      const conv = convOf(await readDb(probe), DELETED);
+      return conv && conv.archived !== true && !conv.archiveSource;
+    }, "normal sample body restores active without adding a new message", 30000);
+    await panel.click('[data-scope="active"]');
+    await panel.waitForFunction((id) => {
+      const row = [...document.querySelectorAll("#list .item")].find((el) => el.dataset.id === id);
+      return row && !row.querySelector(".badge-archived") && !row.querySelector(".deleted-note");
+    }, { timeout: 10000 }, `chatgpt:${DELETED}`);
+    console.log("e2e deleted archive ok", { samples: 1, transitions: 2, screenshot: "panel-1.7.5-deleted.png" });
 
     await panel.evaluate(() => localStorage.removeItem("chatseek.uiLocale"));
     await panel.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, { waitUntil: "domcontentloaded" });
