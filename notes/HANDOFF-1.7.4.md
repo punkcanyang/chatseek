@@ -1,6 +1,6 @@
 # Chatseek 1.7.4 搜尋語法交接
 
-日期：2026-10-10。分支 `feat/search-syntax`；基準 main `a96c3b9`（1.7.2.3）。1.7.3 延後，直接由目前 main 開發 1.7.4。工作區未 commit／push／開 PR／merge。Chrome E2E 與三張新截圖待使用者於外部環境執行，尚未宣告發布或 READY。
+日期：2026-10-10。分支 `feat/search-syntax`；基準 main `a96c3b9`（1.7.2.3）。1.7.3 延後，直接由目前 main 開發 1.7.4。PR #25（寫碼 commit `e93c174`）；Chrome E2E 已在外部環境跑過並產生三張新截圖，另一個 Codex session 複審 APPROVE。
 
 ## 實作
 
@@ -38,7 +38,7 @@
 
 所有新增／修改 JS/MJS 與兩支 E2E 共 **15/15** 個 `node --check` 通過；`git diff --check` 通過。另比對基準 manifest 的 permissions、host_permissions、全部 content_scripts 與 CSP，確認只有版本變更；DB_VERSION 守門仍為 4。完整指令摘要在 `/tmp/chatseek-174-test-results.json`，逐項 log 在 `/tmp/chatseek-174-test-logs/`。
 
-`test:e2e`、`test:e2e-sync` 是 package.json 唯二需要啟動瀏覽器／listen 的 test 指令；依使用者明確指示本輪只做語法檢查，實際執行 **0 次**，待外部回傳，不列為已通過的 Chrome 測試。
+`test:e2e`、`test:e2e-sync` 是 package.json 唯二需要啟動瀏覽器／listen 的 test 指令；寫碼沙箱不能 listen，所以兩者改在外部環境執行：`test:e2e` exit 0（`e2e search syntax ok` samples=3、operators=4、screenshots=3，SPA selector／heuristic 也通過），`test:e2e-sync` exit 0。
 
 ## 效能
 
@@ -94,7 +94,7 @@ CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run te
 - `docs/panel-1.7.4-search-help.png`
 - `docs/reader-1.7.4-jump.png`
 
-這三張檔案尚未在沙箱產生。既有 E2E 也會覆寫舊截圖；只保留新的 1.7.4 三張，還原被覆寫的既有 PNG，勿還原整個 docs 以免丟失 ROADMAP 修改。
+三張檔案已產生並隨 PR 提交（另附 1.7.4 的 SPA 截圖）。既有 E2E 也會覆寫舊截圖；只保留新的 1.7.4 三張，還原被覆寫的既有 PNG，勿還原整個 docs 以免丟失 ROADMAP 修改。
 
 ## 老闆實測（5 步）
 
