@@ -95,16 +95,17 @@ function pageHtml({ title, classic, user, assistant }) {
 function spaPage(offset) {
   return `<!doctype html><html><head><title>SPA sample A</title></head><body><main></main><script>
     const ids = ${JSON.stringify(SPA_IDS.slice(offset, offset + 3))};
-    const bodies = ${JSON.stringify(SPA_BODIES)};
+    const bodies = ${JSON.stringify(SPA_BODIES.map(body => offset ? `Heuristic fixture: ${body}` : body))};
     let timer;
-    function paint(n) {
+    function paint(n, customBody) {
       document.title = 'SPA sample ' + String.fromCharCode(65+n);
       const turn = document.createElement(${JSON.stringify(offset ? 'section' : 'div')});
       if (!${offset}) { turn.setAttribute('data-turn', 'user'); turn.setAttribute('aria-setsize', '1'); turn.setAttribute('aria-posinset', '1'); }
-      const p = document.createElement('p'); p.textContent = bodies[n]; turn.append(p);
+      const p = document.createElement('p'); p.textContent = customBody || bodies[n]; turn.append(p);
       document.querySelector('main').replaceChildren(turn);
       window.__painted = n;
     }
+    window.__spaPaint = paint;
     window.__spaSwitch = (n, delay) => {
       clearTimeout(timer);
       history.pushState({}, '', '/c/' + ids[n]);
@@ -610,7 +611,14 @@ async function main() {
       send();
       return;
     }
-    const body = route(req.url || "/");
+    let body = route(req.url || "/");
+    // Static fixture chats deliberately share sample text and short native
+    // ids. Give those genuine independent chats explicit content ownership.
+    // SPA fixtures have NO such proof: stale/remounted checks stay untrusted.
+    const owner = path.match(/\/(?:c|inner(?:-[a-z]+)?)\/([0-9a-f-]{36})$/i)?.[1];
+    if (owner && !SPA_IDS.includes(owner)) {
+      body = body.replace(/<body\b([^>]*)>/i, `<body$1 data-conversation-id="${owner}">`);
+    }
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -688,6 +696,7 @@ async function main() {
 
     for (const offset of [0, 3]) {
       const ids = SPA_IDS.slice(offset, offset + 3);
+      const expectedBodies = SPA_BODIES.map(body => offset ? `Heuristic fixture: ${body}` : body);
       await openChat(`https://chatgpt.com/c/${ids[0]}`);
       await waitMsgs(ids[0], 1);
       await page.evaluate(() => window.__spaSwitch(1, 5000));
@@ -697,20 +706,58 @@ async function main() {
       await page.evaluate(() => history.back());
       await until(() => page.url().includes(ids[0]), "SPA history back");
       await sleep(2500);
-      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === SPA_BODIES[0]), "back wrote B into A");
+      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === expectedBodies[0]), "back wrote B into A");
       await until(() => page.evaluate(() => window.__painted === 0), "back repaint");
       await sleep(1500);
       await page.evaluate(() => { window.__spaSwitch(1, 5000); window.__spaSwitch(2, 5000); });
       await sleep(3000);
       assert(msgsOf(await readDb(probe), ids[2]).length === 0, "rapid switch wrote A into C");
       await waitMsgs(ids[2], 1);
+      // The intermediate screen is never captured. A round trip completes
+      // synchronously inside the 800 ms debounce and returns to the same URL.
+      await page.evaluate((ids) => {
+        const transient = '34343434-3434-4434-8434-343434343434';
+        history.pushState({}, '', '/c/' + transient);
+        window.__spaPaint(1, 'SPA transient sample: uncaptured violet flowers by the old observatory.');
+        history.replaceState({}, '', '/c/' + ids[2]);
+      }, ids);
+      await sleep(2500);
+      assert(msgsOf(await readDb(probe), ids[2]).every(row => row.body === expectedBodies[2]),
+        'same-URL rapid round trip wrote the uncollected intermediate screen into C');
+      await page.evaluate(() => window.__spaPaint(2));
+      await sleep(1500);
+      // React can remount stale text with all-new nodes. Five seconds alone
+      // must not authorize that C text as A, even with an updated URL marker.
+      await page.evaluate((ids) => {
+        history.pushState({}, '', '/c/' + ids[0]);
+        window.__spaPaint(2);
+        const link = document.createElement('link'); link.rel = 'canonical';
+        link.href = location.href; link.id = 'spa-canonical'; document.head.append(link);
+      }, ids);
+      await sleep(6500);
+      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === expectedBodies[0]),
+        'remounted stale C text was accepted as A after five seconds');
+      await page.evaluate((body) => window.__spaPaint(2, body + ' Continued old stream token.'), expectedBodies[2]);
+      await sleep(1500);
+      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === expectedBodies[0]),
+        'a new streaming token authorized remounted foreign text');
+      await page.evaluate(() => {
+        const turn = document.querySelector('main').firstElementChild.cloneNode(true);
+        turn.querySelector('p').textContent = 'SPA new legitimate sample turn about the small greenhouse.';
+        document.querySelector('main').append(turn);
+      });
+      await sleep(1500);
+      assert(msgsOf(await readDb(probe), ids[0]).every(row => row.body === expectedBodies[0]),
+        'a new turn authorized a remounted mixed foreign transcript');
+      await page.evaluate(() => { document.getElementById('spa-canonical').remove(); window.__spaPaint(0); });
+      await sleep(1500);
       const snapshot = await readDb(probe);
       for (const [n, id] of ids.entries()) {
         const rows = msgsOf(snapshot, id);
-        assert(rows.length === 1 && rows[0].body === SPA_BODIES[n], `SPA ${offset}/${n} contaminated transcript`);
+        assert(rows.length === 1 && rows[0].body === expectedBodies[n], `SPA ${offset}/${n} contaminated transcript`);
         assert(convOf(snapshot, id).updatedAtSource === "first-seen", "undated first capture invented website activity");
       }
-      console.log(`SPA ${offset ? "heuristic" : "selector"} e2e ok: A/B/C, delayed DOM and history.back`);
+      console.log(`SPA ${offset ? "heuristic" : "selector"} e2e ok: A/B/C, delayed DOM, history.back, synchronous push/replace round trip, remounted stale/mixed/streamed text`);
     }
     // Example screenshots, sourced from the same SPA capture assertions.
     const spaReader = await browser.newPage();

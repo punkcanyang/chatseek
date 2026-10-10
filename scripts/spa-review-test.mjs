@@ -102,7 +102,7 @@ await test('complete growing synthetic turn rekeys without losing image bytes', 
   } finally { dom.window.close(); }
 });
 
-await test('identical body without page markers retries after five seconds', async () => {
+await test('identical replacement body needs content ownership after five seconds', async () => {
   const dom = new JSDOM('',{url:conv(0).url});
   try {
     paint(dom); const a=api(dom); await a.platforms.chatgpt.capture();
@@ -111,7 +111,9 @@ await test('identical body without page markers retries after five seconds', asy
     a.advance(6000); await expireGate();
     assert.equal(await a.platforms.chatgpt.capture(),false,'expiry cannot authorize residual old nodes');
     paint(dom);
-    assert.equal(await a.platforms.chatgpt.capture(),true,'fresh replacement DOM must not hold equal text forever');
+    assert.equal(await a.platforms.chatgpt.capture(),false,'fresh nodes alone cannot authorize known foreign text');
+    dom.window.document.querySelector('main').setAttribute('data-conversation-id',ids[1]);
+    assert.equal(await a.platforms.chatgpt.capture(),true,'content-owned identical conversations must survive');
     assert.equal((await db.readConversation(conv(1).id)).messages.length,1);
     paint(dom,text+' Normal update in the same conversation.');
     assert.equal(await a.platforms.chatgpt.capture(),true,'same-conversation update must not be hash-blocked');

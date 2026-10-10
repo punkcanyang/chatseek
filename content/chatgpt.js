@@ -11,6 +11,111 @@
   const liveTurnIds = new WeakMap();
   let liveTurnSequence = 0;
   let previousPage = null;
+  const transcriptOwners = new Map();
+  const nativeOwners = new Map();
+  const bodyOwners = new Map();
+  const nodeOwners = new WeakMap();
+  const departedNodes = new WeakMap();
+  let navigationEpoch = 0;
+
+  function rememberTranscript(extracted, platformId) {
+    const hash = Chatseek.transcriptHash(extracted.messages);
+    let owners = transcriptOwners.get(hash);
+    if (!owners) owners = new Set();
+    owners.add(platformId);
+    if (owners.size > 16) owners.delete(owners.values().next().value);
+    transcriptOwners.delete(hash);
+    transcriptOwners.set(hash, owners);
+    if (transcriptOwners.size > 256) transcriptOwners.delete(transcriptOwners.keys().next().value);
+    for (const key of Chatseek.nativeTurnKeys(`${PLATFORM}:${platformId}`, extracted.messages)) {
+      const owners = nativeOwners.get(key) || new Set();
+      owners.add(platformId);
+      if (owners.size > 16) owners.delete(owners.values().next().value);
+      nativeOwners.delete(key);
+      nativeOwners.set(key, owners);
+      if (nativeOwners.size > 2048) nativeOwners.delete(nativeOwners.keys().next().value);
+    }
+    for (const node of extracted.nodes || []) nodeOwners.set(node, platformId);
+    for (const key of Chatseek.bodyTurnKeys(extracted.messages)) {
+      const owners = bodyOwners.get(key) || new Set();
+      owners.add(platformId);
+      if (owners.size > 16) owners.delete(owners.values().next().value);
+      bodyOwners.delete(key);
+      bodyOwners.set(key, owners);
+      if (bodyOwners.size > 2048) bodyOwners.delete(bodyOwners.keys().next().value);
+    }
+  }
+
+  function contentOwns(root, extracted, platformId) {
+    return (!!extracted.nodes?.length && extracted.nodes.every(node => {
+      for (let el = node; el; el = Chatseek.ownershipParent(el)) {
+        const id = el.getAttribute?.("data-conversation-id");
+        if (id) return id.toLowerCase() === platformId;
+      }
+      return false;
+    })) || Chatseek.mappedTranscript(root, extracted, platformId);
+  }
+
+  function identifyPage(root, href, platformId, extracted, revalidate = false) {
+    const identity = Chatseek.pageIdentity(state, root, href, platformId, extracted);
+    const epoch = navigationEpoch;
+    const check = identity.check;
+    const accept = identity.accept;
+    const owns = () => contentOwns(root, extracted, platformId);
+    identity.guardTranscript = true;
+    identity.ownershipVerified = owns;
+    identity.check = () => {
+      if (navigationEpoch !== epoch || !check()) return false;
+      if ((extracted.nodes || []).some(node => {
+        const owner = nodeOwners.get(node) || departedNodes.get(node);
+        return owner && owner !== platformId;
+      })) return false;
+      const owners = transcriptOwners.get(identity.hash);
+      // A remount is not ownership evidence. Do not expire known foreign
+      // text merely because the URL/selected sidebar row changed first.
+      if (owners && !owners.has(platformId) && !owns()) return false;
+      if (Chatseek.nativeTurnKeys(`${PLATFORM}:${platformId}`, extracted.messages).some(key => {
+        const owners = nativeOwners.get(key);
+        return owners && !owners.has(platformId);
+      }) && !owns()) return false;
+      if (Chatseek.bodyTurnKeys(extracted.messages, true).some(key => {
+        const owners = bodyOwners.get(key);
+        return owners && !owners.has(platformId);
+      }) && !owns()) return false;
+      if (revalidate) {
+        const current = extractMessages(platformId, root, false);
+        if (current.messages.length !== extracted.messages.length ||
+            current.messages.some((m, i) => m.id !== extracted.messages[i].id ||
+              m.role !== extracted.messages[i].role || m.body !== extracted.messages[i].body) ||
+            current.nodes.some((node, i) => node !== extracted.nodes[i])) return false;
+      }
+      return true;
+    };
+    identity.accept = () => {
+      accept();
+      rememberTranscript(extracted, platformId);
+    };
+    return identity;
+  }
+
+  // Navigation events run before the debounced capture. In particular, an
+  // A -> B -> A round trip can finish inside one debounce interval.
+  function beforeNavigation() {
+    if (!globalThis.chrome?.runtime?.id) return;
+    const platformId = conversationIdFromLocation(location);
+    if (platformId) {
+      const extracted = extractMessages(platformId, document, false);
+      const identity = identifyPage(document, location.href, platformId, extracted);
+      // A just-restarted script has not passed the persisted ownership gate
+      // yet. Its first unverified observation cannot invent an accepted owner.
+      if (identity.check() && (state.lastMsgConvId || contentOwns(document, extracted, platformId))) identity.accept();
+      for (const node of extracted.nodes || []) {
+        if (!nodeOwners.has(node) && !departedNodes.has(node)) departedNodes.set(node, platformId);
+      }
+    }
+    navigationEpoch += 1;
+    if (state.pageIdentity) state.pageIdentity.pending = true;
+  }
 
   function messageIdFor(node, conversationId, role, body, ownNode = false) {
     const explicit = node.getAttribute("data-message-id") ||
@@ -491,7 +596,7 @@
           Chatseek._archiveListIds(node).includes(platformId));
       };
       const initial = extractMessages(platformId, root, false);
-      if (initial.messages.length || state.pageIdentity) Chatseek.pageIdentity(state, root, captureHref, platformId, initial);
+      if (initial.messages.length || state.pageIdentity) identifyPage(root, captureHref, platformId, initial);
       extracted = await extractMessagesPaced(platformId, root);
     }
     // Record the DOM before further awaits, even if this capture is held or
@@ -499,11 +604,9 @@
     if (here.href !== captureHref) return false;
     const identity = platformId && (extracted.messages.length ||
       (state.pageIdentity && (state.pageIdentity.href !== captureHref || state.pageIdentity.pending)))
-      ? Chatseek.pageIdentity(state, root, captureHref, platformId, extracted) : null;
-    // Track every safe DOM observation, including progress/failed writes. A
-    // later navigation must compare against the latest screen, not the last
-    // successfully stored screen.
-    if (identity?.check()) identity.accept();
+      ? identifyPage(root, captureHref, platformId, extracted, true) : null;
+    // pageIdentity records observations immediately. Assign accepted content
+    // ownership only after runCapture's background guard accepts the write.
     const stats = Chatseek.messageStats(extracted.messages);
     const pathKind = Chatseek.pageKind(here, !!platformId);
     const selectorName = extracted.selector || "";
@@ -592,6 +695,7 @@
     inspect,
     capture,
     healthFor,
+    beforeNavigation,
   };
 
   Chatseek.syncProbe = () => {
@@ -616,6 +720,16 @@
     try { child = window.top !== window; } catch { child = true; }
     if (child) Chatseek.watchChildFrame();
     else {
+      // Standard, read-only browser events; never patch website history APIs.
+      if (window.navigation?.addEventListener) {
+        window.navigation.addEventListener("navigate", beforeNavigation);
+        window.navigation.addEventListener("currententrychange", () => { navigationEpoch += 1; });
+      } else {
+        window.addEventListener("popstate", () => {
+          navigationEpoch += 1;
+          if (state.pageIdentity) state.pageIdentity.pending = true;
+        });
+      }
       Chatseek.watchEmbedded = true;
       Chatseek.observe(() => capture());
     }

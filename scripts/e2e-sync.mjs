@@ -266,7 +266,11 @@ async function main() {
   const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (req, res) => {
     const path = new URL(req.url || "/", "https://chatgpt.com").pathname;
     hits.push(path);
-    const body = route(req.url || "/");
+    let body = route(req.url || "/");
+    // Independent fixture chats reuse u1/a1; real content ownership separates
+    // them, while the dedicated SPA suite tests captures without this proof.
+    const owner = path.match(/\/c\/([0-9a-f-]{36})$/i)?.[1];
+    if (owner) body = body.replace(/<body\b([^>]*)>/i, `<body$1 data-conversation-id="${owner}">`);
     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     res.end(body);
   });
