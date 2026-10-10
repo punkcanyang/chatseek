@@ -1,4 +1,31 @@
 {
+  "searchHelpOpen": {
+    "message": "Hilfe zur Suchsyntax"
+  },
+  "searchHelpTitle": {
+    "message": "Suchsyntax"
+  },
+  "searchHelpClose": {
+    "message": "Schließen"
+  },
+  "searchHelpPhrase": {
+    "message": "\"blue orchid\": exakte Wortgruppe ohne Beachtung der Groß-/Kleinschreibung."
+  },
+  "searchHelpWildcard": {
+    "message": "chat*: Platzhalter für ein ganzes Wort; * steht für null oder mehr Zeichen."
+  },
+  "searchHelpExclude": {
+    "message": "-draft, -\"blue orchid\", -title:draft: passende Unterhaltungen ausschließen."
+  },
+  "searchHelpTitleOnly": {
+    "message": "title:camera, title:\"old camera\": nur Titel durchsuchen."
+  },
+  "searchHelpCombine": {
+    "message": "Bedingungen kombinieren; alle müssen zutreffen. Normale Wörter durchsuchen Titel und Nachrichten."
+  },
+  "searchHelpFallback": {
+    "message": "Nicht geschlossene Anführungszeichen, leere Bedingungen oder reine Ausschlüsse verwenden die normale Suche."
+  },
   "extName": {
     "message": "Chatseek"
   },

@@ -88,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.2.3") fail(`version should be 1.7.2.3, got ${manifest.version}`);
+if (manifest.version !== "1.7.4") fail(`version should be 1.7.4, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -149,6 +149,7 @@ const referenced = new Set([
   "sidepanel/panel.css",
   "src/db.js",
   "src/tokenize.js",
+  "src/search-query.js",
   "src/activity-time.js",
   "src/preview.js",
   "src/conversation-url.js",
@@ -292,6 +293,7 @@ for (const rel of [
   "reader/reader.js",
   "sidepanel/panel.js",
   "sidepanel/sync-ui.js",
+  "src/search-query.js",
 ]) {
   const src = read(rel);
   if (/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|importScripts|\bnew\s+Image\b/.test(src)) {
@@ -358,6 +360,17 @@ if (/objectStore\(\s*["']messages["']\s*\)/.test(searchFn) ||
 }
 if (!/tokenMap/.test(searchFn) || !/openCursor|collectConvIdsForToken/.test(searchFn)) {
   fail("searchConversations should look up tokenMap with a cursor");
+}
+// Keep the legacy search guard above intact. Exact syntax additionally reads
+// candidate sources to disambiguate phrases beyond capped index positions.
+const syntaxFn = dbSrc.split("async function syntaxCandidates")[1]?.split("function needsPreviewBackfill")[0] || "";
+if (!syntaxFn || !syntaxFn.includes('IDBKeyRange.only(conv.id)')
+    || !syntaxFn.includes('index("conversationId")') || !syntaxFn.includes('"readonly"')) {
+  fail("syntax verification must keep message cursors scoped to a candidate conversation");
+}
+if (/getAll\s*\(|readwrite|\.put\(|\.delete\(|\.clear\(/.test(syntaxFn)
+    || /objectStore\(["']messages["']\)\.(?:openCursor|openKeyCursor)/.test(syntaxFn)) {
+  fail("syntax verification must be readonly and must not scan the global messages store");
 }
 
 const tok = tokenize("Hello ChatGPT 对话搜索 12345 the");
@@ -812,6 +825,25 @@ for (const needle of ["attachPageTime", "sidebarSlots", "queryLayers", "pageKind
 if (!/gemini:\s*"Gemini"/.test(activitySrc)) fail("health labels should name Gemini");
 const panelHtml = read("sidepanel/index.html");
 const panelSrc = read("sidepanel/panel.js");
+const searchQuerySrc = read("src/search-query.js");
+if (/innerHTML|outerHTML|insertAdjacentHTML|\beval\s*\(|new\s+RegExp/.test(searchQuerySrc)) {
+  fail("search syntax must not construct regexes or HTML from user input");
+}
+if (!searchQuerySrc.includes("QUERY_LIMITS") || !searchQuerySrc.includes("globMatches")) {
+  fail("search syntax must keep bounded parsing and deterministic wildcard matching");
+}
+{
+  const helpDom = new JSDOM(panelHtml);
+  const button = helpDom.window.document.getElementById("searchHelpBtn");
+  const help = helpDom.window.document.getElementById("searchHelp");
+  if (button?.tagName !== "BUTTON" || button?.getAttribute("type") !== "button"
+      || button?.getAttribute("aria-controls") !== "searchHelp"
+      || button?.getAttribute("aria-expanded") !== "false"
+      || !help?.hidden || help?.getAttribute("aria-labelledby") !== "searchHelpTitle") {
+    fail("search syntax help must be a keyboard-accessible collapsed disclosure");
+  }
+  helpDom.window.close();
+}
 // Exercise the DOM builder without starting the panel's DB or Chrome APIs.
 const authorBuilder = panelSrc.match(/^function mountAuthorLink\(\) \{[\s\S]*?^\}/m)?.[0];
 if (!authorBuilder || !/^mountAuthorLink\(\);$/m.test(panelSrc)) {

@@ -1,4 +1,31 @@
 {
+  "searchHelpOpen": {
+    "message": "搜尋語法說明"
+  },
+  "searchHelpTitle": {
+    "message": "搜尋語法"
+  },
+  "searchHelpClose": {
+    "message": "關閉"
+  },
+  "searchHelpPhrase": {
+    "message": "\"blue orchid\"：搜尋完整片語，不分英文大小寫。"
+  },
+  "searchHelpWildcard": {
+    "message": "chat*：搜尋 chat 開頭的詞；* 可放在詞中，代表零個或多個字元。"
+  },
+  "searchHelpExclude": {
+    "message": "-草稿、-\"blue orchid\"、-title:草稿：排除含有這些內容的對話。"
+  },
+  "searchHelpTitleOnly": {
+    "message": "title:相機、title:\"舊相機\"：只搜尋標題。"
+  },
+  "searchHelpCombine": {
+    "message": "條件可以一起用，必須全部符合。一般詞會搜尋標題和訊息內文。"
+  },
+  "searchHelpFallback": {
+    "message": "引號沒有成對、條件沒有填完，或只輸入排除條件時，會改用一般搜尋。"
+  },
   "extName": {
     "message": "Chatseek"
   },

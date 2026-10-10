@@ -14,6 +14,7 @@ import { fillHighlight, findMatchRanges, highlightTerms } from "./preview.js";
 import { safeOriginalUrl } from "./reader-url.js";
 import { externalIcon } from "./icons.js";
 import { dataUrlFromBytes, snapOffset } from "./image-cache.js";
+import { parseSearchQuery, syntaxRanges, syntaxBodyRanges } from "./search-query.js";
 
 export const MAX_NODES = 60;
 const OVERSCAN_PX = 480;
@@ -70,15 +71,18 @@ export function splitPlainBlocks(text) {
 }
 
 export function collectHits(title, messages, query, images) {
+  const parsed = parseSearchQuery(query);
   const terms = highlightTerms(query);
   const hits = [];
   if (!terms.length) return hits;
-  for (const range of findMatchRanges(title || "", terms)) {
+  const titleRanges = parsed.mode === "syntax" ? syntaxRanges(title || "", parsed, "title") : findMatchRanges(title || "", terms);
+  for (const range of titleRanges) {
     hits.push({ where: "title", range });
   }
+  if (parsed.mode === "syntax" && !parsed.clauses.some((clause) => !clause.exclude && clause.field !== "title")) return hits;
   (messages || []).forEach((msg, messageIndex) => {
     const body = msg?.body || "";
-    const ranges = findMatchRanges(body, terms);
+    const ranges = parsed.mode === "syntax" ? syntaxBodyRanges(body, parsed, /[*_`#|[\]>]|https?:\/\//i.test(body) ? cachedMarkdown(msg, body) : undefined) : findMatchRanges(body, terms);
     if (!ranges.length) return;
     // A hit that lands only on markup is not painted, so it is not counted.
     // The parse is skipped when no hit could be markup; otherwise the AST is

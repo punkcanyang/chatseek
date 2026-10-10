@@ -163,6 +163,11 @@ const diagBox = document.getElementById("diagBox");
 const healthEl = document.getElementById("health");
 const injectWarnEl = document.getElementById("injectWarn");
 const searchLabel = document.getElementById("searchLabel");
+const searchHelpBtn = document.getElementById("searchHelpBtn");
+const searchHelp = document.getElementById("searchHelp");
+const searchHelpTitle = document.getElementById("searchHelpTitle");
+const searchHelpClose = document.getElementById("searchHelpClose");
+const searchHelpItems = document.getElementById("searchHelpItems");
 const filterActive = document.getElementById("filterActive");
 const filterArchived = document.getElementById("filterArchived");
 const filterAll = document.getElementById("filterAll");
@@ -225,6 +230,16 @@ function applyStatic() {
   tagEl.textContent = t.tag;
   qEl.placeholder = t.placeholder;
   searchLabel.textContent = t.search;
+  searchHelpBtn.setAttribute("aria-label", text(localeCode, "searchHelpOpen"));
+  searchHelpBtn.title = text(localeCode, "searchHelpOpen");
+  searchHelpTitle.textContent = text(localeCode, "searchHelpTitle");
+  searchHelpClose.textContent = text(localeCode, "searchHelpClose");
+  searchHelpItems.replaceChildren();
+  for (const key of ["searchHelpPhrase", "searchHelpWildcard", "searchHelpExclude", "searchHelpTitleOnly", "searchHelpCombine", "searchHelpFallback"]) {
+    const item = document.createElement("li");
+    item.textContent = text(localeCode, key);
+    searchHelpItems.append(item);
+  }
   hintEl.textContent = t.hint;
   clearBtn.textContent = t.clear;
   if (clearImagesBtn) clearImagesBtn.textContent = t.clearImages;
@@ -1260,6 +1275,21 @@ function mountAuthorLink() {
   row.append(link);
   document.querySelector("footer.foot").append(row);
 }
+
+function setSearchHelp(open) {
+  searchHelp.hidden = !open;
+  searchHelpBtn.setAttribute("aria-expanded", String(open));
+  if (open) searchHelpClose.focus();
+  else searchHelpBtn.focus();
+}
+searchHelpBtn.addEventListener("click", () => setSearchHelp(searchHelp.hidden));
+searchHelpClose.addEventListener("click", () => setSearchHelp(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !searchHelp.hidden) {
+    event.preventDefault();
+    setSearchHelp(false);
+  }
+});
 
 mountAuthorLink();
 applyStatic();

@@ -171,7 +171,7 @@ function hitHost(source, query) {
   return { host: render(source, { hits: mapped, current: 0 }), hits: all };
 }
 
-const across = hitHost("pre**bold**post", "e**b");
+const across = hitHost("pre**bold**post", '"eb"');
 const acrossMarks = marks(across.host);
 assert(acrossMarks.length === 2 && acrossMarks.every((mark) => mark.hit === "0" && mark.current), `span marks ${JSON.stringify(acrossMarks)}`);
 assert(acrossMarks.map((mark) => mark.text).join("") === "eb", "visible parts of the spanning hit");
