@@ -1,4 +1,31 @@
 {
+  "searchHelpOpen": {
+    "message": "Search syntax help"
+  },
+  "searchHelpTitle": {
+    "message": "Search syntax"
+  },
+  "searchHelpClose": {
+    "message": "Close"
+  },
+  "searchHelpPhrase": {
+    "message": "\"blue orchid\": exact phrase, ignoring case."
+  },
+  "searchHelpWildcard": {
+    "message": "chat*: wildcard matching a whole word; * stands for zero or more characters."
+  },
+  "searchHelpExclude": {
+    "message": "-draft, -\"blue orchid\", -title:draft: exclude matching conversations."
+  },
+  "searchHelpTitleOnly": {
+    "message": "title:camera, title:\"old camera\": search titles only."
+  },
+  "searchHelpCombine": {
+    "message": "Combine conditions; all must match. Ordinary words search titles and messages."
+  },
+  "searchHelpFallback": {
+    "message": "Unmatched quotes, empty conditions or exclusions alone use ordinary search."
+  },
   "extName": {
     "message": "Chatseek"
   },

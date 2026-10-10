@@ -1,4 +1,31 @@
 {
+  "searchHelpOpen": {
+    "message": "검색 문법 도움말"
+  },
+  "searchHelpTitle": {
+    "message": "검색 문법"
+  },
+  "searchHelpClose": {
+    "message": "닫기"
+  },
+  "searchHelpPhrase": {
+    "message": "\"blue orchid\": 대소문자를 구분하지 않는 정확한 구문 검색입니다."
+  },
+  "searchHelpWildcard": {
+    "message": "chat*: 단어 전체와 일치하는 와일드카드입니다. *는 0개 이상의 문자를 뜻합니다."
+  },
+  "searchHelpExclude": {
+    "message": "-draft, -\"blue orchid\", -title:draft: 일치하는 대화를 제외합니다."
+  },
+  "searchHelpTitleOnly": {
+    "message": "title:camera, title:\"old camera\": 제목만 검색합니다."
+  },
+  "searchHelpCombine": {
+    "message": "조건을 조합할 수 있으며 모두 일치해야 합니다. 일반 단어는 제목과 메시지를 검색합니다."
+  },
+  "searchHelpFallback": {
+    "message": "따옴표가 닫히지 않았거나 조건이 비어 있거나 제외 조건만 있으면 일반 검색을 사용합니다."
+  },
   "extName": {
     "message": "Chatseek"
   },

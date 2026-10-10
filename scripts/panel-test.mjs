@@ -15,7 +15,9 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+let checks = 0;
 function assert(cond, msg) {
+  checks += 1;
   if (!cond) throw new Error(msg);
 }
 
@@ -206,6 +208,40 @@ const authorLink = authorLinks[0];
 assert(authorLinks.length === 1 && authorLink.textContent === "@punkcan", "footer has one author link");
 assert(authorLink.getAttribute("href") === "https://x.com/punkcan", "author link uses the exact fixed URL");
 assert(authorLink.getAttribute("target") === "_blank" && authorLink.relList.contains("noopener"), "author link opens a safe new tab");
+
+const helpBtn = document.getElementById("searchHelpBtn");
+const help = document.getElementById("searchHelp");
+assert(help.hidden && helpBtn.getAttribute("aria-expanded") === "false", "syntax help starts collapsed");
+assert(helpBtn.tagName === "BUTTON" && helpBtn.getAttribute("aria-controls") === help.id && helpBtn.getAttribute("aria-label"), "syntax help has an accessible button");
+helpBtn.click();
+assert(!help.hidden && helpBtn.getAttribute("aria-expanded") === "true", "help opens");
+assert(document.activeElement.id === "searchHelpClose", "help moves focus to its close button");
+assert(document.querySelectorAll("#searchHelpItems li").length === 6, "help explains all operators and fallback");
+document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+assert(help.hidden && document.activeElement === helpBtn && helpBtn.getAttribute("aria-expanded") === "false", "Escape closes help and returns focus");
+helpBtn.click();
+document.getElementById("searchHelpClose").click();
+assert(help.hidden && document.activeElement === helpBtn, "close button returns focus");
+// JSDOM omits native button keyboard defaults. Emulate only that default
+// after dispatching cancelable events; the real Enter/Space path is in e2e.
+function pressNativeButton(button, key) {
+  button.focus();
+  const down = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  const allowed = button.dispatchEvent(down);
+  assert(allowed && !down.defaultPrevented && button.type === "button", `${key} native button activation is not intercepted`);
+  if (key === "Enter") button.click();
+  const up = new window.KeyboardEvent("keyup", { key, bubbles: true, cancelable: true });
+  if (button.dispatchEvent(up) && key === " ") button.click();
+}
+for (const key of ["Enter", " "]) {
+  pressNativeButton(helpBtn, key);
+  assert(!help.hidden && helpBtn.getAttribute("aria-expanded") === "true", `${key} opens help`);
+  pressNativeButton(helpBtn, key);
+  assert(help.hidden && helpBtn.getAttribute("aria-expanded") === "false", `${key} toggles help closed`);
+  pressNativeButton(helpBtn, key);
+  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert(help.hidden && document.activeElement === helpBtn, `${key} then Escape restores button focus`);
+}
 
 await until(() => currentIds().length === 1, "initial current row");
 assert(currentIds()[0] === A.id, `initial frame on A, got ${currentIds()}`);
@@ -522,6 +558,12 @@ for (const code of LOCALE_ORDER) {
   document.getElementById("lang").dispatchEvent(new window.Event("change"));
   assert(document.querySelectorAll("footer.foot a").length === 1
     && authorLink.isConnected && authorLink.textContent === "@punkcan", `${code} keeps the same author link`);
+  assert(helpBtn.getAttribute("aria-label") === CATALOG[code].searchHelpOpen
+    && document.getElementById("searchHelpTitle").textContent === CATALOG[code].searchHelpTitle
+    && document.querySelector("#searchHelpItems li").textContent === CATALOG[code].searchHelpPhrase, `${code} syntax help matches the locale catalog`);
+  for (const key of ["searchHelpOpen", "searchHelpTitle", "searchHelpClose", "searchHelpPhrase", "searchHelpWildcard", "searchHelpExclude", "searchHelpTitleOnly", "searchHelpCombine", "searchHelpFallback"]) {
+    assert(CATALOG[code][key]?.trim() && (code === "en" || CATALOG[code][key] !== CATALOG.en[key]), `${code}:${key} is translated, not an English placeholder`);
+  }
   const expected = CATALOG[code].remove;
   await until(() => {
     const btn = document.querySelector(".remove");
@@ -691,5 +733,5 @@ await sleep(500);
 assert(document.getElementById("status").textContent.includes(String(structureText.length)), "refresh must preserve the copy character count");
 assert(!document.getElementById("status").hidden, "copy confirmation remains visible during refresh");
 
-console.log("panel-test ok", { scrolls: scrolled.length });
+console.log("panel-test ok", { checks, scrolls: scrolled.length, helpLocales: LOCALE_ORDER.length, helpKeys: ["Enter", "Space", "Escape"] });
 process.exit(0);

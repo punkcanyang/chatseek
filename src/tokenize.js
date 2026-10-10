@@ -168,8 +168,10 @@ export function titleContainsQuery(title, needle) {
   if (/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(query)) {
     return true;
   }
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(hay);
+  for (let at = hay.indexOf(query); at >= 0; at = hay.indexOf(query, at + 1)) {
+    if (!/[a-z0-9]/.test(hay[at - 1] || "") && !/[a-z0-9]/.test(hay[at + query.length] || "")) return true;
+  }
+  return false;
 }
 
 export { STOP };

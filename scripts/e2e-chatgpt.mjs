@@ -1359,6 +1359,79 @@ async function main() {
     assert(/open shadow/i.test(readerTitle), readerTitle);
     await reader.screenshot({ path: join(docs, "reader-1.6.4-just-now.png"), fullPage: true });
 
+    // 1.7.4: artificial local data only. Exercise composed syntax through
+    // the real side panel, including query propagation and a distant jump.
+    const syntaxId = "chatgpt:74174174-0000-4000-8000-000000000001";
+    const syntaxQuery = 'title:camera "blue orchid" chat* -title:draft';
+    await panel.evaluate(async (id) => {
+      const { upsertMessages } = await import(chrome.runtime.getURL("src/db.js"));
+      const samples = [
+        { id, title: "Camera garden notes", hit: "A blue orchid with chatseek in the garden." },
+        { id: "chatgpt:74174174-0000-4000-8000-000000000002", title: "Camera draft", hit: "Draft: blue orchid with chatseek." },
+        { id: "chatgpt:74174174-0000-4000-8000-000000000003", title: "Camera hillside", hit: "Blue hillside orchid with chatter." },
+      ];
+      for (const sample of samples) {
+        const platformId = sample.id.split(":")[1];
+        const messages = Array.from({ length: 120 }, (_, i) => ({
+          id: `${sample.id}:native-${i}`, role: i % 2 ? "assistant" : "user",
+          body: i === 110 ? sample.hit : `Sample garden observation ${platformId} day ${i}: quiet paths and tea.`,
+        }));
+        await upsertMessages({ id: sample.id, platformId, platform: "chatgpt", title: sample.title,
+          url: `https://chatgpt.com/c/${platformId}`, updatedAt: Date.now(), updatedAtSource: "page-exact" },
+          messages, { pageMessageIds: messages.map((msg) => msg.id), captureId: sample.id });
+      }
+      localStorage.setItem("chatseek.uiLocale", "en");
+    }, syntaxId);
+    await panel.reload({ waitUntil: "domcontentloaded" });
+    await panel.evaluate((query) => {
+      const input = document.getElementById("q");
+      input.value = query;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, syntaxQuery);
+    await until(async () => {
+      const ids = await panel.$$eval("#list .item", (items) => items.map((item) => item.dataset.id));
+      return ids.length === 1 && ids[0] === syntaxId;
+    }, "composed syntax returns exactly the sample", 10000);
+    const syntaxMarks = await panel.$$eval(".item-preview mark", (marks) => marks.map((mark) => mark.textContent));
+    assert(syntaxMarks.includes("blue orchid") && syntaxMarks.includes("chatseek"), `syntax preview marks ${syntaxMarks}`);
+    await panel.screenshot({ path: join(docs, "panel-1.7.4-search-syntax.png"), fullPage: true });
+    // Tab/Enter activates the native button; Escape closes and restores focus.
+    await panel.focus("#searchHelpBtn");
+    await panel.keyboard.press("Enter");
+    await panel.waitForFunction(() => !document.getElementById("searchHelp").hidden
+      && document.getElementById("searchHelpBtn").getAttribute("aria-expanded") === "true");
+    assert(await panel.$$eval("#searchHelpItems li", (items) => items.length) === 6, "six translated syntax explanations");
+    await panel.screenshot({ path: join(docs, "panel-1.7.4-search-help.png"), fullPage: true });
+    await panel.keyboard.press("Escape");
+    assert(await panel.evaluate(() => document.getElementById("searchHelp").hidden
+      && document.activeElement.id === "searchHelpBtn"), "Escape returns focus to question mark");
+    await panel.keyboard.press("Space");
+    await panel.waitForFunction(() => !document.getElementById("searchHelp").hidden);
+    await panel.focus("#searchHelpBtn");
+    await panel.keyboard.press("Space");
+    await panel.waitForFunction(() => document.getElementById("searchHelp").hidden);
+    await panel.setViewport({ width: 320, height: 720 });
+    assert(await panel.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth
+      && document.getElementById("q").getBoundingClientRect().width > 200), "syntax help button fits a narrow sidebar");
+    await panel.setViewport({ width: 420, height: 860 });
+    const syntaxTargetPromise = browser.waitForTarget((target) => {
+      const url = target.url();
+      return url.includes("/reader/index.html") && new URL(url).searchParams.get("id") === syntaxId;
+    }, { timeout: 10000 });
+    await panel.click(".read");
+    const syntaxTarget = await syntaxTargetPromise;
+    assert(new URL(syntaxTarget.url()).searchParams.get("q") === syntaxQuery, "reader retains the complete syntax query");
+    const syntaxReader = await syntaxTarget.page();
+    await syntaxReader.setViewport({ width: 900, height: 800 });
+    await syntaxReader.bringToFront();
+    await syntaxReader.waitForFunction(() => document.querySelector("#readerTitle mark.is-current")?.textContent === "Camera", { timeout: 10000 });
+    await syntaxReader.click("#nextHit");
+    await syntaxReader.waitForFunction(() => document.querySelector('.msg[data-index="110"] mark.is-current')?.textContent === "blue orchid", { timeout: 10000 });
+    assert(await syntaxReader.$$eval(".msg mark", (marks) => marks.every((mark) => mark.textContent !== "draft")), "excluded words never highlight in reader");
+    await syntaxReader.screenshot({ path: join(docs, "reader-1.7.4-jump.png"), fullPage: true });
+    await syntaxReader.close();
+    console.log("e2e search syntax ok", { samples: 3, operators: 4, screenshots: 3, keyboardHelp: true, narrowWidth: 320 });
+
     await panel.evaluate(() => localStorage.removeItem("chatseek.uiLocale"));
     await panel.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, { waitUntil: "domcontentloaded" });
 

@@ -13,6 +13,7 @@ import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-l
 import { normalizeImageRecord } from "./image-cache.js";
 import { isProgressText, planProgressMerges } from "./image-progress.js";
 import { nativeTurnKeys, bodyTurnKeys } from "./spa-identity.js";
+import { asSearchQuery, parseSearchQuery, clauseMatchesText, searchProjection, syntaxRanges } from "./search-query.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 4;
@@ -954,8 +955,10 @@ export async function searchConversations(options = {}) {
     if (options.sort) return withDb((db) => listSortedOn(db, options));
     return listRecent(options);
   }
-  return withDb((db) => searchOn(db, options));
+  const parsed = parseSearchQuery(q);
+  return withDb((db) => parsed.mode === "syntax" ? searchSyntaxOn(db, options, parsed) : searchOn(db, options));
 }
+
 
 async function searchOn(db, {
   query = "",
@@ -1045,6 +1048,171 @@ async function listRecentOn(db, { platform = "", scope = "all", limit = 80 } = {
   return items;
 }
 
+async function syntaxCandidates(tokenStore, clause, conversations, preferScopedScan = false) {
+  const ids = new Set();
+  const postings = new Map();
+  const keep = (row) => {
+    if (!conversations.has(row.conversationId)) return;
+    ids.add(row.conversationId);
+    const list = postings.get(row.conversationId) || [];
+    list.push(row);
+    postings.set(row.conversationId, list);
+  };
+  if (clause.field === "title") return { ids, postings, full: false };
+  // Once an earlier positive condition has made the candidate set small,
+  // verify its messages directly instead of walking a broad glob/phrase
+  // posting range. Candidate verification still checks every condition.
+  if (preferScopedScan && clause.kind !== "words") {
+    return { ids: new Set(conversations.keys()), postings, full: true };
+  }
+  if (clause.kind === "phrase") {
+    // A phrase is a literal substring, so its edge words need not be whole
+    // index tokens. Only a word after a literal boundary proves a prefix.
+    const anchors = [...clause.normalized.matchAll(/[^a-z0-9]([a-z][a-z0-9]{1,23}|[0-9]{2,24})/g)]
+      .map((match) => match[1]).sort((a, b) => b.length - a.length);
+    const anchor = anchors[0];
+    if (anchor) {
+      const range = IDBKeyRange.bound([anchor], [anchor + "\uffff", "\uffff", "\uffff"]);
+      await cursorEach(tokenStore, { range }, (row) => { if (row.token.startsWith(anchor)) keep(row); });
+      return { ids, postings, full: false };
+    }
+    // CJK unigrams are complete index entries even inside a longer run.
+    const cjk = clause.tokens.find((token) => /^[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af\u3005]+$/.test(token));
+    if (cjk) {
+      const found = await collectConvIdsForToken(tokenStore, cjk, true);
+      found.postings.forEach(keep);
+      return { ids, postings, full: false };
+    }
+    return { ids: new Set(conversations.keys()), postings, full: true };
+  }
+  if (clause.kind === "glob") {
+    const prefix = clause.normalized.split("*")[0];
+    // A Latin prefix with two characters always has an indexed word. Other
+    // globs (including one-letter matches) need candidate body verification.
+    if (/^[a-z][a-z0-9]|^[0-9]{2}/.test(prefix)) {
+      const anchor = (/^[0-9]/.test(prefix) ? prefix.match(/^[0-9]+/)[0] : prefix).slice(0, 24);
+      const range = IDBKeyRange.bound([anchor], [anchor + "\uffff", "\uffff", "\uffff"]);
+      await cursorEach(tokenStore, { range }, (row) => {
+        if (row.token.startsWith(anchor)) keep(row);
+      });
+      return { ids, postings, full: false };
+    }
+    return { ids: new Set(conversations.keys()), postings, full: true };
+  }
+  if (!clause.tokens.length) return { ids: new Set(conversations.keys()), postings, full: true };
+  const sets = [];
+  for (const token of clause.tokens) {
+    const found = await collectConvIdsForToken(tokenStore, token, true);
+    sets.push(found.ids);
+    found.postings.forEach(keep);
+  }
+  return { ids: intersectSets(sets), postings, full: false };
+}
+
+/** Syntax uses the existing index as a superset, then checks exact visible
+ * text in candidate messages. No schema change, bulk reads, or global message
+ * scan. Leading/infix globs without an indexable prefix visit scoped chats. */
+async function searchSyntaxOn(db, options, parsed) {
+  const { platform = "", scope = "all", limit = 80, sort } = options;
+  const tx = db.transaction(["conversations", "tokenMap", "messages"], "readonly");
+  const conversations = new Map();
+  await cursorEach(tx.objectStore("conversations"), {}, (conv) => {
+    if (passesScope(conv, { platform, scope })) conversations.set(conv.id, conv);
+  });
+  const details = [];
+  let possible = new Set(conversations.keys());
+  for (const clause of parsed.clauses) {
+    const candidates = new Map([...possible].map((id) => [id, conversations.get(id)]));
+    const detail = await syntaxCandidates(tx.objectStore("tokenMap"), clause, candidates,
+      possible.size < conversations.size / 4);
+    detail.titleIds = new Set();
+    for (const conv of candidates.values()) {
+      if (clauseMatchesText(conv.title, clause)) detail.titleIds.add(conv.id);
+    }
+    details.push(detail);
+    if (!clause.exclude) possible = new Set([...possible]
+      .filter((id) => detail.titleIds.has(id) || detail.ids.has(id)));
+  }
+  const positive = parsed.clauses.filter((clause) => !clause.exclude);
+  const results = [];
+  for (const conv of conversations.values()) {
+    if (parsed.clauses.some((clause, i) => !clause.exclude
+      && !details[i].titleIds.has(conv.id) && !details[i].ids.has(conv.id))) continue;
+    const messages = new Map();
+    const plain = new Map();
+    let allLoaded = false;
+    const sources = new Map();
+    let phrase = false;
+    let accepted = true;
+    for (let i = 0; i < parsed.clauses.length; i++) {
+      const clause = parsed.clauses[i];
+      const detail = details[i];
+      const titled = detail.titleIds.has(conv.id);
+      let matched = titled;
+      const rows = detail.postings.get(conv.id) || [];
+      const addSource = (id, role, share = 1) => {
+        const source = sources.get(id) || { role: "assistant", share: 0 };
+        if (role === "user") source.role = "user";
+        source.share += share / positive.length;
+        sources.set(id, source);
+      };
+      if (clause.kind === "words" && clause.tokens.length) {
+        matched ||= detail.ids.has(conv.id);
+        if (!clause.exclude && clause.field !== "title") {
+          const legacyScore = relevanceScore(conv, clause.value, rows);
+          if (legacyScore % RELEVANCE_WEIGHT.TITLE >= RELEVANCE_WEIGHT.PHRASE) phrase = true;
+        }
+        if (!clause.exclude && clause.field !== "title") {
+          const bySource = new Map();
+          for (const row of rows) {
+            if (row.source === "title") continue;
+            const item = bySource.get(row.source) || { role: row.role, tokens: new Set() };
+            item.tokens.add(row.token); bySource.set(row.source, item);
+          }
+          for (const [id, item] of bySource) addSource(id, item.role, item.tokens.size / clause.tokens.length);
+        }
+      } else if (clause.field !== "title" && detail.ids.has(conv.id)
+          && (!clause.exclude || !titled)) {
+        if (detail.full && !allLoaded) {
+          await cursorEach(tx.objectStore("messages").index("conversationId"), { range: IDBKeyRange.only(conv.id) }, (msg) => {
+            messages.set(msg.id, msg);
+          });
+          allLoaded = true;
+        }
+        const ids = detail.full ? [...messages.keys()] : [...new Set(rows.filter((row) => row.source !== "title").map((row) => row.source))];
+        for (const id of ids) {
+          if (!messages.has(id)) {
+            const msg = await requestDone(tx.objectStore("messages").get(id));
+            if (msg?.conversationId === conv.id) messages.set(id, msg);
+          }
+          const msg = messages.get(id);
+          if (!msg) continue;
+          if (!plain.has(id)) plain.set(id, searchProjection(msg.body).text);
+          if (!clauseMatchesText(plain.get(id), clause)) continue;
+          matched = true;
+          if (!clause.exclude) addSource(id, msg.role);
+          if (clause.exclude) break;
+        }
+      }
+      if (!clause.exclude && matched && clause.kind === "phrase") phrase = true;
+      if (clause.exclude ? matched : !matched) { accepted = false; break; }
+    }
+    if (!accepted) continue;
+    const { TITLE, PHRASE, USER, ASSISTANT, HIT_CAP } = RELEVANCE_WEIGHT;
+    let score = positive.every((clause) => clauseMatchesText(conv.title, clause)) ? TITLE : 0;
+    if (phrase) score += PHRASE;
+    const bodyScores = [...sources.values()].map((source) =>
+      (source.role === "user" ? USER : ASSISTANT) * Math.min(1, source.share)).sort((a, b) => b - a);
+    score += bodyScores.slice(0, HIT_CAP).reduce((sum, value) => sum + value, 0);
+    const bodies = [...messages.values()].filter((msg) => syntaxRanges(plain.get(msg.id) || searchProjection(msg.body).text, parsed).length)
+      .sort((a, b) => (sources.get(b.id)?.share || 0) - (sources.get(a.id)?.share || 0)).slice(0, 2).map((msg) => msg.body);
+    results.push({ ...conv, relevance: Math.round(score * 100) / 100, _syntaxBodies: bodies });
+  }
+  results.sort(sort?.field ? (a, b) => compareConversations(a, b, sort) : (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return results.slice(0, limit);
+}
+
+
 function needsPreviewBackfill(conv) {
   if (!conv || !(Number(conv.messageCount) > 0)) return false;
   return !conv.firstUserPreview && !conv.lastPreview;
@@ -1103,7 +1271,10 @@ async function backfillPreviews(convs) {
 }
 
 async function loadSnippetBodies(list, query) {
-  const tokens = snippetTokens(query);
+  const parsed = asSearchQuery(query);
+  const tokens = parsed.mode === "syntax"
+    ? [...new Set(parsed.clauses.filter((clause) => !clause.exclude && clause.field !== "title" && clause.kind !== "glob").flatMap((clause) => clause.tokens))].slice(0, 3)
+    : snippetTokens(query);
   const bodies = new Map();
   if (!tokens.length || !list.length) return bodies;
   const capped = list.slice(0, 80);
@@ -1148,10 +1319,11 @@ export async function attachPreviews(conversations, query = "") {
   const q = String(query || "").trim();
   // Search can surface an old row that never reached the idle top 80.
   await backfillPreviews(list.filter(needsPreviewBackfill));
-  const bodies = q ? await loadSnippetBodies(list, q) : new Map();
+  const parsed = parseSearchQuery(q);
+  const bodies = q ? await loadSnippetBodies(list.filter((conv) => !conv._syntaxBodies?.length), parsed.mode === "syntax" ? parsed : q) : new Map();
   return list.map((conv) => ({
     ...conv,
-    preview: buildPreview(conv, q, bodies.get(conv?.id) || []),
+    preview: buildPreview(conv, q, conv._syntaxBodies?.length ? conv._syntaxBodies : bodies.get(conv?.id) || []),
   }));
 }
 

@@ -1,5 +1,6 @@
 import { markdownToPlain } from "./markdown.js";
 import { queryTokens } from "./tokenize.js";
+import { asSearchQuery, syntaxRanges, searchProjection, literalRanges } from "./search-query.js";
 
 /** Stored on the conversation so the idle list does not read the messages store. */
 export const PREVIEW_STORE_CHARS = 360;
@@ -86,10 +87,6 @@ export function snippetTokens(query) {
   return pool.slice(0, 3);
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function isWordTerm(term) {
   return !CJK.test(term) && /^[A-Za-z0-9]+$/.test(term);
 }
@@ -99,17 +96,7 @@ export function findMatchRanges(text, terms) {
   const ranges = [];
   for (const term of terms || []) {
     if (!term) continue;
-    const word = isWordTerm(term);
-    const re = word
-      ? new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(term)})(?=[^A-Za-z0-9]|$)`, "gi")
-      : new RegExp(escapeRegExp(term), "gi");
-    let match;
-    while ((match = re.exec(hay))) {
-      const start = word ? match.index + match[1].length : match.index;
-      const end = start + (word ? match[2].length : match[0].length);
-      if (end > start) ranges.push([start, end]);
-      if (match.index === re.lastIndex) re.lastIndex += 1;
-    }
+    for (const range of literalRanges(hay, term, isWordTerm(term))) ranges.push(range);
   }
   return mergeRanges(ranges);
 }
@@ -131,16 +118,37 @@ function mergeRanges(ranges) {
  * Window around the earliest match. A short prefix keeps the highlight inside
  * the two collapsed lines; the rest is context for hover.
  */
+function collapseSyntaxRanges(source, ranges) {
+  const map = new Array(source.length).fill(-1);
+  const pieces = [];
+  let size = 0;
+  for (const match of source.matchAll(/\S+/g)) {
+    if (pieces.length) { pieces.push(" "); size++; }
+    pieces.push(match[0]);
+    for (let i = 0; i < match[0].length; i++) map[match.index + i] = size + i;
+    size += match[0].length;
+  }
+  return { text: pieces.join(""), ranges: ranges.flatMap(([start, end]) => {
+    while (start < end && map[start] < 0) start++;
+    while (end > start && map[end - 1] < 0) end--;
+    return end > start ? [[map[start], map[end - 1] + 1]] : [];
+  }) };
+}
+
 export function snippetAround(text, terms, { before = 28, after = 120, maxLen = 180 } = {}) {
-  const flat = flattenPreview(text);
-  const wanted = Array.isArray(terms) ? terms : highlightTerms(terms);
-  const found = wanted.length ? findMatchRanges(flat, wanted) : [];
+  const parsed = Array.isArray(terms) ? null : asSearchQuery(terms);
+  const wanted = parsed?.mode === "syntax" ? parsed : Array.isArray(terms) ? terms : highlightTerms(parsed.raw);
+  const source = String(text || "");
+  const collapsed = parsed?.mode === "syntax" ? collapseSyntaxRanges(source, syntaxRanges(source, parsed)) : null;
+  const flat = collapsed?.text ?? flattenPreview(source);
+  const found = collapsed?.ranges ?? findMatchRanges(flat, wanted);
   if (!found.length) return null;
   const anchorStart = found[0][0];
   const anchorEnd = found[0][1];
   let start = Math.max(0, anchorStart - before);
   let end = Math.min(flat.length, anchorEnd + after);
   const matchLen = anchorEnd - anchorStart;
+  if (parsed?.mode === "syntax") maxLen = Math.max(maxLen, matchLen);
   if (end - start > maxLen) {
     if (matchLen >= maxLen) {
       start = anchorStart;
@@ -161,7 +169,9 @@ export function snippetAround(text, terms, { before = 28, after = 120, maxLen = 
   const suffix = end < flat.length;
   const slice = flat.slice(start, end);
   const lead = prefix ? "…" : "";
-  const local = findMatchRanges(slice, wanted).map(([from, to]) => [from + lead.length, to + lead.length]);
+  // Clip the original ranges: re-matching a cut word would invent wildcard hits.
+  const local = found.filter(([from, to]) => to > start && from < end)
+    .map(([from, to]) => [Math.max(from, start) - start + lead.length, Math.min(to, end) - start + lead.length]);
   return {
     text: `${lead}${slice}${suffix ? "…" : ""}`,
     ranges: local,
@@ -169,13 +179,14 @@ export function snippetAround(text, terms, { before = 28, after = 120, maxLen = 
 }
 
 export function bestSnippet(bodies, terms, options) {
-  const wanted = highlightTerms(Array.isArray(terms) ? terms.join(" ") : terms);
-  if (!wanted.length) return null;
+  const parsed = Array.isArray(terms) ? null : asSearchQuery(terms);
+  const wanted = parsed?.mode === "syntax" ? parsed : highlightTerms(Array.isArray(terms) ? terms.join(" ") : parsed.raw);
+  if (Array.isArray(wanted) && !wanted.length) return null;
   let best = null;
   let bestScore = -1;
   for (const body of bodies || []) {
-    const flat = presentPreview(body);
-    const ranges = findMatchRanges(flat, wanted);
+    const flat = wanted?.mode === "syntax" ? searchProjection(body).text : presentPreview(body);
+    const ranges = wanted?.mode === "syntax" ? syntaxRanges(flat, wanted) : findMatchRanges(flat, wanted);
     if (!ranges.length) continue;
     const score = ranges.length * 100000 - ranges[0][0];
     if (score <= bestScore) continue;
@@ -188,10 +199,12 @@ export function bestSnippet(bodies, terms, options) {
 }
 
 export function buildPreview(conv, query, bodies) {
-  const terms = highlightTerms(query);
+  const parsed = asSearchQuery(query);
+  const terms = parsed.mode === "syntax" ? parsed : highlightTerms(parsed.raw);
+  const searching = parsed.raw.length > 0;
   const title = String(conv?.title || "");
-  const titleRanges = terms.length ? findMatchRanges(title, terms) : [];
-  if (terms.length) {
+  const titleRanges = parsed.mode === "syntax" ? syntaxRanges(title, parsed, "title") : findMatchRanges(title, terms);
+  if (searching) {
     const snip = bestSnippet(bodies, terms);
     if (snip) {
       return { kind: "snippet", text: snip.text, ranges: snip.ranges, titleRanges };
@@ -203,7 +216,9 @@ export function buildPreview(conv, query, bodies) {
     const kind = Number(conv?.messageCount) > 0 ? "none" : "title-only";
     return { kind, text: "", ranges: [], titleRanges };
   }
-  if (terms.length) {
+  // Stored idle excerpts already fold whitespace and may be clipped. Only
+  // full source bodies can prove an exact syntax match.
+  if (searching && parsed.mode !== "syntax") {
     const snip = snippetAround(idle.text, terms);
     if (snip?.ranges?.length) {
       return { kind: idle.kind, text: snip.text, ranges: snip.ranges, titleRanges };

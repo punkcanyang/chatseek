@@ -26,7 +26,15 @@
         spellcheck="false"
         enterkeyhint="search"
       />
+      <button type="button" class="search-help-toggle" id="searchHelpBtn" aria-expanded="false" aria-controls="searchHelp">?</button>
     </div>
+    <section class="search-help" id="searchHelp" role="region" aria-labelledby="searchHelpTitle" hidden>
+      <div class="search-help-head">
+        <h2 id="searchHelpTitle"></h2>
+        <button type="button" class="link" id="searchHelpClose"></button>
+      </div>
+      <ul id="searchHelpItems"></ul>
+    </section>
 
     <div class="filters" role="tablist">
       <button type="button" role="tab" aria-selected="true" class="chip is-on" data-scope="active" id="filterActive"></button>

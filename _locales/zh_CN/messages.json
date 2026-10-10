@@ -1,4 +1,31 @@
 {
+  "searchHelpOpen": {
+    "message": "搜索语法说明"
+  },
+  "searchHelpTitle": {
+    "message": "搜索语法"
+  },
+  "searchHelpClose": {
+    "message": "关闭"
+  },
+  "searchHelpPhrase": {
+    "message": "\"blue orchid\"：精确短语（不区分大小写）。"
+  },
+  "searchHelpWildcard": {
+    "message": "chat*：通配符，匹配整个词；* 可代表零个或多个字符。"
+  },
+  "searchHelpExclude": {
+    "message": "-草稿、-\"blue orchid\"、-title:草稿：排除匹配的对话。"
+  },
+  "searchHelpTitleOnly": {
+    "message": "title:相机、title:\"旧相机\"：只搜标题。"
+  },
+  "searchHelpCombine": {
+    "message": "条件可组合，且须全部匹配；普通词同时搜索标题和消息。"
+  },
+  "searchHelpFallback": {
+    "message": "引号未配对、空条件或只有排除词时，改用普通搜索。"
+  },
   "extName": {
     "message": "Chatseek"
   },
