@@ -201,6 +201,12 @@ const rowFor = (id) => document.querySelector(`.item[data-id="${id}"]`);
 
 await import("../sidepanel/panel.js");
 
+const authorLinks = document.querySelectorAll("footer.foot a");
+const authorLink = authorLinks[0];
+assert(authorLinks.length === 1 && authorLink.textContent === "@punkcan", "footer has one author link");
+assert(authorLink.getAttribute("href") === "https://x.com/punkcan", "author link uses the exact fixed URL");
+assert(authorLink.getAttribute("target") === "_blank" && authorLink.relList.contains("noopener"), "author link opens a safe new tab");
+
 await until(() => currentIds().length === 1, "initial current row");
 assert(currentIds()[0] === A.id, `initial frame on A, got ${currentIds()}`);
 assert(rowFor(A.id).getAttribute("aria-current") === "true", "aria-current on the framed row");
@@ -514,6 +520,8 @@ assert(CATALOG["zh-TW"].remove === "從索引移除", "zh-TW remove copy");
 for (const code of LOCALE_ORDER) {
   document.getElementById("lang").value = code;
   document.getElementById("lang").dispatchEvent(new window.Event("change"));
+  assert(document.querySelectorAll("footer.foot a").length === 1
+    && authorLink.isConnected && authorLink.textContent === "@punkcan", `${code} keeps the same author link`);
   const expected = CATALOG[code].remove;
   await until(() => {
     const btn = document.querySelector(".remove");

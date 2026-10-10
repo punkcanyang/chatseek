@@ -119,3 +119,5 @@ npm run test:gemini   # Gemini 收录到 IndexedDB 全流程
 ## License
 
 [MIT](LICENSE)
+
+作者：[@punkcan](https://x.com/punkcan)

@@ -1248,6 +1248,20 @@ if (chrome.tabs?.onUpdated) {
   });
 }
 
+function mountAuthorLink() {
+  const row = document.createElement("p");
+  row.className = "meta";
+  const link = document.createElement("a");
+  link.className = "link";
+  link.textContent = "@punkcan";
+  link.setAttribute("href", "https://x.com/punkcan");
+  link.setAttribute("target", "_blank");
+  link.setAttribute("rel", "noopener");
+  row.append(link);
+  document.querySelector("footer.foot").append(row);
+}
+
+mountAuthorLink();
 applyStatic();
 initSync();
 resolvePanelWindow().then(syncActiveTab);
