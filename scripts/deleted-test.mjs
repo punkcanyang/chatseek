@@ -14,9 +14,10 @@ const originalNow = Date.now;
 Date.now = () => now;
 let listener;
 const tabs = new Map();
+const broadcasts = [];
 globalThis.chrome = {
   runtime: { id: "deleted-fixture", onInstalled: { addListener() {} }, onStartup: { addListener() {} },
-    onMessage: { addListener(fn) { listener = fn; } }, sendMessage: () => Promise.resolve() },
+    onMessage: { addListener(fn) { listener = fn; } }, sendMessage: (msg) => { broadcasts.push(msg); return Promise.resolve(); } },
   tabs: { get: async (id) => ({ url: tabs.get(id)?.window.location.href || "" }),
     onUpdated: { addListener() {} }, onRemoved: { addListener() {} } },
   sidePanel: { setPanelBehavior: () => Promise.resolve() },
@@ -280,6 +281,7 @@ for (const platform of Object.keys(urls)) {
   const conv = conversationFromUrl(urls[platform]);
   await db.restoreConversation(conv.id);
   const before = await db.readConversation(conv.id);
+  const broadcastStart = broadcasts.length;
   const clock = virtualClock();
   let mutations = 0;
   const h = harness(platform, "<main><h1>Conversation not found</h1></main>", urls[platform], true,
@@ -299,6 +301,19 @@ for (const platform of Object.keys(urls)) {
   const count = observed.length;
   await clock.advance(1200);
   assert(h.sent.filter((msg) => msg.type === "DELETED_OBSERVATION").length === count, `${platform}: confirmation stops owned checks`);
+  const indexCount = () => broadcasts.slice(broadcastStart).filter((msg) => msg.type === "INDEX_UPDATED").length;
+  assert(indexCount() === 2, `${platform}: static error broadcasts once for health and once for archive`);
+  const archivedAt = stored.conversation.archivedAt;
+  await clock.advance(60000); // Include generic capture backoff after confirmation.
+  assert(indexCount() === 2, `${platform}: static confirmed error never causes a refresh storm`);
+  await Promise.all(Array.from({ length: 40 }, () => h.api.checkDeletedPage(platform)));
+  assert(indexCount() === 2, `${platform}: concurrent repeated confirmations do not broadcast`);
+  assert((await db.readConversation(conv.id)).conversation.archivedAt === archivedAt, `${platform}: repeated confirmations preserve archive time`);
+  const recovered = await Promise.all(Array.from({ length: 40 }, () => new Promise((resolve) => {
+    listener({ type: "RESTORE_SITE_DELETED", platform, id: conv.id, messageCount: 1 },
+      { frameId: 0, url: urls[platform], tab: { id: h.id, url: urls[platform] } }, resolve);
+  })));
+  assert(recovered.filter((res) => res.changed).length === 1 && indexCount() === 3, `${platform}: concurrent recovery broadcasts exactly once`);
   h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
   await db.restoreConversation(conv.id);
 }

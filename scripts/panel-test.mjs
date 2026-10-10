@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { clearImageCache, openDb, saveImageRecords, searchConversations, upsertConversations, upsertMessages } from "../src/db.js";
+import { clearImageCache, openDb, saveImageRecords, searchConversations, setSiteDeletedState, upsertConversations, upsertMessages } from "../src/db.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import {
   activeTabUrl,
@@ -746,6 +746,36 @@ message({type:"INDEX_UPDATED"});
 await sleep(500);
 assert(document.getElementById("status").textContent.includes(String(structureText.length)), "refresh must preserve the copy character count");
 assert(!document.getElementById("status").hidden, "copy confirmation remains visible during refresh");
+
+// Use the real panel listener/render path: an index burst must coalesce, settle,
+// and leave the archive/active controls responsive. No browser paint is mocked.
+q.value = "";
+q.dispatchEvent(new window.Event("input"));
+await sleep(500);
+const deletedSample = { ...chatgpt(1750), title: "Sample deleted garden" };
+await upsertMessages(deletedSample, [{ id: `${deletedSample.id}:u`, role: "user", body: "Sample garden fern" }]);
+await setSiteDeletedState(deletedSample.id, true);
+let renders = 0;
+const renderObserver = new window.MutationObserver((records) => {
+  if (records.some((record) => record.removedNodes.length)) renders++;
+});
+renderObserver.observe(document.getElementById("list"), { childList: true });
+for (let i = 0; i < 100; i++) message({ type: "INDEX_UPDATED" });
+await sleep(600);
+assert(renders === 1, "100 index notifications coalesce into one list replacement");
+await sleep(600);
+assert(renders === 1, "index refresh settles without scheduling itself again");
+document.getElementById("filterArchived").click();
+await until(() => rowFor(deletedSample.id)?.querySelector(".deleted-note"), "deleted sample renders in archive scope");
+assert(rowFor(deletedSample.id).querySelector(".deleted-note").textContent === CATALOG[document.documentElement.lang].siteDeleted, "archive row uses the localized deletion label");
+assert(rowFor(deletedSample.id).querySelector(".badge-archived"), "deletion label keeps the archive badge");
+await setSiteDeletedState(deletedSample.id, false);
+for (let i = 0; i < 100; i++) message({ type: "INDEX_UPDATED" });
+await until(() => !rowFor(deletedSample.id), "recovery removes the archive row after index burst");
+document.getElementById("filterActive").click();
+await until(() => rowFor(deletedSample.id), "active scope responds after recovery");
+assert(!rowFor(deletedSample.id).querySelector(".deleted-note") && !rowFor(deletedSample.id).querySelector(".badge-archived"), "recovered row has neither archive label");
+renderObserver.disconnect();
 
 console.log("panel-test ok", { checks, scrolls: scrolled.length, helpLocales: LOCALE_ORDER.length, helpKeys: ["Enter", "Space", "Escape"] });
 process.exit(0);
