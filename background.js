@@ -181,6 +181,8 @@ function captureMeta(msg) {
     ? msg.bodyHash : transcriptHash(msg.messages || []);
   return { pageMessageIds: ids, captureId, bodyHash,
     identityVerified: msg.identityVerified === true,
+    guardTranscript: msg.platform === "chatgpt" && msg.guardTranscript === true,
+    ownershipVerified: msg.ownershipVerified === true,
     completePage: msg.completePage === true };
 }
 

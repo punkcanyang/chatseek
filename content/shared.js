@@ -975,6 +975,26 @@ const Chatseek = {
     return Chatseek.hash(JSON.stringify(messages.map(m => String(m.body || ""))));
   },
 
+  nativeTurnKeys(conversationId, messages) {
+    const prefix = conversationId + ":";
+    return messages.map(m => m.id?.startsWith(prefix) ? m.id.slice(prefix.length) : "")
+      .filter(id => id && !/^[0-9a-f]{1,8}:dom\d+$/.test(id));
+  },
+
+  bodyTurnKeys(messages, fallbackOnly = false) {
+    return messages.filter(m => !fallbackOnly || /^(?:chatgpt|claude|grok|gemini):[^:]+:[0-9a-f]{1,8}:dom\d+$/.test(m.id || ""))
+      .flatMap(m => [40, 80, 160].filter(length => (m.body || "").length >= length)
+        .map(length => `${m.role}:${length}:${Chatseek.transcriptHash([{ body: m.body.slice(0, length) }])}`));
+  },
+
+  ownershipParent(node) {
+    if (node.parentElement) return node.parentElement;
+    const host = node.getRootNode?.().host;
+    if (host) return host;
+    try { return node.ownerDocument?.defaultView?.frameElement || null; }
+    catch { return null; }
+  },
+
   // A DOM node, rather than its wording or its window-local position, owns
   // a fallback identity. The session salt prevents collisions after reloads.
   createTurnIdentity(platform) {
@@ -1028,7 +1048,7 @@ const Chatseek = {
         }
       }
       for (const node of nodes) {
-        for (let el = node; el; el = el.parentElement) {
+        for (let el = node; el; el = Chatseek.ownershipParent(el)) {
           const id = el.getAttribute?.("data-conversation-id");
           if (id && /^[A-Za-z0-9_-]{8,128}$/.test(id)) ids.push(normalizeId(id));
         }
@@ -1071,6 +1091,11 @@ const Chatseek = {
     const sizes = nodes.map(n => Number(n.getAttribute("aria-setsize")));
     const positions = nodes.map(n => Number(n.getAttribute("aria-posinset")));
     if (sizes.every(n => n === nodes.length) && positions.every((n, index) => n === index + 1)) return true;
+    return Chatseek.mappedTranscript(doc, extracted, platformId);
+  },
+
+  mappedTranscript(doc, extracted, platformId) {
+    if (!extracted.messages?.length) return false;
     // ChatGPT may embed its exported conversation mapping in JSON. Only the
     // selected current_node ancestry counts (branches are not visible turns).
     // Exact text coverage proves both boundaries without guessing scroll size.
@@ -1355,6 +1380,8 @@ const Chatseek = {
         captureId,
         bodyHash,
         identityVerified: !!identity,
+        guardTranscript: identity?.guardTranscript === true,
+        ownershipVerified: identity?.ownershipVerified?.() === true,
         completePage: completeSent,
       });
       if (!res || !res.ok) return false;

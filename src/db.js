@@ -12,6 +12,7 @@ import { mergeMessageOrder, orderMessages } from "./message-order.js";
 import { compareConversations, RELEVANCE_WEIGHT, relevanceScore } from "./sort-list.js";
 import { normalizeImageRecord } from "./image-cache.js";
 import { isProgressText, planProgressMerges } from "./image-progress.js";
+import { nativeTurnKeys, bodyTurnKeys } from "./spa-identity.js";
 
 const DB_NAME = "chatseek";
 const DB_VERSION = 4;
@@ -383,6 +384,22 @@ async function writeConversations(db, list, { reopened = false } = {}) {
 // Serialize capture entry calls in this worker; the persisted meta gate also
 // survives worker restarts. No DOM/body/id details enter diagnostics.
 let captureQueue = Promise.resolve();
+// Unlike the short duplicate debounce, known transcript ownership does not
+// become safe merely with age. Keep this bounded and local (no schema bump).
+function foreignTranscript(rows, conversationId, hash) {
+  const platform = conversationId.split(":")[0] + ":";
+  const matches = (rows || []).filter(row => row.hash === hash && row.convId?.startsWith(platform));
+  return matches.some(row => row.convId !== conversationId) &&
+    !matches.some(row => row.convId === conversationId);
+}
+function foreignTurns(rows, conversationId, keys) {
+  const owners = new Map();
+  for (const row of rows || []) {
+    if (!owners.has(row.key)) owners.set(row.key, new Set());
+    owners.get(row.key).add(row.convId);
+  }
+  return keys.some(key => owners.has(key) && !owners.get(key).has(conversationId));
+}
 export async function upsertMessages(conversation, messages, meta = {}) {
   if (!conversation?.id || !messages?.length) return { observed: false };
   const write = async () => {
@@ -390,6 +407,14 @@ export async function upsertMessages(conversation, messages, meta = {}) {
       const held = await withDb(async db => {
         const tx = db.transaction("meta", "readonly");
         const gate = await requestDone(tx.objectStore("meta").get("spa:recent"));
+        if (meta.guardTranscript && !meta.ownershipVerified) {
+          const owners = await requestDone(tx.objectStore("meta").get("spa:owners"));
+          if (foreignTranscript(owners?.rows || gate?.rows, conversation.id, meta.bodyHash)) return true;
+          const turns = await requestDone(tx.objectStore("meta").get("spa:turn-owners"));
+          if (foreignTurns(turns?.rows, conversation.id, nativeTurnKeys(conversation.id, messages))) return true;
+          const bodies = await requestDone(tx.objectStore("meta").get("spa:body-owners"));
+          if (foreignTurns(bodies?.rows, conversation.id, bodyTurnKeys(messages, true))) return true;
+        }
         return (gate?.rows || []).some(row => row.hash === meta.bodyHash &&
           row.convId !== conversation.id && Date.now() - row.at < 5000);
       });
@@ -416,8 +441,37 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   const metaStore = tx.objectStore("meta");
 
   let gateRows = [];
+  let ownerRows = [];
+  let turnRows = [];
+  let bodyRows = [];
   if (meta.bodyHash) {
     const gate = await requestDone(metaStore.get("spa:recent"));
+    if (meta.guardTranscript) {
+      const owners = await requestDone(metaStore.get("spa:owners"));
+      ownerRows = owners?.rows || gate?.rows || [];
+      const turns = await requestDone(metaStore.get("spa:turn-owners"));
+      turnRows = turns?.rows || [];
+      const bodies = await requestDone(metaStore.get("spa:body-owners"));
+      bodyRows = bodies?.rows || [];
+      const keys = nativeTurnKeys(conversation.id, messages);
+      if (!meta.ownershipVerified && (foreignTranscript(ownerRows, conversation.id, meta.bodyHash) ||
+          foreignTurns(turnRows, conversation.id, keys) ||
+          foreignTurns(bodyRows, conversation.id, bodyTurnKeys(messages, true)))) {
+        await txDone(tx);
+        return { observed: false, held: true };
+      }
+      ownerRows = ownerRows.filter(row => !(row.hash === meta.bodyHash && row.convId === conversation.id));
+      ownerRows.push({ hash: meta.bodyHash, convId: conversation.id });
+      ownerRows = ownerRows.slice(-512);
+      const currentKeys = new Set(keys);
+      turnRows = turnRows.filter(row => row.convId !== conversation.id || !currentKeys.has(row.key));
+      turnRows.push(...keys.map(key => ({ key, convId: conversation.id })));
+      turnRows = turnRows.slice(-2048);
+      const bodyKeys = new Set(bodyTurnKeys(messages));
+      bodyRows = bodyRows.filter(row => row.convId !== conversation.id || !bodyKeys.has(row.key));
+      bodyRows.push(...[...bodyKeys].map(key => ({ key, convId: conversation.id })));
+      bodyRows = bodyRows.slice(-2048);
+    }
     gateRows = (gate?.rows || []).filter(row => Date.now() - row.at < 5000);
     if (gateRows.some(row => row.hash === meta.bodyHash && row.convId !== conversation.id)) {
       await txDone(tx);
@@ -832,6 +886,11 @@ async function writeMessages(db, conversation, messages, meta = {}) {
   if (meta.bodyHash) {
     gateRows[gateRows.length - 1].at = Date.now();
     metaStore.put({ key: "spa:recent", rows: gateRows });
+    if (meta.guardTranscript) {
+      metaStore.put({ key: "spa:owners", rows: ownerRows });
+      metaStore.put({ key: "spa:turn-owners", rows: turnRows });
+      metaStore.put({ key: "spa:body-owners", rows: bodyRows });
+    }
   }
   await txDone(tx);
   return { observed: observedNow };

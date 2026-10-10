@@ -88,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.2.2") fail(`version should be 1.7.2.2, got ${manifest.version}`);
+if (manifest.version !== "1.7.2.3") fail(`version should be 1.7.2.3, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -1352,6 +1352,15 @@ for (const symbol of ["spa:recent", "5000", "identityVerified", "completePage"])
 }
 if (!backgroundSrc.includes("bodyHash") || !backgroundSrc.includes("result?.held")) fail("background must forward the transcript guard and hold result");
 if (!chatgptSrc.includes("here.href !== captureHref")) fail("awaited extraction must discard a changed URL");
+for (const symbol of ["nativeTurnKeys", "bodyTurnKeys", "ownershipParent", "mappedTranscript"]) {
+  if (!sharedSrc.includes(symbol)) fail(`content ownership guard missing: ${symbol}`);
+}
+for (const symbol of ["beforeNavigation", "currententrychange", "navigationEpoch", "current.messages.some", "ownershipVerified"]) {
+  if (!chatgptSrc.includes(symbol)) fail(`ChatGPT ownership guard missing: ${symbol}`);
+}
+for (const symbol of ["spa:owners", "spa:turn-owners", "spa:body-owners", "foreignTurns"]) {
+  if (!read("src/db.js").includes(symbol)) fail(`persistent ownership guard missing: ${symbol}`);
+}
 
 if (errors.length) {
   console.error(errors.map((e) => "x " + e).join("\n"));

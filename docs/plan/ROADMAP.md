@@ -1,6 +1,6 @@
 # Chatseek 路線圖
 
-更新：2026-10-10（UTC）。1.7.2.2 合并基準 `a11aa7b`（1.7.2.1 ＋公开仓库文档决议）。
+更新：2026-10-10（UTC）。1.7.2.3 热修基準 `d120255`（1.7.2.2）。
 接手前先讀根目錄 `AGENTS.md`。每版細節在 `notes/HANDOFF-*.md`、`notes/CHANGELOG-*.md`；開工卡在 `docs/plan/cards/`。
 
 ## 已出版本（都已合進 main）
@@ -29,6 +29,10 @@
 
 權限從頭到尾都是 `permissions: ["sidePanel"]`，加上 8 個 host（四家網域）。資料庫版本 4。
 
+## 1.7.2.3（ChatGPT 会话归属热修）
+
+用户确认 1.7.2.2 在 ChatGPT 切换会话后，清单 A 会读到 B 正文。分支 `fix/conversation-attribution` 以导航前只读快照、navigation epoch、持久化有界 transcript／原生轮次／fallback 正文前缀归属和发送前重新提取挡住已复现路径；不按五秒到期或 remount 新节点授权。14 组正式归属回归、完整离线检查、两项真实扩展 Chrome for Testing e2e、样例截图与三个性能对照已通过，另一个 Codex session 复审。最终 SHA 与合并状态见本版 PR 说明。开工卡 `docs/plan/cards/开工卡-Chatseek-1.7.2.3-ChatGPT会话归属-2026-10-10.md`，交接 `notes/HANDOFF-1.7.2.3.md`。旧错配正文不自动猜测删除；用户可对确认错误的单项索引移除后重新打开原网站会话收录。首次未知无标记 DOM、短 fallback 与有界缓存等证据限制见交接。
+
 ## 1.7.2.2（收录完整性修复，PR #22）
 
 用户授权修复并要求检查后合并，分支 `fix/capture-integrity`：重复正常轮次保护、流式消息身份约束、四家 SPA 页面归属、Claude／Grok 备用消息 ID、ChatGPT heuristic 重复消息，以及相关异步图片归属。完整离线测试、28 项新增回归、独立 session 代码复审通过；原系统 Chromium 的加载限制已通过官方 Chrome for Testing 的两项完整扩展 e2e 补齐，样例截图及三个性能对照已完成。按授权经 PR 合入 main，PR／merge 信息见 PR 说明。范围与证据见 `docs/plan/cards/开工卡-Chatseek-1.7.2.2-收录完整性-2026-10-10.md`、`notes/HANDOFF-1.7.2.2.md`。
@@ -56,4 +60,4 @@
 
 ## 之後
 
-見 `docs/plan/BACKLOG.md`。1.7.3 骨架修封存、1.7.4 搜尋語法的版號規劃維持；本次只做 1.7.2.1 熱修。
+見 `docs/plan/BACKLOG.md`。1.7.3 骨架修封存、1.7.4 搜尋語法的版號規劃維持；本次只做 1.7.2.3 熱修。
