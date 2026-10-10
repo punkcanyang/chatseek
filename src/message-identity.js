@@ -56,7 +56,7 @@ function shrinksTurn(storedBody, pageBody) {
  * the position in the full page id list. Same-index growth or trim links a
  * streamed tail. A later bubble keeps its own id.
  */
-export function alignRekeyedTurns(stored, page) {
+export function alignRekeyedTurns(stored, page, { pageIds = [], completePage = false } = {}) {
   const rows = stored || [];
   const items = page || [];
   const n = rows.length;
@@ -65,6 +65,12 @@ export function alignRekeyedTurns(stored, page) {
   const usedS = new Set();
   const usedP = new Set();
   const stampS = rows.map((msg) => turnStamp(msg?.role, msg?.body));
+  const synthetic = id => /^(?:chatgpt|claude|grok|gemini):[^:]+:[0-9a-f]{1,8}:dom\d+$/.test(id || "");
+  const conflicts = (row, item) => row.turnId && item.turnId && row.turnId !== item.turnId &&
+    !(synthetic(row.id) && synthetic(item.id));
+  const stableAt = new Map(rows.map((row, index) => [row.id, index]));
+  const anchors = pageIds.map((id, index) => ({ index, stored: stableAt.get(id) }))
+    .filter(a => a.stored !== undefined);
 
   for (let j = 0; j < m; j++) {
     const item = items[j];
@@ -88,7 +94,7 @@ export function alignRekeyedTurns(stored, page) {
       const index = Number.isInteger(item.index) ? item.index : j;
       const i = index + d;
       if (i < 0 || i >= n || usedS.has(i)) continue;
-      if (stampS[i] && stampS[i] === stamp) pairs.push([i, j]);
+      if (stampS[i] && stampS[i] === stamp && !conflicts(rows[i], item)) pairs.push([i, j]);
     }
     if (!pairs.length) continue;
     const coversTail = pairs.some(([i]) => i === n - 1);
@@ -113,6 +119,12 @@ export function alignRekeyedTurns(stored, page) {
     if (!item?.id || !item.body || map.has(item.id)) continue;
     const index = Number.isInteger(item.index) ? item.index : j;
     if (index < 0 || index >= n || usedS.has(index)) continue;
+    const row = rows[index];
+    if (canonicalRole(row.role) !== canonicalRole(item.role) || conflicts(row, item)) continue;
+    const sameTurn = !!row.turnId && row.turnId === item.turnId;
+    const anchored = anchors.some(a => a.stored === a.index && Math.abs(a.index - index) === 1);
+    const completeSynthetic = completePage && pageIds.length === n && synthetic(row.id) && synthetic(item.id);
+    if (!sameTurn && !(synthetic(row.id) && synthetic(item.id) && (anchored || completeSynthetic))) continue;
     if (!growsTurn(rows[index].body, item.body) && !shrinksTurn(rows[index].body, item.body)) {
       continue;
     }
@@ -151,8 +163,11 @@ export function alignRekeyedTurns(stored, page) {
  * One repeated sentence is not a clone of a whole transcript (length < 2).
  * A page that itself shows both copies is not collapsed.
  */
-export function planCloneDrops(stored, pageIds, pageMessages) {
+export function planCloneDrops(stored, pageIds, pageMessages, { completePage = false } = {}) {
   const empty = [];
+  // Repeated wording alone never proves corruption. A partial window and
+  // distinct native turns must survive even when whole exchanges repeat.
+  if (!completePage) return empty;
   const ids = (pageIds || []).filter(Boolean);
   const L = ids.length;
   const rows = stored || [];
@@ -164,6 +179,7 @@ export function planCloneDrops(stored, pageIds, pageMessages) {
   for (let c = 1; c < copies; c++) {
     for (let i = 0; i < L; i++) {
       if (keys[i] !== keys[c * L + i]) return empty;
+      if (!rows[i].turnId || rows[i].turnId !== rows[c * L + i].turnId) return empty;
     }
   }
   const byId = new Map();
@@ -194,6 +210,7 @@ export function planCloneDrops(stored, pageIds, pageMessages) {
   for (let c = 0; c < copies; c++) {
     if (c === keep) continue;
     for (let i = 0; i < L; i++) {
+      if (!/^(?:chatgpt|claude|grok|gemini):[^:]+:[0-9a-f]{1,8}:dom\d+$/.test(blocks[c][i])) return empty;
       if (blocks[c][i] && blocks[c][i] !== blocks[keep][i]) {
         moves.push({ from: blocks[c][i], to: blocks[keep][i] });
       }

@@ -12,12 +12,12 @@
   let liveTurnSequence = 0;
   let previousPage = null;
 
-  function messageIdFor(node, conversationId, role, body) {
+  function messageIdFor(node, conversationId, role, body, ownNode = false) {
     const explicit = node.getAttribute("data-message-id") ||
       node.querySelector("[data-message-id]")?.getAttribute("data-message-id") ||
       node.getAttribute("data-turn-id");
     if (explicit) return `${PLATFORM}:${conversationId}:${explicit}`;
-    const host = turnOf(node);
+    const host = ownNode ? node : turnOf(node);
     const scope = `${conversationId}:${role}`;
     const previous = liveTurnIds.get(host);
     if (previous?.scope === scope) return previous.id;
@@ -318,7 +318,9 @@
     const body = settledBody(rendered, block.el, role);
     if (!Chatseek.isSubstantive(body) ||
         (String(body).trim().length < 24 && !Chatseek._hasContentImage(block.el))) return null;
-    const id = messageIdFor(block.el, conversationId, role, body);
+    // An outer article may wrap several heuristic blocks. Each selected
+    // block owns its fallback id; that shared wrapper is not a turn.
+    const id = messageIdFor(block.el, conversationId, role, body, true);
     // Unknown heuristic roles are stored as assistant, so use the same status
     // rule here. Explicit user turns are always preserved.
     const progress = role !== "user" && Chatseek.isProgressMessage(body, block.el);
@@ -332,9 +334,8 @@
 
   function rememberHeuristic(chosen, built, seen) {
     if (!built) return;
-    const key = `${built.message.role}:${built.message.body}`;
-    if (seen.has(key)) return;
-    seen.add(key);
+    if (seen.has(built.node)) return;
+    seen.add(built.node);
     chosen.push(built);
   }
 
@@ -489,10 +490,8 @@
         return !current.banner && !current.archiveRoots.some((node) =>
           Chatseek._archiveListIds(node).includes(platformId));
       };
-      if (!state.pageIdentity) {
-        const initial = extractMessages(platformId, root, false);
-        if (initial.messages.length) Chatseek.pageIdentity(state, root, captureHref, platformId, initial);
-      }
+      const initial = extractMessages(platformId, root, false);
+      if (initial.messages.length || state.pageIdentity) Chatseek.pageIdentity(state, root, captureHref, platformId, initial);
       extracted = await extractMessagesPaced(platformId, root);
     }
     // Record the DOM before further awaits, even if this capture is held or
@@ -550,6 +549,7 @@
     if (conversation && result && identity?.check()) {
       Chatseek.safeScheduleImages({
         conversationId: conversation.id,
+        isCurrent: identity.check,
         items: imageHosts,
       });
     }

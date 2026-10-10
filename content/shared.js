@@ -975,42 +975,72 @@ const Chatseek = {
     return Chatseek.hash(JSON.stringify(messages.map(m => String(m.body || ""))));
   },
 
+  // A DOM node, rather than its wording or its window-local position, owns
+  // a fallback identity. The session salt prevents collisions after reloads.
+  createTurnIdentity(platform) {
+    const turns = new WeakMap();
+    const session = String(Math.floor(Math.random() * 1e12));
+    let sequence = 0;
+    return (node, conversationId, role, body, nativeId) => {
+      const scope = `${conversationId}:${role}`;
+      const previous = turns.get(node);
+      if (previous?.scope === scope && (!nativeId || !previous.nativeId || previous.nativeId === nativeId)) {
+        // A native id may arrive mid-stream; it does not create another turn.
+        if (nativeId) previous.nativeId = nativeId;
+        return previous.id;
+      }
+      const id = nativeId ? `${platform}:${conversationId}:${nativeId}`
+        : `${platform}:${conversationId}:${Chatseek.hash(role + ":" + body)}:dom${session}${++sequence}`;
+      turns.set(node, { scope, id, nativeId });
+      return id;
+    };
+  },
+
   // A successful observation, not a successful write, owns this baseline.
   // Keep all pre-switch nodes weakly, including across rapid B -> C switches.
-  pageIdentity(state, doc, href, platformId, extracted) {
+  pageIdentity(state, doc, href, platformId, extracted, resolveId = Chatseek.conversationIdFromPath,
+    normalizeId = id => Chatseek.UUID.test(id) ? id.toLowerCase() : id) {
     const nodes = extracted.nodes || [];
     const hash = Chatseek.transcriptHash(extracted.messages);
     let page = state.pageIdentity;
     if (!page) {
-      page = state.pageIdentity = { href, baselineHref: href, nodes: new WeakSet(nodes), hash, pending: false };
+      page = state.pageIdentity = {
+        href, baselineHref: href, nodes: new WeakSet(nodes), baselineNodes: new WeakSet(nodes),
+        observedNodes: nodes, hash, pending: false,
+      };
     } else if (page.href !== href) {
+      // A held mixed A/B screen still belongs to B's observation. If the URL
+      // advances to C, its B nodes must become residual too, even though B
+      // was never accepted or stored. Add only the PREVIOUS observation.
+      for (const node of page.observedNodes || []) page.nodes.add(node);
       page.href = href;
       page.pending = true;
     }
+    page.observedNodes = nodes;
     const readMarkers = () => {
       const ids = [];
       for (const root of Chatseek.readScopes(doc).map(scope => scope.node)) {
         for (const el of root.querySelectorAll(
           'a[aria-current="page"], a[aria-current="true"], a[data-active="true"], ' +
           '[data-active="true"] a[href], link[rel="canonical"], meta[property="og:url"]')) {
-          const id = Chatseek.conversationIdFromPath(el.getAttribute("href") || el.getAttribute("content"));
+          const id = resolveId(el.getAttribute("href") || el.getAttribute("content"));
           if (id) ids.push(id);
         }
       }
       for (const node of nodes) {
         for (let el = node; el; el = el.parentElement) {
           const id = el.getAttribute?.("data-conversation-id");
-          if (id && Chatseek.UUID.test(id)) ids.push(id.toLowerCase());
+          if (id && /^[A-Za-z0-9_-]{8,128}$/.test(id)) ids.push(normalizeId(id));
         }
       }
       return ids;
     };
     const check = () => {
-      if (doc.location?.href !== href || Chatseek.conversationIdFromPath(href) !== platformId) return false;
+      if (doc.location?.href !== href || resolveId(href) !== platformId) return false;
       const markers = readMarkers();
       if (markers.some(id => id !== platformId)) return false;
       if (!nodes.length || nodes.some(n => !n.isConnected)) return false;
-      if (page.pending && !(href === page.baselineHref && hash === page.hash && nodes.every(n => page.nodes.has(n)))) {
+      if (page.pending && !(href === page.baselineHref && hash === page.hash && nodes.every(n => page.baselineNodes.has(n)))) {
         // Even an updated sidebar/canonical link cannot authorize residual
         // old turns. Mixed old/new DOM also stays held.
         if (nodes.some(n => page.nodes.has(n))) return false;
@@ -1023,6 +1053,7 @@ const Chatseek = {
     const accept = () => {
       page.baselineHref = href;
       page.nodes = new WeakSet(nodes);
+      page.baselineNodes = new WeakSet(nodes);
       page.hash = hash;
       page.pending = false;
     };

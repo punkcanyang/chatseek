@@ -262,7 +262,7 @@
     return false;
   }
 
-  async function collectContentImages(el, { platform, role, messageId = "", peers = null } = {}) {
+  async function collectContentImages(el, { platform, role, messageId = "", peers = null, allowImage = null } = {}) {
     if (!el || el.nodeType !== 1) return [];
     if (platform === "claude" && role !== "user") return [];
     const seen = new Set();
@@ -275,6 +275,7 @@
         const why = blocked(img, platform);
         if (why === true) continue;
         if (closerPeer(img, el, peers)) continue;
+        if (allowImage && !allowImage(img)) continue;
         if (messageId && !claimImage(img, messageId)) continue;
         const key = srcKey(img);
         if (key) {
@@ -498,7 +499,56 @@
     try { Chatseek.refreshImageDiag(); } catch { /* diag must not break images */ }
   }
 
+  function currentHref() {
+    return typeof location !== "undefined" ? location.href : document?.location?.href || "";
+  }
+
+  function currentJob(job) {
+    try {
+      return (!job.captureHref || currentHref() === job.captureHref) &&
+        job.el?.isConnected !== false && (!job.isCurrent || job.isCurrent()) &&
+        Chatseek.safeDomText(job.el, job.role === "user").text === job.domText;
+    } catch { return false; }
+  }
+
+  function imageSource(img) {
+    return JSON.stringify([img.getAttribute?.("src") || "", img.getAttribute?.("srcset") || "",
+      [...(img.parentElement?.tagName === "PICTURE" ? img.parentElement.querySelectorAll("source") : [])]
+        .map(source => [source.getAttribute("srcset"), source.getAttribute("media")])]);
+  }
+
+  // Freeze which pictures were present when the message was accepted. The
+  // queued scan may yield or run after a reused host has acquired new images.
+  function imageSnapshot(el, platform) {
+    const images = new Map();
+    const seen = new Set();
+    const visit = (root, depth) => {
+      if (!root || depth > 4 || seen.has(root)) return;
+      seen.add(root);
+      root.querySelectorAll?.("img").forEach(img => images.set(img, {
+        source: imageSource(img), currentSrc: img.currentSrc || "",
+      }));
+      const nodes = root.querySelectorAll?.("*") || [];
+      for (let i = 0; i < Math.min(nodes.length, 800); i += 1) {
+        const node = nodes[i];
+        if (isArtifact(node)) continue;
+        if (node.tagName === "IFRAME") {
+          try { visit(node.contentDocument?.documentElement, depth + 1); } catch { /* inaccessible frame */ }
+        } else visit(adoptedShadow(node), depth + 1);
+      }
+    };
+    for (const root of searchRoots(el, platform)) visit(root, 0);
+    return images;
+  }
+
+  function currentImage(job, img) {
+    const initial = job.images.get(img);
+    return !!initial && img.isConnected !== false && initial.source === imageSource(img) &&
+      (!initial.currentSrc || initial.currentSrc === img.currentSrc);
+  }
+
   async function processJob(job, found) {
+    if (!currentJob(job)) return false;
     const platform = platformOf(job.conversationId);
     if (!found) {
       found = await collectContentImages(job.el, {
@@ -506,12 +556,15 @@
         role: job.role,
         messageId: job.messageId,
         peers: job.peers,
+        allowImage: img => currentJob(job) && currentImage(job, img),
       });
     }
     let worked = false;
     for (let index = 0; index < found.length; index += 1) {
+      if (!currentJob(job)) return false;
       const item = found[index];
       const img = item.img;
+      if (!currentImage(job, img)) continue;
       const key = `${job.messageId}:${index}`;
       const prev = String(done.get(key) || "");
       if (prev.endsWith(":stop") || (tries.get(key) || 0) >= MAX_TRIES) continue;
@@ -542,6 +595,9 @@
   }
 
   async function storeImage(job, img, index, encoded, fp) {
+    // Collection, idle painting and canvas encoding all yield. A job from
+    // another page must not store a newly reused host's images or metadata.
+    if (!currentJob(job) || !currentImage(job, img)) return;
     const key = `${job.messageId}:${index}`;
     const status = storedStatus(encoded);
     if (!status) return;
@@ -587,7 +643,7 @@
   }
 
   function watchUntilPainted(job, img) {
-    if (!img || waiting.has(img) || typeof img.addEventListener !== "function") return;
+    if (!currentJob(job) || !img || !currentImage(job, img) || waiting.has(img) || typeof img.addEventListener !== "function") return;
     if (img.complete) return;
     waiting.add(img);
     let settled = false;
@@ -595,9 +651,11 @@
       if (settled) return;
       settled = true;
       waiting.delete(img);
-      if (!loaded) return;
+      if (!loaded || !currentJob(job) || !currentImage(job, img)) return;
       scheduleMessageImages({
         conversationId: job.conversationId,
+        captureHref: job.captureHref,
+        isCurrent: job.isCurrent,
         items: [{
           messageId: job.messageId,
           role: job.role,
@@ -624,11 +682,12 @@
       const job = queue.shift();
       let found = [];
       try {
-        found = await collectContentImages(job.el, {
+        if (currentJob(job)) found = await collectContentImages(job.el, {
           platform: platformOf(job.conversationId),
           role: job.role,
           messageId: job.messageId,
           peers: job.peers,
+          allowImage: img => currentJob(job) && currentImage(job, img),
         });
       } catch {
         found = [];
@@ -660,7 +719,7 @@
     }
   }
 
-  function scheduleMessageImagesInner({ conversationId, items } = {}) {
+  function scheduleMessageImagesInner({ conversationId, items, isCurrent, captureHref = currentHref() } = {}) {
     if (inChildFrame()) return;
     if (!conversationId || !items?.length) return;
     const prompts = new Map();
@@ -683,11 +742,15 @@
     for (const item of fresh.values()) {
       queue.push({
         conversationId,
+        captureHref,
+        isCurrent,
         messageId: item.messageId,
         role: item.role || "",
         el: item.el,
         body: String(item.body || ""),
         offsets: item.offsets || null,
+        domText: Chatseek.safeDomText(item.el, item.role === "user").text,
+        images: imageSnapshot(item.el, platformOf(conversationId)),
         prompt: prompts.get(item.messageId) || "",
         peers,
       });

@@ -283,6 +283,7 @@ async function main() {
       args: [
         "--disable-gpu",
         "--no-sandbox",
+        "--no-proxy-server", // Fixture domains resolve to localhost, never the network proxy.
         "--disable-dev-shm-usage",
         "--ignore-certificate-errors",
         "--allow-insecure-localhost",

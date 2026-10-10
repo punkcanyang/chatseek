@@ -417,7 +417,7 @@ assert(read.messages.map((msg) => msg.body).join() === "first,second,third,fourt
 const m2Before = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
 assert(m2Before.captureIndex === 1, `page position stored ${m2Before.captureIndex}`);
 await new Promise((resolve) => setTimeout(resolve, 5));
-await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second, streamed longer" }], { captureId: "stream" });
+await upsertMessages(conv, [{ id: `${id}:m2`, turnId: "reader-same-turn", role: "assistant", body: "second, streamed longer" }], { captureId: "stream" });
 const m2After = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
 assert(m2After.body === "second, streamed longer", "streamed body is saved");
 await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second" }], {
@@ -426,7 +426,7 @@ await upsertMessages(conv, [{ id: `${id}:m2`, role: "assistant", body: "second" 
 });
 const m2Kept = await requestDone(db.transaction("messages").objectStore("messages").get(`${id}:m2`));
 assert(m2Kept.body === "second, streamed longer", "a shorter prefix must not replace the stored turn");
-await upsertMessages(conv, [{ id: `${id}:frag`, role: "assistant", body: "second, streamed" }], {
+await upsertMessages(conv, [{ id: `${id}:frag`, turnId: "reader-same-turn", role: "assistant", body: "second, streamed" }], {
   pageMessageIds: [`${id}:frag`],
   captureId: "fragment",
 });

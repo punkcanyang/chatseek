@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const version = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")).version;
 const docs = join(root, "docs");
 const chromePath = process.env.CHROME_PATH || "/tmp/chrome-for-testing/chrome-linux64/chrome";
 const CLASSIC = "11111111-1111-4111-8111-111111111111";
@@ -637,6 +638,7 @@ async function main() {
       args: [
         "--disable-gpu",
         "--no-sandbox",
+        "--no-proxy-server", // Fixture domains resolve to localhost, never the network proxy.
         "--disable-features=DisableLoadExtensionCommandLineSwitch",
         "--disable-dev-shm-usage",
         "--ignore-certificate-errors",
@@ -719,7 +721,7 @@ async function main() {
       await until(async () => (await spaReader.$eval("#readerDate", el => el.textContent).catch(()=>""))?.includes("收錄於"), "SPA reader capture date");
       const body = await spaReader.$eval("#thread", el => el.textContent);
       assert(body.includes(SPA_BODIES[n]) && !body.includes(SPA_BODIES[1-n]), "SPA reader wrong body");
-      await spaReader.screenshot({path:join(docs, `reader-1.7.2.1-spa-${n ? "B" : "A"}.png`),fullPage:true});
+      await spaReader.screenshot({path:join(docs, `reader-${version}-spa-${n ? "B" : "A"}.png`),fullPage:true});
     }
     await spaReader.close();
     await probe.goto(`chrome-extension://${extensionId}/sidepanel/index.html`, {waitUntil:"domcontentloaded"});
@@ -731,13 +733,13 @@ async function main() {
       const times=await probe.$$eval("#list time", nodes=>nodes.map(n=>n.textContent));
       return times.length >= 2 && times.every(t=>t.includes("收錄於"));
     }, "SPA sidebar capture dates");
-    await probe.screenshot({path:join(docs,"panel-1.7.2.1-spa.png"),fullPage:true});
+    await probe.screenshot({path:join(docs,`panel-${version}-spa.png`),fullPage:true});
     if (process.argv.includes("--spa-only")) { console.log("SPA screenshots ok"); return; }
     await probe.evaluate(() => localStorage.removeItem("chatseek.uiLocale"));
     await probe.goto(`chrome-extension://${extensionId}/sidepanel/index.html`,{waitUntil:"domcontentloaded"});
 
     await openChat(`https://chatgpt.com/c/${CLASSIC}?model=gpt-4o`);
-    await until(async () => logs.some((line) => line.includes("[Chatseek] loaded v=1.7.2.1 platform=chatgpt")), "load banner", 10000);
+    await until(async () => logs.some((line) => line.includes(`[Chatseek] loaded v=${version} platform=chatgpt`)), "load banner", 10000);
     let db = await waitMsgs(CLASSIC, 2);
     const classic = convOf(db, CLASSIC);
     assert(classic && classic.messageCount === 2, `classic count ${classic && classic.messageCount}`);

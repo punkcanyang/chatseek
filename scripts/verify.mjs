@@ -88,7 +88,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.2.1") fail(`version should be 1.7.2.1, got ${manifest.version}`);
+if (manifest.version !== "1.7.2.2") fail(`version should be 1.7.2.2, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");

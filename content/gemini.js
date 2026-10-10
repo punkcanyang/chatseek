@@ -399,6 +399,7 @@
         return 0;
       });
       const messages = [];
+      const nodes = [];
       const used = new Set();
       const pushItem = (item) => {
         const body = messageBody(item.el, item.role);
@@ -417,6 +418,7 @@
           role: item.role,
           body,
         });
+        nodes.push(item.el);
         if (collectImages) imageHosts.push({
           el: item.el,
           messageId: id,
@@ -427,6 +429,7 @@
       };
       const pack = () => ({
         messages,
+        nodes,
         selector: hit.name,
         selectorsTried,
         selectorHits: Chatseek.countSelectors(root, MESSAGE_LAYERS),
@@ -447,6 +450,7 @@
       if (collectImages) imageHosts = [];
       return {
         messages: [],
+        nodes: [],
         selector: null,
         selectorsTried,
         selectorHits: Chatseek.countSelectors(root, MESSAGE_LAYERS),
@@ -508,16 +512,30 @@
   async function viewLive(doc, loc) {
     const root = doc || document;
     const here = loc || location;
+    const captureHref = here.href;
     const sidebar = extractSidebar(root, here);
     const temporary = Chatseek.pageKind(here, false) === "temporary";
     const platformId = temporary ? null : parseConversationPath(here.pathname || "")?.id || null;
+    const resolveId = raw => {
+      try { return parseConversationPath(new URL(raw, captureHref).pathname)?.id || null; }
+      catch { return null; }
+    };
+    if (platformId) {
+      const initial = extractMessages(platformId, root, false, false);
+      if (initial.messages.length || state.pageIdentity) Chatseek.pageIdentity(state, root, captureHref, platformId, initial, resolveId);
+    }
     const extracted = platformId
       ? await extractMessages(platformId, root, true)
       : { messages: [], selector: null, selectorsTried: MESSAGE_LAYERS.map((layer) => layer.name) };
+    if (here.href !== captureHref) return null;
+    const identity = platformId && (extracted.messages.length || state.pageIdentity)
+      ? Chatseek.pageIdentity(state, root, captureHref, platformId, extracted, resolveId) : null;
+    if (identity?.check()) identity.accept();
     return {
       sidebar,
       conversation: buildConversation(platformId, here, sidebar, root),
       ...extracted,
+      identity,
       platformId,
       pathKind: Chatseek.pageKind(here, !!platformId),
       untitled: !!titleFromDoc(root) && Chatseek.isGenericTitle(titleFromDoc(root)),
@@ -538,6 +556,7 @@
       }));
       return false;
     }
+    if (!viewed) return false;
     const stats = Chatseek.messageStats(viewed.messages);
     let result = false;
     try {
@@ -546,6 +565,7 @@
         sidebar: viewed.sidebar,
         conversation: viewed.conversation,
         messages: viewed.messages,
+        identity: viewed.identity,
         health: {
           pathKind: viewed.pathKind,
           selector: viewed.selector,
@@ -559,9 +579,10 @@
       Chatseek.rememberError(err);
       return false;
     }
-    if (viewed.conversation) {
+    if (viewed.conversation && result && viewed.identity?.check()) {
       Chatseek.safeScheduleImages({
         conversationId: viewed.conversation.id,
+        isCurrent: viewed.identity.check,
         items: imageHosts,
       });
     }

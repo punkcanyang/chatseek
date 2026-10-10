@@ -157,14 +157,14 @@ for (const platform of PLATFORMS) {
   const streamUser = `${streamId}:u`;
   await put(platform, 8, [
     { id: streamUser, role: "user", body: USER },
-    { id: `${streamId}:a0`, role: "assistant", body: "Starting the ridge answer now." },
+    { id: `${streamId}:a0`, turnId: "stream-reply", role: "assistant", body: "Starting the ridge answer now." },
   ], { pageMessageIds: [streamUser, `${streamId}:a0`], captureId: `${platform}-stream-0` });
   await sleep(8);
   await put(platform, 8, [
-    { id: `${streamId}:a1`, role: "assistant", body: "Starting the ridge answer now. The path is wet." },
+    { id: `${streamId}:a1`, turnId: "stream-reply", role: "assistant", body: "Starting the ridge answer now. The path is wet." },
   ], { pageMessageIds: [streamUser, `${streamId}:a1`], captureId: `${platform}-stream-1` });
   clock = await put(platform, 8, [
-    { id: `${streamId}:a2`, role: "assistant", body: "Starting the ridge answer now. The path is wet. Then it dries." },
+    { id: `${streamId}:a2`, turnId: "stream-reply", role: "assistant", body: "Starting the ridge answer now. The path is wet. Then it dries." },
   ], { pageMessageIds: [streamUser, `${streamId}:a2`], captureId: `${platform}-stream-2` });
   const streamRead = await readConversation(streamId);
   assert(streamRead.messages.length === 2, `${platform} stream duplicated ${streamRead.messages.length}`);
@@ -299,7 +299,9 @@ const histClock = await put("chatgpt", 11, [
   { id: `${hist.id}:a2`, role: "assistant", body: ASST },
 ], { pageMessageIds: [`${hist.id}:u2`, `${hist.id}:a2`], captureId: "hist-collapse" });
 const histRead = await readConversation(hist.id);
-assert(histRead.messages.length === 2, `historical clone stayed ${histRead.messages.length}`);
+// Legacy rows have no stable turn evidence. Repeated wording in a partial
+// page cannot tell corruption from two legitimate exchanges: preserve both.
+assert(histRead.messages.length === 4, `unproved historical repeat was deleted ${histRead.messages.length}`);
 assert(histClock.updatedAt === OLD_AT && histClock.updatedAtSource === "page-exact", `historical clone moved the clock ${histClock.updatedAtSource}`);
 const both = convId("chatgpt", 12);
 await put("chatgpt", 12, [
