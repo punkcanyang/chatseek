@@ -2,7 +2,7 @@
 
 2026-10-10 UTC。用户先授权修复，再明确要求“检查后合并”。实作起点 `fbe7b2d33173947d5c21422bbae81bc804f3859c`（1.7.2.1）；合并前已快进到远端 main `a11aa7b7e06f003be58b6c03d5f3eaba9b87ac1d` 的公开仓库文档决议，产品基准完全相同。工作分支 `fix/capture-integrity`。最终 PR、提交与合并 SHA 记录在 PR 说明中。
 
-**状态：完整离线测试、Chrome for Testing 两项扩展 e2e、样例截图、性能对照及独立代码复审已通过。按用户授权经 PR 合入 main，不发布 Chrome Web Store。**
+**状态：完整离线测试、Chrome for Testing 两项扩展 e2e、样例截图、性能对照及独立代码复审已通过。按用户授权经 [PR #22](https://github.com/punkcanyang/chatseek/pull/22) 合入 main，最终提交复审及 merge SHA 见 PR 说明；不发布 Chrome Web Store。**
 
 ## 根因及修复
 
