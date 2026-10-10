@@ -812,6 +812,28 @@ for (const needle of ["attachPageTime", "sidebarSlots", "queryLayers", "pageKind
 if (!/gemini:\s*"Gemini"/.test(activitySrc)) fail("health labels should name Gemini");
 const panelHtml = read("sidepanel/index.html");
 const panelSrc = read("sidepanel/panel.js");
+// Exercise the DOM builder without starting the panel's DB or Chrome APIs.
+const authorBuilder = panelSrc.match(/^function mountAuthorLink\(\) \{[\s\S]*?^\}/m)?.[0];
+if (!authorBuilder || !/^mountAuthorLink\(\);$/m.test(panelSrc)) {
+  fail("side panel must mount its author link");
+} else {
+  const authorDom = new JSDOM(panelHtml);
+  try {
+    runInContext(`${authorBuilder}\nmountAuthorLink();`, createContext({ document: authorDom.window.document }));
+    const links = authorDom.window.document.querySelectorAll("footer.foot a");
+    const link = links[0];
+    if (links.length !== 1 || link?.textContent !== "@punkcan"
+        || link?.getAttribute("href") !== "https://x.com/punkcan"
+        || link?.getAttribute("target") !== "_blank"
+        || !link?.relList.contains("noopener")) {
+      fail("side panel author link must be @punkcan, exactly https://x.com/punkcan, target=_blank and rel=noopener");
+    }
+  } catch {
+    fail("side panel author link DOM builder failed");
+  } finally {
+    authorDom.window.close();
+  }
+}
 if (!/data-platform="gemini"/.test(panelHtml)) fail("side panel needs a Gemini filter");
 if (!/data-scope="active"/.test(panelHtml) || !/data-scope="archived"/.test(panelHtml) || !/id="filterAll"/.test(panelHtml)) {
   fail("side panel tabs should be active, platforms, archived, then all");
