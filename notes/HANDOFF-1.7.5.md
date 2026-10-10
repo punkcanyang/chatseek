@@ -1,6 +1,6 @@
 # HANDOFF — Chatseek 1.7.5 原網站已刪除就封存
 
-2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；前輪由使用者保底為 `b27ec61`。本輪接續工作未 commit／push／開 PR／合併。實作已做，外部 Chrome E2E／範例截圖與真站實測仍待完成，不能視為已發布。
+2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；前輪由使用者保底為 `b27ec61`。前次實作後使用者已 commit／push `2d3fd17`。本輪修復其外部 E2E 的靜態錯誤頁 timeout，未 commit／push／開 PR／合併；Chrome 重跑、刪除範例截圖與真站實測仍待完成，不能視為已發布。
 
 ## 行為與範圍
 
@@ -41,7 +41,7 @@
 
 ## 防抖與誤判防護
 
-- 背景自行計時：訊號至少持續 **8000ms**，至少 **3 次**觀察；相鄰計入的觀察至少相隔 **1000ms**，超過 **6000ms** 未觀察就重新起算。頁面每約 **1200ms** 請求重掃，仍受原擷取排程控制。任何零命中／阻擋／改網址／改對話皆重設證據。
+- 背景自行計時：訊號至少持續 **8000ms**，至少 **3 次**觀察；相鄰計入的觀察至少相隔 **1000ms**，超過 **6000ms** 未觀察就重新起算。候選專用重檢每 **1200ms** 直接重新讀取頁面／網址／背景證據，不依賴 DOM 變化、完整擷取退避或分頁可見性；最多 **12 次**重檢、**20000ms**期限，確認後立即停止。相同候選耗盡預算後不被一般擷取重啟。任何零命中／阻擋／改網址／改對話皆重設證據。
 - 登入頁／按鈕九語及常見變體、password/login form、登入 href／aria-label、驗證碼/challenge、網路錯誤、限速、offline、readyState 未 complete、aria-busy/progressbar/loading、暫時空白一律不算。登入按鈕也不能把首頁 shell 變成重導證據。
 - `hidden`、`aria-hidden`、CSS display:none／visibility:hidden、不同 conversation-id、切換 URL 後仍保留的原正文節點都視為**未知狀態**，同時暫停刪除與恢復；不把它們當存在，也不拿不存在推論刪除。節點消失／重新掛載且正常身分確認後才可恢復。
 - 背景重新讀取分頁現址，拒絕舊 URL 延遲回覆、iframe、來源平台不符。恢復另需目前 id 一致與正訊息數；內容端做當下身分及可見正文檢查。
@@ -49,7 +49,7 @@
 
 ## 測試與複審
 
-執行環境 Node **v26.10.0**。完整結果在本節下方補列；全部以 exit 0 為通過。
+執行環境 Node **v26.10.0**。下表是前次交接的完整測試結果；本輪靜態頁修復的新結果見文末。全部以 exit 0 為通過。
 
 「通過腳本數」是 package.json 串接的測試程式數，**不是合併斷言總數**；各程式沒有一致斷言計數器。括號中的數字沿用實際輸出。
 
@@ -75,7 +75,7 @@
 
 `scripts/e2e-chatgpt.mjs` 增加人工 ChatGPT fixture：正常頁先收錄兩則→同網址改成「Conversation not found」→等待穩定封存→側欄已封存與英文小字→恢復同一正常正文→回活躍。另確認兩則原訊息與活動時間保留。預定輸出 `docs/panel-1.7.5-deleted.png`，全部人工資料。
 
-沙箱不能 listen，**本輪只做 node --check，尚未跑 Chrome E2E，也尚未產生此截圖**。由使用者在外部執行：
+沙箱不能 listen，這裡只做 node --check。使用者已外部跑過 Chrome for Testing 155：SPA selector／heuristic 與搜尋語法通過，1.7.5 靜態錯誤頁 timeout；本輪已修復，**仍待外部重跑，刪除截圖尚未產生**。由使用者在外部執行：
 
 ```bash
 CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run test:e2e
@@ -119,3 +119,42 @@ permissions 恰好 `["sidePanel"]`；與 main `b707eb0` 對照 host_permissions�
 3. 對其他三家以同樣可丟棄資料重做；若沒判定，回傳只含命中數的診斷，勿回傳真實內容。
 4. 核對登入／驗證／離線／手動回首頁都不封存；已有 ChatGPT 封存橫幅的對話正常讀取也不被恢復。
 5. 用外部 fixture e2e 核對同網址恢復正文後回活躍、小字消失及範例截圖。
+
+
+## 外部 E2E run1 timeout 修復（基準 `2d3fd17`）
+
+外部 Chrome for Testing 155 的 SPA selector／heuristic、search syntax 通過；`stable deleted fixture archives the existing conversation` 在 30 秒 timeout。外部診斷有 `deleted=1`，證明明確錯誤文案已命中。**單一 diag 行不是只觀察一次的證據**：產品刻意將同一 deleted 命中數去重。
+
+根因在排程的組合：
+
+1. 先前候選 timer 呼叫 `requestRescan()`；該函式會跳過 `document.hidden` 的分頁。手動同步及 e2e 切到閱讀頁／側欄時，對話分頁可正好是 hidden。
+2. 一般 `observe` 收到 capture 返回 false 後，重試退避是 3／6／12 秒，再加 800ms debounce。第二段觀察間隔約 6.8 秒，超過背景 **6 秒**允許間隔，證據被重新起算，不能累積完整 8 秒。沒有 DOM 變化就缺少額外喚醒。
+3. 同網址錯誤文案走 direct 判定，沒有要求 navigation type=navigate 或 redirectCount；**reload 不是此失敗的根因**。
+
+產品修正僅在 `content/deleted.js`：有候選與具體 context id 時，用獨立 timeout 再呼叫刪除判定，重新讀 DOM／網址／背景 context，不重跑全文擷取、也不通過隱藏頁的 `requestRescan`。1200ms、最多 12 次／20 秒；背景 8 秒／3 次／6 秒 gap 完全不變。confirmed／零訊號／阻擋／URL 改變／trusted 互動／pagehide／runtime 失效停止；epoch 與候選物件身分阻止延遲回呼再啟動，耗盡預算的同一 key 不重啟。頁面訊號在等待背景 context 後讀取，避免等待期間的舊快照。
+
+`verify.mjs` 新增加界線檢查，未放寬任何守門。`scripts/deleted-test.mjs` 使用真正 shared observer 與四家 adapter、虛擬計時器、hidden document、navigation type=reload／redirectCount=0，沒有手動重複呼叫判定、沒有 DOM mutation。完整 8 秒前不封存，12 秒內封存；並檢查正文／活動保留、確認後停止、登入／隱藏舊正文／手動回首頁／pagehide／orphan／空白取消、12 次及20秒預算與不重啟。
+
+同一新增回歸切換為 `2d3fd17` 的舊 helper 時，**exit 1**：`chatgpt: static hidden reload archives within 12 seconds`；修正後 **775 checks、exit 0**（原 731＋新增 44）。舊碼重現只用臨時檔，測完刪除，沒有改 e2e 的等待時間、fixture、斷言或三種誤判防護。
+
+獨立 session `/root/review_175` 本輪複審 **PASS**，獨立 775 checks／node --check 通過。全部人工資料，無權限／host／CSP／DB 變動；版本保持 1.7.5，DB 4。
+
+本輪 Node v26.10.0，verify 與 package.json 全部 10 個離線 `test:*` 皆 exit 0；通過數是串接腳本數，不是斷言總數。
+
+| 指令 | 通過腳本數 | exit |
+|---|---:|---:|
+| `npm run verify` | 2/2 | 0 |
+| `npm run test:skeleton` | 2/2 | 0 |
+| `npm run test:search` | 29/29 | 0 |
+| `npm run test:progress` | 2/2 | 0 |
+| `npm run test:sync` | 1/1 | 0 |
+| `npm run test:upgrade` | 5/5 | 0 |
+| `npm run test:fixture` | 4/4 | 0 |
+| `npm run test:gemini` | 2/2 | 0 |
+| `npm run test:spa` | 5/5 | 0 |
+| `npm run test:integrity` | 3/3 | 0 |
+| `npm run test:deleted` | 1/1 | 0 |
+
+其中 `test:search` 與 `test:deleted` 均含 **775 checks**（新增 44）；panel 303、parser 85、syntax 44、Markdown 攻擊樣本314。`node --check content/deleted.js`、`scripts/deleted-test.mjs`、`scripts/e2e-chatgpt.mjs`、`scripts/e2e-sync.mjs` 與 `git diff --check` 通過。
+
+Chrome `test:e2e` 與 `test:e2e-sync` 在沙箱僅做 node --check，沒有 listen／實跑或生成／覆寫截圖。外部請重跑上列指令。嚴重背景 timer 節流或 service worker 回應延遲仍可能耗盡預算而漏判；保持原本保守防抖，不擅自放寬觀察間隔或判定門檻。此前 3000 則／500 縮圖離線效能表為前次實作的量測，本輪沒有重測；正常無候選頁不新增排程，候選最多12次只讀證據核對，真 Chrome 成本仍待外部驗證。

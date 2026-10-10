@@ -30,10 +30,11 @@ const doms = [];
 const uuid = "71717171-7171-4171-8171-717171717171";
 const urls = { chatgpt: `https://chatgpt.com/c/${uuid}`, claude: `https://claude.ai/chat/${uuid}`,
   grok: `https://grok.com/c/${uuid}`, gemini: "https://gemini.google.com/u/1/app/7171717171717171" };
-function harness(platform, html, href = urls[platform], adapter = false) {
+function harness(platform, html, href = urls[platform], adapter = false, options = {}) {
   const dom = new JSDOM(`<!doctype html><title>Sample page</title><body>${html}</body>`, { url: href });
   const doc = dom.window.document;
   Object.defineProperty(doc, "readyState", { configurable: true, value: "complete" });
+  if (options.hidden) Object.defineProperty(doc, "hidden", { configurable: true, value: true });
   const id = ++tabId;
   const events = new Map();
   const add = doc.addEventListener.bind(doc);
@@ -43,17 +44,50 @@ function harness(platform, html, href = urls[platform], adapter = false) {
   const contentChrome = { runtime: { id: "deleted-fixture", getManifest: () => ({ version: "1.7.5" }),
     sendMessage(payload, cb) {
       sent.push(payload);
+      if (options.observationResponse && payload.type === "DELETED_OBSERVATION") {
+        cb?.(options.observationResponse); return;
+      }
       const sender = { frameId: 0, url: dom.window.location.href, tab: { id, url: dom.window.location.href } };
       const pending = listener(payload, sender, (res) => cb?.(res));
       if (pending !== true) cb?.();
     } }, dom: {} };
-  const api = new Function("document", "location", "Node", "NodeFilter", "window", "console", "chrome", "setTimeout", "clearTimeout",
-    `${shared}\nChatseek.autoStart = false; Chatseek.observe = (handler) => { Chatseek._testCapture = handler; };\n${deleted}\n${adapter ? source(`content/${platform}.js`) : ""}\nreturn Chatseek;`)(
+  const api = new Function("document", "location", "Node", "NodeFilter", "window", "console", "chrome", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "MutationObserver",
+    `${shared}\nChatseek.autoStart = false; ${options.observe ? "" : "Chatseek.observe = (handler) => { Chatseek._testCapture = handler; };"}\n${deleted}\n${adapter ? source(`content/${platform}.js`) : ""}\nreturn Chatseek;`)(
     doc, dom.window.location, dom.window.Node, dom.window.NodeFilter, dom.window,
     { log() {}, warn() {} }, contentChrome,
-    (fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; }, clearTimeout,
+    options.clock?.timeout || ((fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; }), options.clock?.clear || clearTimeout,
+    options.clock?.interval || ((fn, ms) => { const timer = setInterval(fn, ms); timer.unref(); return timer; }), options.clock?.clear || clearInterval,
+    options.onMutation ? class extends dom.window.MutationObserver {
+      constructor(fn) { super((records) => { options.onMutation(records); fn(records); }); }
+    } : dom.window.MutationObserver,
   );
-  return { api, dom, doc, sent, id, events };
+  return { api, dom, doc, sent, id, events, contentChrome };
+}
+function virtualClock() {
+  let sequence = 0;
+  const jobs = new Map();
+  let failure;
+  const enqueue = (fn, ms, repeat = 0) => { const id = ++sequence; jobs.set(id, { fn, at: now + ms, repeat }); return id; };
+  const flush = async () => { for (let i = 0; i < 24; i++) await new Promise((resolve) => setImmediate(resolve)); if (failure) throw failure; };
+  return {
+    timeout: (fn, ms) => enqueue(fn, ms), interval: (fn, ms) => enqueue(fn, ms, ms), clear: (id) => jobs.delete(id),
+    async advance(ms) {
+      const until = now + ms;
+      await flush();
+      for (let steps = 0; ; steps++) {
+        const next = [...jobs].filter(([, job]) => job.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        if (steps > 10000) throw Error("unbounded scheduled work");
+        const [id, job] = next;
+        now = Math.max(now, job.at);
+        if (job.repeat) job.at += job.repeat; else jobs.delete(id);
+        try { const result = job.fn(); result?.catch?.((err) => { failure = err; }); } catch (err) { failure = err; }
+        await flush();
+      }
+      now = until; await flush();
+    },
+    jump(ms) { now += ms; },
+  };
 }
 const normal = (platform) => {
   const tag = platform === "gemini" ? "user-query" : "div";
@@ -239,6 +273,66 @@ for (const locale of LOCALE_ORDER) {
   mountReader(root, { conversation: { id, title: "Sample garden", platform: "chatgpt", archived: true, archiveSource: "chatgpt:banner" }, locale });
   assert(root.querySelector("#siteDeletedNote").hidden, `${locale}: banner archive has no deleted note`);
   dom.window.close();
+}
+// Run the REAL observer and adapters with virtual timers. No direct manual
+// repeated checks, no DOM mutations: covers a reload in a hidden sync tab.
+for (const platform of Object.keys(urls)) {
+  const conv = conversationFromUrl(urls[platform]);
+  await db.restoreConversation(conv.id);
+  const before = await db.readConversation(conv.id);
+  const clock = virtualClock();
+  let mutations = 0;
+  const h = harness(platform, "<main><h1>Conversation not found</h1></main>", urls[platform], true,
+    { clock, hidden: true, observe: true, onMutation: (records) => { mutations += records.length; } });
+  Object.defineProperty(h.dom.window.performance, "getEntriesByType", { value: () => [{ type: "reload", redirectCount: 0, name: urls[platform] }] });
+  if (platform === "chatgpt" || platform === "gemini") h.api.observe(() => h.api.platforms[platform].capture());
+  await clock.advance(8000);
+  assert(!(await db.readConversation(conv.id)).conversation.archived, `${platform}: real observer still honors full 8-second grace`);
+  await clock.advance(4000);
+  const stored = await db.readConversation(conv.id);
+  assert(stored.conversation.archiveSource === "site-deleted", `${platform}: static hidden reload archives within 12 seconds`);
+  assert(mutations === 0, `${platform}: no DOM change is needed`);
+  const observed = h.sent.filter((msg) => msg.type === "DELETED_OBSERVATION" && msg.hits > 0);
+  assert(observed.length >= 3 && observed.every((msg) => !msg.redirected), `${platform}: explicit reload does not need redirect evidence`);
+  assert(stored.messages[0].body === before.messages[0].body && stored.conversation.updatedAt === before.conversation.updatedAt, `${platform}: scheduled checks preserve body and activity`);
+  assert(!h.sent.some((msg) => ["CAPTURE_MESSAGES", "CAPTURE_CONVERSATIONS"].includes(msg.type)), `${platform}: timer never captures error content`);
+  const count = observed.length;
+  await clock.advance(1200);
+  assert(h.sent.filter((msg) => msg.type === "DELETED_OBSERVATION").length === count, `${platform}: confirmation stops owned checks`);
+  h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+  await db.restoreConversation(conv.id);
+}
+const countObservations = (h) => h.sent.filter((msg) => msg.type === "DELETED_OBSERVATION").length;
+for (const reason of ["login", "hidden body", "manual home", "pagehide", "orphan", "blank"]) {
+  await db.restoreConversation(id);
+  const clock = virtualClock();
+  const h = harness("chatgpt", "<main><h1>Conversation not found</h1></main>", urls.chatgpt, false, { clock, hidden: true });
+  await h.api.checkDeletedPage("chatgpt");
+  if (reason === "login") {
+    const button = h.doc.createElement("button"); button.textContent = "Se connecter"; h.doc.body.append(button);
+  } else if (reason === "hidden body") {
+    const body = h.doc.createElement("div"); body.hidden = true; body.setAttribute("data-message-author-role", "user"); body.textContent = "Sample old garden"; h.doc.body.append(body);
+  } else if (reason === "manual home") {
+    h.events.get("click")({ isTrusted: true }); h.dom.reconfigure({ url: "https://chatgpt.com/" });
+  } else if (reason === "pagehide") h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+  else if (reason === "orphan") h.contentChrome.runtime.id = "";
+  else h.doc.querySelector("h1").textContent = "";
+  await clock.advance(30000);
+  assert(!(await db.readConversation(id)).conversation.archived, `${reason}: candidate cannot survive a veto/navigation/disposal`);
+  assert(countObservations(h) <= 2, `${reason}: owned checks stop promptly`);
+}
+for (const reason of ["no confirmation", "late timer"]) {
+  const clock = virtualClock();
+  const h = harness("chatgpt", "<main><h1>Conversation not found</h1></main>", urls.chatgpt, false,
+    { clock, hidden: true, observationResponse: { ok: true, confirmed: false } });
+  await h.api.checkDeletedPage("chatgpt");
+  if (reason === "late timer") clock.jump(21000);
+  await clock.advance(60000);
+  assert(countObservations(h) === (reason === "late timer" ? 1 : 13), `${reason}: checks are bounded to 12 retries / 20 seconds`);
+  const count = countObservations(h);
+  await h.api.checkDeletedPage("chatgpt"); // an unrelated capture cannot rearm an exhausted candidate
+  await clock.advance(60000);
+  assert(countObservations(h) === count + 1, `${reason}: same static candidate cannot restart its timer budget`);
 }
 assert((await db.openDb()).version === 4, "DB remains version 4");
 for (const dom of doms) dom.window.close();

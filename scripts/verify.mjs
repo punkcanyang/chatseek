@@ -316,6 +316,9 @@ for (const entry of manifest.content_scripts) {
   }
 }
 if (!/export const DELETED_GRACE_MS = 8000/.test(read("src/deleted-visits.js"))) fail("deleted evidence needs its 8-second guard");
+for (const [name, value] of [["RECHECK_MS", 1200], ["RECHECK_LIMIT", 12], ["RECHECK_WINDOW_MS", 20000]]) {
+  if (!read("content/deleted.js").includes(`const ${name} = ${value};`)) fail(`deleted evidence must retain bounded ${name}`);
+}
 if (!/deleted=/.test(read("content/shared.js"))) fail("diag must include deleted hit counts");
 for (const locale of LOCALE_ORDER) {
   if (!CATALOG[locale].siteDeleted || (locale !== "en" && CATALOG[locale].siteDeleted === CATALOG.en.siteDeleted)) fail(`${locale} needs translated site-deleted copy`);

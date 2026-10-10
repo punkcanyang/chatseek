@@ -100,15 +100,52 @@
       && !node.querySelector("[role='progressbar']") && displayed(node);
   }
   let timer = 0;
+  let candidate = null;
+  let epoch = 0;
+  const RECHECK_MS = 1200;
+  const RECHECK_LIMIT = 12;
+  const RECHECK_WINDOW_MS = 20000;
+  function cancelRechecks() {
+    clearTimeout(timer);
+    timer = 0;
+    candidate = null;
+    epoch++;
+  }
+  function recheck(platform, href, context, hits, redirected, response) {
+    if (!hits || !context?.id) { cancelRechecks(); return; }
+    const key = `${context.id}|${href}|${redirected ? "redirect" : "explicit"}`;
+    if (candidate?.key !== key) {
+      cancelRechecks();
+      candidate = { key, at: Date.now(), attempts: 0, done: false };
+    }
+    const current = candidate;
+    if (response?.confirmed === true) {
+      current.done = true;
+      clearTimeout(timer);
+      timer = 0;
+    }
+    if (current.done || timer || current.attempts >= RECHECK_LIMIT || Date.now() - current.at >= RECHECK_WINDOW_MS) return;
+    // Evidence needs its own bounded checks. A hidden sync/browser tab skips
+    // requestRescan(), and capture retries back off past the evidence gap.
+    timer = setTimeout(async () => {
+      timer = 0;
+      if (candidate !== current) return;
+      if (location.href !== href || !chrome?.runtime?.id) { cancelRechecks(); return; }
+      if (Date.now() - current.at >= RECHECK_WINDOW_MS || current.attempts >= RECHECK_LIMIT) return;
+      current.attempts++;
+      try { await Chatseek.checkDeletedPage(platform); } catch { cancelRechecks(); }
+    }, RECHECK_MS);
+  }
   let redirectContext = null;
   Chatseek.checkDeletedPage = async (platform) => {
     try { if (typeof window !== "undefined" && window.top !== window) return { hits: 0 }; } catch { return { hits: 0 }; }
     const href = location.href;
-    const page = Chatseek.readDeletedPage();
+    const observedEpoch = epoch;
     // Resolve the current conversation through the background's shared URL
     // parser, including Gemini account prefixes. No sidebar disappearance.
     const context = await Chatseek.send({ type: "DELETED_VISIT_CONTEXT", platform });
-    if (location.href !== href) return { hits: 0 };
+    if (location.href !== href || observedEpoch !== epoch) return { hits: 0, suppressCapture: true };
+    const page = Chatseek.readDeletedPage();
     const navigation = document.defaultView?.performance.getEntriesByType?.("navigation")?.[0];
     const redirected = !!context?.id && !context.direct && Number(navigation?.redirectCount) > 0
       && navigation.name === href && page.homeReady;
@@ -117,13 +154,13 @@
     const hits = page.blocked ? 0 : page.hits || (redirected ? 1 : 0);
     Chatseek._deletedHits = hits;
     const suppressCapture = page.error; // Even uncertain errors must not become new chats.
+    let response;
     if (context?.id) {
-      await Chatseek.send({ type: "DELETED_OBSERVATION", platform, id: context.id,
+      response = await Chatseek.send({ type: "DELETED_OBSERVATION", platform, id: context.id,
         hits, blocked: page.blocked, redirected });
-      if (location.href !== href) return { hits: 0, suppressCapture: true };
+      if (location.href !== href || observedEpoch !== epoch) return { hits: 0, suppressCapture: true };
     }
-    clearTimeout(timer);
-    if (hits) timer = setTimeout(() => Chatseek.requestRescan?.(), 1200);
+    recheck(platform, href, context, hits, redirected, response);
     return { hits, suppressCapture };
   };
   Chatseek.restoreDeletedPage = async (conversation, messages, identity) => {
@@ -141,8 +178,10 @@
   if (typeof document !== "undefined") for (const event of ["click", "keydown"]) {
     document.addEventListener(event, (ev) => {
       if (!ev.isTrusted || !redirectContext) return;
+      cancelRechecks();
       redirectContext = null;
       Chatseek.send({ type: "DELETED_VISIT_CANCEL" });
     }, true);
   }
+  if (typeof window !== "undefined") window.addEventListener("pagehide", cancelRechecks);
 })();
