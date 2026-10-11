@@ -2,7 +2,10 @@
  * assumptions, not selectors verified against signed-in production accounts. */
 (() => {
   const TRANSCRIPT = "[data-message-author-role], [data-testid='user-message'], [data-testid='human-message'], [data-testid='assistant-message'], [data-testid='ai-message'], [role='article'], [data-turn], [data-message-id], [data-testid*='conversation-turn'], user-query, model-response, .font-user-message, .font-claude-message, .message-bubble, .markdown, .prose, .query-text, .model-response-text, [data-role='user'], [data-role='assistant']";
-  const EXCLUDE = `${TRANSCRIPT}, nav, aside, [role='navigation'], [role='menu'], form, textarea, [contenteditable='true'], pre, code, blockquote, [hidden], [aria-hidden='true']`;
+  const SIDEBAR = "nav, aside, [role='navigation'], [role='menu'], [role='list'], [role='listbox'], [role='listitem'], [role='option'], [role='tree'], [role='treeitem'], ul, ol, [data-testid*='history' i], [data-test-id*='history' i], [data-testid*='sidebar' i], [data-test-id*='sidebar' i], [class*='sidebar' i], [class*='history' i], [data-test-id='conversation' i], [data-testid*='conversation-title' i], [data-test-id*='conversation-title' i], [class*='conversation-title' i]";
+  const ERROR_CONTAINER = "[role='alert'], [data-error-code], [data-testid*='not-found'], [data-testid*='deleted'], [data-testid*='error']";
+  const TITLE_CONTEXT = `${SIDEBAR}, a[href]`;
+  const EXCLUDE = `${TRANSCRIPT}, ${TITLE_CONTEXT}, form, textarea, [contenteditable='true'], pre, code, blockquote, script, style, template, noscript, [hidden], [aria-hidden='true']`;
   const exact = [
     "conversation not found", "chat not found", "this conversation was deleted", "this chat was deleted",
     "this conversation has been deleted", "this chat has been deleted", "this conversation does not exist",
@@ -54,7 +57,7 @@
   }
   Chatseek.readDeletedPage = (doc = document, loc = location) => {
     const main = doc.querySelector("main, [role='main']");
-    const transcripts = [...doc.querySelectorAll(TRANSCRIPT)].filter((node) => !node.closest("nav, aside, [role='navigation']") && (node.textContent || "").trim());
+    const transcripts = [...doc.querySelectorAll(TRANSCRIPT)].filter((node) => !node.closest(TITLE_CONTEXT) && (node.textContent || "").trim());
     let observation = observations.get(doc);
     if (!observation) observations.set(doc, observation = { href: loc.href, nodes: [], residual: new WeakSet() });
     if (observation.href !== loc.href) {
@@ -79,8 +82,15 @@
       || nodes.some((node) => blockers.test(normalized(node.textContent)));
     let hits = 0;
     if (!body) for (const node of nodes) {
+      // Never inherit a sidebar/link title through an ancestor's textContent.
+      // Exact wording is only evidence in the page's actual error context.
+      if (!main?.contains(node) && !node.closest(ERROR_CONTAINER)
+          && !(!main && node === doc.querySelector("h1"))) continue;
       const value = normalized(node.textContent);
       if (!value || value.length > 240) continue;
+      if (node.querySelector(EXCLUDE)) continue;
+      const children = node.querySelectorAll("*");
+      if (children.length > 128 || [...children].some((child) => !displayed(child))) continue;
       const structured = node.getAttribute("data-error-code") === "404"
         || /(?:conversation|chat)-(?:not-found|deleted|access-denied)/.test(node.getAttribute("data-testid") || "");
       const genericHeading = node.tagName === "H1" && !["403", "access denied", "permission denied"].includes(value);
@@ -96,7 +106,7 @@
       blocked: !!blocked || login, body, homeReady: !blocked && !login && !body && shell };
   };
   function visibleTranscript(node) {
-    return !node.closest("nav, aside, [hidden], [aria-hidden='true'], [aria-busy='true']")
+    return !node.closest(`${TITLE_CONTEXT}, [hidden], [aria-hidden='true'], [aria-busy='true']`)
       && !node.querySelector("[role='progressbar']") && displayed(node);
   }
   let timer = 0;
@@ -137,6 +147,7 @@
     }, RECHECK_MS);
   }
   let redirectContext = null;
+  let retiredRedirectDocument = false;
   Chatseek.checkDeletedPage = async (platform) => {
     try { if (typeof window !== "undefined" && window.top !== window) return { hits: 0 }; } catch { return { hits: 0 }; }
     const href = location.href;
@@ -146,8 +157,15 @@
     const context = await Chatseek.send({ type: "DELETED_VISIT_CONTEXT", platform });
     if (location.href !== href || observedEpoch !== epoch) return { hits: 0, suppressCapture: true };
     const page = Chatseek.readDeletedPage();
-    const navigation = document.defaultView?.performance.getEntriesByType?.("navigation")?.[0];
-    const redirected = !!context?.id && !context.direct && Number(navigation?.redirectCount) > 0
+    const performance = document.defaultView?.performance;
+    const navigation = performance?.getEntriesByType?.("navigation")?.[0];
+    const navigationAt = Number.isFinite(performance?.timeOrigin) && Number.isFinite(navigation?.startTime)
+      ? performance.timeOrigin + navigation.startTime : NaN;
+    // A cached homepage's historical redirect is not evidence for a later
+    // attempted conversation. Require a fresh full navigation after this visit.
+    const redirected = !!context?.id && !context.direct && !retiredRedirectDocument
+      && navigation?.type === "navigate" && Number(navigation?.redirectCount) > 0
+      && Number.isFinite(context.at) && navigationAt > context.at && navigationAt <= Date.now()
       && navigation.name === href && page.homeReady;
     redirectContext = context;
     if (context?.direct && page.body) await Chatseek.send({ type: "DELETED_VISIT_CANCEL" });
@@ -157,7 +175,7 @@
     let response;
     if (context?.id) {
       response = await Chatseek.send({ type: "DELETED_OBSERVATION", platform, id: context.id,
-        hits, blocked: page.blocked, redirected });
+        hits, blocked: page.blocked, redirected, visitAt: context.at, navigationAt });
       if (location.href !== href || observedEpoch !== epoch) return { hits: 0, suppressCapture: true };
     }
     recheck(platform, href, context, hits, redirected, response);
@@ -183,5 +201,18 @@
       Chatseek.send({ type: "DELETED_VISIT_CANCEL" });
     }, true);
   }
-  if (typeof window !== "undefined") window.addEventListener("pagehide", cancelRechecks);
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", () => {
+      retiredRedirectDocument = true;
+      cancelRechecks();
+    });
+    const cancelHistoryVisit = () => {
+      retiredRedirectDocument = true;
+      cancelRechecks();
+      redirectContext = null;
+      Chatseek.send({ type: "DELETED_VISIT_CANCEL" });
+    };
+    window.addEventListener("popstate", cancelHistoryVisit);
+    window.addEventListener("pageshow", (event) => { if (event.persisted) cancelHistoryVisit(); });
+  }
 })();

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import * as db from "../src/db.js";
 import { conversationFromUrl } from "../src/conversation-url.js";
-import { rememberDeletedVisit, observeDeletedEvidence, forgetDeletedVisit, deletedVisitContext } from "../src/deleted-visits.js";
+import { rememberDeletedVisit, observeDeletedEvidence, forgetDeletedVisit, deletedVisitContext, noteDeletedNavigation } from "../src/deleted-visits.js";
 import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 import { mountReader } from "../src/reader-view.js";
 
@@ -48,6 +48,9 @@ function harness(platform, html, href = urls[platform], adapter = false, options
       if (options.observationResponse && payload.type === "DELETED_OBSERVATION") {
         cb?.(options.observationResponse); return;
       }
+      if (options.onContext && payload.type === "DELETED_VISIT_CONTEXT") {
+        options.onContext(cb); return;
+      }
       const sender = { frameId: 0, url: dom.window.location.href, tab: { id, url: dom.window.location.href } };
       const pending = listener(payload, sender, (res) => cb?.(res));
       if (pending !== true) cb?.();
@@ -89,6 +92,10 @@ function virtualClock() {
     },
     jump(ms) { now += ms; },
   };
+}
+function navigationTiming(h, entry, origin = now) {
+  Object.defineProperty(h.dom.window.performance, "timeOrigin", { configurable: true, value: origin });
+  Object.defineProperty(h.dom.window.performance, "getEntriesByType", { configurable: true, value: () => [entry] });
 }
 const normal = (platform) => {
   const tag = platform === "gemini" ? "user-query" : "div";
@@ -178,7 +185,8 @@ for (const platform of Object.keys(urls)) {
   const home = platform === "gemini" ? "https://gemini.google.com/u/1/app" : new URL(urls[platform]).origin + "/";
   const redirected = harness(platform, "<main><textarea></textarea></main>", home);
   rememberDeletedVisit(redirected.id, urls[platform], now);
-  Object.defineProperty(redirected.dom.window.performance, "getEntriesByType", { value: () => [{ redirectCount: 1, name: home }] });
+  navigationTiming(redirected, { type: "navigate", startTime: 1, redirectCount: 1, name: home });
+  now += 1;
   for (const delta of [0, 3000, 5000]) { now += delta; await redirected.api.checkDeletedPage(platform); }
   assert((await db.readConversation(conv.id)).conversation.archiveSource === "site-deleted", `${platform}: proven redirect plus healthy empty home`);
   await db.setSiteDeletedState(conv.id, false);
@@ -224,6 +232,127 @@ for (const platform of Object.keys(urls)) {
   const uncertain = harness(platform, `<main><h1>Conversation not found</h1><button>Se connecter avec Google</button></main>`, unknownUrl, true);
   await (uncertain.api.platforms?.[platform]?.capture || uncertain.api._testCapture)();
   assert(!(await db.readConversation(conversationFromUrl(unknownUrl).id))?.conversation, `${platform}: vetoed error cannot create an unknown row either`);
+}
+// PR #26 P1: real adapters/observer/background/DB, with no transcript and no
+// DOM mutations. Sidebar titles and an old homepage timing must never archive.
+for (const platform of Object.keys(urls)) {
+  const conv = conversationFromUrl(urls[platform]);
+  const otherUrl = urls[platform].replaceAll("71", "92");
+  const title = "Conversation not found";
+  const sidebarCases = [
+    ["unmarked link", `<div><a href="${otherUrl}"><div>${title}</div></a></div><main></main>`],
+    ["link and parent inside main", `<main><div><a href="${otherUrl}"><p>${title}</p></a></div></main>`],
+    ...["aside", "nav"].map((tag) => [tag, `<${tag}><div>${title}</div></${tag}><main></main>`]),
+    ...["navigation", "list", "listbox", "tree", "listitem"].map((role) => [role, `<main><div><div role="${role}"><h1>${title}</h1><p>${title}</p></div></div></main>`]),
+    ["history testid", `<main><div data-testid="chat-history"><div>${title}</div></div></main>`],
+    ["history class", `<div class="conversation-history"><div>${title}</div></div><main></main>`],
+    ["mixed case history class", `<main><div class="ConversationHistory"><div>${title}</div></div></main>`],
+    ["mixed case sidebar testid", `<main><div data-testid="Sidebar"><p>${title}</p></div></main>`],
+    ["Gemini conversation list row", `<main><div data-test-id="conversation"><p>${title}</p></div></main>`],
+    ["list error lookalike", `<main><ul><li><div role="alert">${title}</div></li></ul></main>`],
+    ["outside error context", `<div>${title}</div><main></main>`],
+    ...["blockquote", "pre", "code", "form", "textarea"].map((tag) => ["excluded " + tag, `<main><div><${tag}>${title}</${tag}></div></main>`]),
+    ["hidden child", `<main><div><span hidden>${title}</span></div></main>`],
+    ["aria-hidden child", `<main><div><span aria-hidden="true">${title}</span></div></main>`],
+    ["CSS display:none child", `<main><div><span style="display:none">${title}</span></div></main>`],
+    ["CSS visibility:hidden child", `<main><div><span style="visibility:hidden">${title}</span></div></main>`],
+    ...["script", "style", "template", "noscript"].map((tag) => ["excluded " + tag, `<main><div><${tag}>${title}</${tag}></div></main>`]),
+  ];
+  for (const [label, html] of sidebarCases) {
+    await db.restoreConversation(conv.id);
+    const clock = virtualClock();
+    const h = harness(platform, html, urls[platform], true, { clock, observe: true });
+    if (platform === "chatgpt" || platform === "gemini") h.api.observe(() => h.api.platforms[platform].capture());
+    await clock.advance(14000);
+    assert(h.sent.some((msg) => msg.type === "DELETED_VISIT_CONTEXT"), `${platform}: ${label} runs the real adapter deletion check`);
+    assert(!(await db.readConversation(conv.id)).conversation.archived, `${platform}: ${label} is not deletion evidence after debounce`);
+    assert(!h.sent.some((msg) => msg.type === "DELETED_OBSERVATION" && msg.hits > 0), `${platform}: ${label} never sends deleted hits`);
+    assert(h.api.readDeletedPage().hits === 0 && !h.api.readDeletedPage().error, `${platform}: ${label} cannot suppress normal capture as an error`);
+    h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+  }
+  const home = platform === "gemini" ? "https://gemini.google.com/u/1/app" : new URL(urls[platform]).origin + "/";
+  for (const reason of ["old entry", "equal entry", "back_forward", "traverse", "reload", "unknown type", "no timeOrigin", "no startTime", "future entry", "pageshow persisted", "pagehide then return", "popstate", "visit replaced"]) {
+    await db.restoreConversation(conv.id);
+    const clock = virtualClock();
+    const h = harness(platform, "<main><textarea></textarea></main>", home, true, { clock, observe: true });
+    const visitAt = now;
+    rememberDeletedVisit(h.id, urls[platform], visitAt);
+    noteDeletedNavigation(h.id, { url: home }, now);
+    const entry = { type: "navigate", startTime: 1, redirectCount: 1, name: home };
+    let origin = now;
+    if (reason === "old entry") origin -= 10000;
+    if (reason === "equal entry") entry.startTime = 0;
+    if (["back_forward", "traverse", "reload"].includes(reason)) entry.type = reason;
+    if (reason === "unknown type") delete entry.type;
+    if (reason === "no timeOrigin") origin = NaN;
+    if (reason === "no startTime") delete entry.startTime;
+    if (reason === "future entry") origin += 60000;
+    navigationTiming(h, entry, origin);
+    now += 2;
+    if (reason === "pageshow persisted") h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent("pageshow", { persisted: true }));
+    if (reason === "pagehide then return") {
+      h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+      h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent("pageshow", { persisted: true }));
+    }
+    if (reason === "popstate") h.dom.window.dispatchEvent(new h.dom.window.PopStateEvent("popstate"));
+    if (reason === "visit replaced") rememberDeletedVisit(h.id, urls[platform], now);
+    if (platform === "chatgpt" || platform === "gemini") h.api.observe(() => h.api.platforms[platform].capture());
+    await clock.advance(14000);
+    assert(h.sent.some((msg) => msg.type === "DELETED_VISIT_CONTEXT"), `${platform}: ${reason} runs the real adapter deletion check`);
+    assert(!(await db.readConversation(conv.id)).conversation.archived, `${platform}: ${reason} cannot reuse homepage redirect timing`);
+    assert(!h.sent.some((msg) => msg.type === "DELETED_OBSERVATION" && msg.redirected), `${platform}: ${reason} sends no redirect evidence`);
+    h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+  }
+  await db.restoreConversation(conv.id);
+  const freshClock = virtualClock();
+  const fresh = harness(platform, "<main><textarea></textarea></main>", home, true, { clock: freshClock, observe: true });
+  rememberDeletedVisit(fresh.id, urls[platform], now);
+  navigationTiming(fresh, { type: "navigate", startTime: 1, redirectCount: 1, name: home });
+  now += 2;
+  if (platform === "chatgpt" || platform === "gemini") fresh.api.observe(() => fresh.api.platforms[platform].capture());
+  await freshClock.advance(14000);
+  assert((await db.readConversation(conv.id)).conversation.archiveSource === "site-deleted", `${platform}: real observer accepts a fresh redirect after this visit`);
+  fresh.dom.window.dispatchEvent(new fresh.dom.window.Event("pagehide"));
+  await db.restoreConversation(conv.id);
+  // Valid error context still works; an alert overlay can live outside main.
+  for (const html of [`<main><p>${title}</p></main>`, `<main></main><div role="alert"><p>${title}</p></div>`, `<h1>${title}</h1>`]) {
+    const clock = virtualClock();
+    const h = harness(platform, html, urls[platform], true, { clock, observe: true });
+    if (platform === "chatgpt" || platform === "gemini") h.api.observe(() => h.api.platforms[platform].capture());
+    await clock.advance(14000);
+    assert((await db.readConversation(conv.id)).conversation.archiveSource === "site-deleted", `${platform}: visible error context survives title exclusion`);
+    h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+    await db.restoreConversation(conv.id);
+  }
+  // The background revalidates timestamps even if an old content context or
+  // delayed report arrives after the visit has been replaced.
+  for (const reason of ["old", "equal", "missing", "future", "wrong visit"]) {
+    const h = harness(platform, "<main><textarea></textarea></main>", home);
+    const visitAt = now;
+    rememberDeletedVisit(h.id, urls[platform], visitAt);
+    const report = { type: "DELETED_OBSERVATION", platform, id: conv.id, hits: 1, redirected: true,
+      visitAt, navigationAt: visitAt + 1 };
+    if (reason === "old") report.navigationAt = visitAt - 1;
+    if (reason === "equal") report.navigationAt = visitAt;
+    if (reason === "missing") delete report.navigationAt;
+    if (reason === "future") report.navigationAt = visitAt + 60000;
+    if (reason === "wrong visit") rememberDeletedVisit(h.id, urls[platform], visitAt + 2);
+    now += 3;
+    for (const delta of [0, 3000, 5000]) { now += delta; await h.api.send(report); }
+    assert(!(await db.readConversation(conv.id)).conversation.archived, `${platform}: background rejects ${reason} navigation timing`);
+  }
+  let releaseContext;
+  const pending = harness(platform, "<main><textarea></textarea></main>", home, false,
+    { onContext: (cb) => { releaseContext = cb; } });
+  const visitAt = now;
+  rememberDeletedVisit(pending.id, urls[platform], visitAt);
+  navigationTiming(pending, { type: "navigate", startTime: 1, redirectCount: 1, name: home });
+  now += 2;
+  const check = pending.api.checkDeletedPage(platform);
+  pending.dom.window.dispatchEvent(new pending.dom.window.PageTransitionEvent("pageshow", { persisted: true }));
+  releaseContext({ ...conv, direct: false, at: visitAt });
+  await check;
+  assert(!pending.sent.some((msg) => msg.type === "DELETED_OBSERVATION"), `${platform}: BFCache cancels in-flight context before any observation`);
 }
 const localized = ["找不到這段對話", "此对话已删除", "Conversation not found", "このチャットは削除されました", "이 대화에 접근할 권한이 없습니다", "conversación no encontrada", "cette conversation a été supprimée", "diese unterhaltung wurde gelöscht", "esta conversa foi excluída"];
 for (const platform of Object.keys(urls)) for (const text of localized) {

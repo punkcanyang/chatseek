@@ -1,6 +1,6 @@
 # HANDOFF — Chatseek 1.7.5 原網站已刪除就封存
 
-2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；使用者先後提交 `b27ec61`、`2d3fd17`、`21f70d7`、`76235a8`。**外部 Chrome for Testing 155 的 `test:e2e` 與 `test:e2e-sync` 已通過（使用者回報，exit 0），四張 1.7.5 範例截圖已產生。** 本輪修正 panel 回歸的清單上限假設，產品碼未變；未 commit／push／開 PR／合併，真站實測仍待完成，不能視為已發布。
+2026-10-11。分支 `feat/deleted-archive`，基準 main `b707eb0`（1.7.4）；使用者先後提交 `b27ec61`、`2d3fd17`、`21f70d7`、`76235a8`、`cb1509d`，已開 PR #26。**先前外部 Chrome for Testing 155 的 `test:e2e` 與 `test:e2e-sync` 已通過（使用者回報，exit 0），四張 1.7.5 範例截圖已追蹤。** 本輪以 `cb1509d` 修正 PR 第二輪獨立複審的兩項 P1：側欄標題誤當刪除證據、歷史首頁 redirect timing 誤授權。本輪產品修正尚未外部 Chrome 重跑；未 commit／push／合併，真站實測仍待完成，不能視為已發布。最新結果見文末。
 
 ## 行為與範圍
 
@@ -35,9 +35,9 @@
 | de | unterhaltung nicht gefunden、diese unterhaltung wurde gelöscht |
 | pt-BR | conversa não encontrada、esta conversa foi excluída |
 
-通用「Access denied／403」不能單憑一般 H1 判定，必須有對話專用錯誤結構。正文、引用、程式碼、表單、網站 nav／aside／menu 內文字不算刪除訊號。掃描錯誤節點上限 2000，diag 命中數上限 40。
+通用「Access denied／403」不能單憑一般 H1 判定，必須有對話專用錯誤結構。明確文案須位於主內容、錯誤容器（role=alert／error testid／error code），或無主內容時的第一個 H1。正文、引用、程式碼、表單、網站 nav／aside／navigation／history／list 與任何 a[href] 內文字不算刪除訊號；其父元素也不能繼承這些文字當證據。候選含排除節點、隱藏後代或超過 128 個後代即保守拒絕，script／style／template／noscript 也排除。掃描錯誤節點上限 2000，diag 命中數上限 40。
 
-首頁重導採組合證據：60 秒內有該分頁的具體對話 visit、同源且為允許的首頁／新對話路徑、目前 document 的 navigation entry `name` 精確等於目前網址、`redirectCount>0`，並有健康主內容＋可見輸入框、沒有正文／登入／載入／錯誤。**這不是直接取得完整 browser redirect chain**；沒有 HTTP redirect 證據的 SPA 重導寧可漏判。正常正文會清掉 visit；所有 trusted click／keydown 都取消 redirect intent，舊 navigation entry 不可沿用來判手動回首頁。無待判對話 visit 的首頁重導也不計入 deleted。
+首頁重導採組合證據：60 秒內有該分頁的具體對話 visit、同源且為允許的首頁／新對話路徑、目前 document 的 navigation entry `name` 精確等於目前網址、`type=navigate`、`redirectCount>0`，並有健康主內容＋可見輸入框、沒有正文／登入／載入／錯誤。`performance.timeOrigin + entry.startTime` 必須嚴格晚於背景此次 visit 的時間且不在未來；背景再次核對 report 的 visitAt 等於目前 visit、navigationAt 晚於此 visit。缺少時間、同毫秒或歷史 entry 都拒絕。**這不是直接取得完整 browser redirect chain**；沒有 HTTP redirect 證據的 SPA 重導寧可漏判。正常正文會清掉 visit；所有 trusted click／keydown 都取消 redirect intent。pagehide 讓舊 document 永久失去重導資格，popstate／pageshow persisted 另取消 visit 與延遲回呼；back_forward／traverse／reload 不能充當首頁重導證據。無待判對話 visit 的首頁重導也不計入 deleted；同網址明確錯誤頁的 direct 判定不受 navigation type 限制。
 
 ## 防抖與誤判防護
 
@@ -82,7 +82,7 @@ CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run te
 CHROME_PATH=/tmp/cft/chrome/linux-155.0.8059.39/chrome-linux64/chrome npm run test:e2e-sync
 ```
 
-使用者外部執行後的範例截圖已在工作區（尚未追蹤）；本輪只記錄，沒有重寫或暫存進 Git：
+使用者外部執行後的範例截圖已由 `cb1509d` 追蹤；本輪沒有重寫或暫存進 Git：
 
 - [刪除封存側欄](../docs/panel-1.7.5-deleted.png)：405×1180。
 - [SPA 範例側欄](../docs/panel-1.7.5-spa.png)：405×1199。
@@ -208,3 +208,39 @@ permissions 恰好 `["sidePanel"]`；與 main `b707eb0` 對照 host_permissions�
 | `npm run test:e2e-ui` | 1/1 | 0 |
 
 panel 回歸 **310 checks**，主 session 單獨跑兩次及完整 test:search 都通過；獨立 session `/root/review_175` 本輪複審 **PASS**、另跑310 checks／diff檢查通過。deleted **795 checks**、e2e-ui **8 checks**；兩項瀏覽器 e2e 的 node --check 及 git diff --check 亦通過。完整結果留在 `/tmp/chatseek-175-recovery-tests.json` 與同前綴測試 log（不提交）。本輪未重新啟動 Chrome／listen，也未重測效能：產品碼沒有改變，上面的效能表為前次量測。
+
+## PR #26 第二輪複審 P1 修復（本輪基準 `cb1509d`）
+
+外部獨立複審 **REQUEST_CHANGES** 的兩項 P1 均為產品誤判，沒有放寬測試或防抖門檻。新增測試使用四家真正 adapter／shared observer、background 與 IndexedDB，靜態頁不製造 DOM mutation，觀察 14 秒，超過原本 8 秒門檻。
+
+1. **側欄標題繼承。** 舊 helper 掃全頁 p/div，精確文案可來自另一段對話的側欄連結，甚至從其父元素的 textContent 命中。新增四家負例切回舊碼會 exit 1：`chatgpt: unmarked link is not deletion evidence after debounce`。修正 `content/deleted.js`：只接受主內容／錯誤容器／無 main 時第一個 H1；排除 a[href]、aside/nav/navigation、history/sidebar、清單／樹與對話標題，以及含這些後代的父元素。獨立再複查另外指出 quote、input、CSS 隱藏後代及 script/template 的父元素繼承，已一併排除；候選超過 128 個後代即拒絕。選擇器涵蓋大小寫變體與 Gemini conversation 清單標記。實際錯誤頁 main/p、主內容外 role=alert、無 main 的主要 H1 正例仍能封存。
+2. **歷史首頁 navigation entry。** visit 只記 id／平台，沒有核對 PerformanceNavigationTiming 產生時間，歷史 redirectCount 可授權後來的對話；頁內可信 click／keydown 也看不到瀏覽器上一頁。保留第一項修正、套回舊時間判定，新增回歸 exit 1：`claude: old entry cannot reuse homepage redirect timing`。修正 `content/deleted.js`、`src/deleted-visits.js`：entry 必須為 navigate，絕對時間嚴格晚於本次 visit；背景再次核對同一 visitAt 與非未來 navigationAt。back_forward／traverse／reload、舊／同時／缺失／未來 entry、visit 被換掉均不授權。pagehide 退役舊 document，pageshow persisted／popstate 取消 visit、候選與延遲 context 回覆；不靠網站 DOM 事件猜測瀏覽器按鈕。
+
+四家「本次新重導」正例還揭露既有 `background.js` 的 `ACTIVE_LOCATION` 會在首頁先清掉 pending visit，使真正 ChatGPT／Gemini observer 無法判定重導。已改為僅保留 `deletedVisitContext` 確認的近期、同源、合法首頁 visit；仍清除首頁的網站對焦追蹤，任何封存寫入仍須通過新時間核對與原防抖。四家真正 observer 的新重導正例均通過，沒有靠改 fixture 呼叫順序或跳過 ACTIVE_LOCATION 規避產品問題。
+
+`scripts/deleted-test.mjs` 現為 **1455 checks（原 795＋新增 660）**，含四家側欄／連結／清單／繼承文字負例、歷史首頁／BFCache／popstate 與延遲回覆負例、背景二次時間核對、新重導及有效錯誤容器正例；既有手動首頁、隱藏／SPA 舊正文、九語登入、未知 id、恢復與 ChatGPT 封存共存、廣播去重與有界重檢全保留。
+
+修後獨立 Codex session `/root/review_175` 再複查 **PASS**：獨立 deleted-test **1455 checks、exit 0**，三個產品檔案 node --check、git diff --check 通過，未改檔。JSDOM 對刻意無效 CSS 攻擊樣本輸出八行 `Could not parse CSS stylesheet`，不是測試失敗。
+
+本輪版本仍 **1.7.5**、DB **4**；manifest／verify／權限／host／CSP 未改，無網路請求／HTML 字串注入／真實資料。未改既有未追蹤草稿、`.codewhale/`、`docs/readme-assets/` 或任何圖片，也未 commit／push／合併。
+
+本輪限制：嚴格大於 visit 的時間檢查會拒絕同毫秒或導航早於背景收到通知的重導，缺少 timing、BFCache 復用、SPA 重導也寧可漏判。複雜錯誤頁若混有連結／隱藏後代或超過 128 個後代，候選可能被拒絕；其他合法短元素仍可命中。文字／DOM 仍僅公開知識推定，未經真實帳號驗證。上文 CfT 通過及四張截圖是**先前版本**證據，不能作本輪 P1 防護的 Chrome 通過證據；本輪只做兩支瀏覽器 e2e 的 node --check，BFCache／首頁 guard 仍待外部 Chrome 重跑。上文效能表也是先前量測，本輪沒有重測新增證據掃描的 Chrome 成本。
+
+本輪 Node v26.10.0，完整離線測試全部 exit 0。「通過腳本數」依 package.json 串接的程式計算；斷言數另列於下方。每個指令均直接執行並保留完整 log。
+
+| 指令 | 通過腳本數 | exit |
+|---|---:|---:|
+| `npm run verify` | 2/2 | 0 |
+| `npm run test:search` | 30/30 | 0 |
+| `npm run test:fixture` | 4/4 | 0 |
+| `npm run test:integrity` | 3/3 | 0 |
+| `npm run test:upgrade` | 5/5 | 0 |
+| `npm run test:sync` | 1/1 | 0 |
+| `npm run test:gemini` | 2/2 | 0 |
+| `npm run test:spa` | 5/5 | 0 |
+| `npm run test:skeleton` | 2/2 | 0 |
+| `npm run test:progress` | 2/2 | 0 |
+| `npm run test:deleted` | 1/1 | 0 |
+| `npm run test:e2e-ui` | 1/1 | 0 |
+
+完整 test:search 與單跑 test:deleted 均為 **1455 checks**；panel **310 checks**、e2e-ui **8 checks**。`node --check` 三個產品檔案、deleted-test 與兩支 `scripts/e2e-chatgpt.mjs`／`scripts/e2e-sync.mjs` **6/6 通過**；`git diff --check` 通過。log 在 `/tmp/chatseek-175-p1-*.log`，不提交。瀏覽器 test:e2e／test:e2e-sync 本輪未在沙箱執行；外部重跑方式仍使用上文的 CfT 155 兩條指令。

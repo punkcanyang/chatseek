@@ -106,7 +106,10 @@ function rememberSite(sender, url) {
   const key = siteKey(url);
   if (!key) {
     siteTabs.delete(tabId);
-    forgetDeletedVisit(tabId);
+    // A new homepage announces itself before redirect evidence is checked.
+    // Retain only an existing, recent, same-origin home visit; the observer
+    // still has to prove a fresh navigation after that exact visit.
+    if (!deletedVisitContext(tabId, url)) forgetDeletedVisit(tabId);
     return;
   }
   siteTabs.set(tabId, {

@@ -37,14 +37,16 @@ export function deletedVisitContext(tabId, currentUrl, now = Date.now()) {
   const visit = visits.get(tabId);
   if (!visit || now - visit.at > 60000 || !deletedHomeUrl(currentUrl, visit.platform)) return null;
   try { if (new URL(currentUrl).origin !== new URL(visit.url).origin) return null; } catch { return null; }
-  return { id: visit.id, platform: visit.platform };
+  return { id: visit.id, platform: visit.platform, at: visit.at };
 }
 /** Background clock and top-frame URL bind each observation to one visit.
  * Client-provided duration/count cannot authorize a write. */
 export function observeDeletedEvidence(tabId, currentUrl, report, now = Date.now()) {
   const direct = conversationFromUrl(currentUrl);
   const redirect = report?.redirected === true ? deletedVisitContext(tabId, currentUrl, now) : null;
-  const target = direct || redirect;
+  const freshRedirect = redirect && report.visitAt === redirect.at
+    && Number.isFinite(report.navigationAt) && report.navigationAt > redirect.at && report.navigationAt <= now;
+  const target = direct || (freshRedirect ? redirect : null);
   if (!target || target.id !== report?.id || target.platform !== report?.platform
       || !(Number(report.hits) > 0) || report.blocked === true) {
     evidence.delete(tabId); return false;
