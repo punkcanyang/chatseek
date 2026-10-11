@@ -363,6 +363,10 @@ export function mountReader(root, options = {}) {
   badge.id = "archivedBadge";
   badge.className = "badge-archived";
   badge.hidden = conversation?.archived !== true;
+  const deletedNote = doc.createElement("span");
+  deletedNote.id = "siteDeletedNote";
+  deletedNote.className = "deleted-note";
+  deletedNote.hidden = conversation?.archived !== true || conversation?.archiveSource !== "site-deleted";
   const nav = doc.createElement("div");
   nav.className = "reader-nav";
   const prevBtn = doc.createElement("button");
@@ -388,7 +392,7 @@ export function mountReader(root, options = {}) {
   note.className = "reader-note";
 
   header.append(title, meta, nav, note);
-  meta.append(plat, time, badge);
+  meta.append(plat, time, badge, deletedNote);
 
   const scroller = doc.createElement("div");
   scroller.className = "thread";
@@ -415,6 +419,7 @@ export function mountReader(root, options = {}) {
     openBtn.title = openLabel;
     if (!openBtn.querySelector("svg")) openBtn.append(externalIcon(doc));
     badge.textContent = label("archivedBadge");
+    deletedNote.textContent = label("siteDeleted");
     if (!conversation) {
       title.textContent = "Chatseek";
       plat.textContent = "";
@@ -729,6 +734,8 @@ function focusHit() {
       return { messageId: fig.dataset.messageId || "", index: Number(fig.dataset.imageIndex) };
     },
     setActivity(conv, now = Date.now()) {
+      badge.hidden = conv?.archived !== true;
+      deletedNote.hidden = conv?.archived !== true || conv?.archiveSource !== "site-deleted";
       if (!clockConv || !conv) return;
       if (conv.updatedAt != null) clockConv.updatedAt = conv.updatedAt;
       if (conv.updatedAtSource) clockConv.updatedAtSource = conv.updatedAtSource;

@@ -6,7 +6,10 @@ import {
   readCaptureHealth,
   saveImageRecords,
   ensureProgressRepair,
+  setSiteDeletedState,
 } from "./src/db.js";
+import { conversationFromUrl } from "./src/conversation-url.js";
+import { rememberDeletedVisit, noteDeletedNavigation, forgetDeletedVisit, deletedVisitContext, observeDeletedEvidence } from "./src/deleted-visits.js";
 import { healthHasWarning } from "./src/activity-time.js";
 import { findReaderContext, focusTab, readerRefreshUrl, siteCandidates, siteKey } from "./src/focus-tab.js";
 import { handleSyncMessage, noteSyncTabClosed, pauseSyncForStartup } from "./src/sync-runner.js";
@@ -103,6 +106,10 @@ function rememberSite(sender, url) {
   const key = siteKey(url);
   if (!key) {
     siteTabs.delete(tabId);
+    // A new homepage announces itself before redirect evidence is checked.
+    // Retain only an existing, recent, same-origin home visit; the observer
+    // still has to prove a fresh navigation after that exact visit.
+    if (!deletedVisitContext(tabId, url)) forgetDeletedVisit(tabId);
     return;
   }
   siteTabs.set(tabId, {
@@ -113,9 +120,12 @@ function rememberSite(sender, url) {
   });
 }
 
+chrome.tabs?.onUpdated?.addListener((tabId, change) => noteDeletedNavigation(tabId, change));
+
 if (chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     siteTabs.delete(tabId);
+    forgetDeletedVisit(tabId);
     noteSyncTabClosed(tabId);
   });
 }
@@ -232,6 +242,41 @@ function fitHealth(health) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
+  if (["DELETED_VISIT_START", "DELETED_VISIT_CONTEXT", "DELETED_OBSERVATION", "RESTORE_SITE_DELETED", "DELETED_VISIT_CANCEL"].includes(msg.type)) {
+    if (msg.type === "DELETED_VISIT_START") {
+      if (!fromExtensionPage(sender)) return;
+      rememberDeletedVisit(msg.tabId, msg.url);
+      sendResponse({ ok: true }); return;
+    }
+    const platform = platformFromSender(sender);
+    const tabId = sender?.tab?.id;
+    if (!platform || sender.frameId > 0 || !Number.isInteger(tabId)) return;
+    if (msg.type === "DELETED_VISIT_CANCEL") {
+      forgetDeletedVisit(tabId); sendResponse({ ok: true }); return;
+    }
+    (async () => {
+      let url = senderPageUrl(sender);
+      // A delayed observation cannot mark the page the tab has left.
+      if (chrome.tabs?.get) url = (await chrome.tabs.get(tabId))?.url || "";
+      const direct = conversationFromUrl(url);
+      if (msg.type === "DELETED_VISIT_CONTEXT") {
+        return direct?.platform === platform ? { ...direct, direct: true }
+          : { ...(deletedVisitContext(tabId, url) || {}), direct: false };
+      }
+      if (msg.platform !== platform) return { ok: false };
+      if (msg.type === "RESTORE_SITE_DELETED") {
+        if (direct?.id !== msg.id || !(Number(msg.messageCount) > 0)) return { ok: false };
+        const result = await setSiteDeletedState(msg.id, false);
+        if (result.changed) notifyIndexUpdated();
+        return { ok: true, ...result };
+      }
+      if (!observeDeletedEvidence(tabId, url, msg)) return { ok: true, confirmed: false };
+      const result = await setSiteDeletedState(msg.id, true);
+      if (result.changed) notifyIndexUpdated();
+      return { ok: true, confirmed: true, ...result };
+    })().then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (
     msg.type === "SYNC_START" ||
     msg.type === "SYNC_PAUSE" ||

@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import { reviewSkeleton } from "./skeleton-review-test.mjs";
 import { mergeActivityTime, pageShowsNewActivity } from "../src/activity-time.js";
 import { tokenize, queryTokens } from "../src/tokenize.js";
+import { CATALOG, LOCALE_ORDER } from "../src/i18n.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
@@ -88,7 +89,7 @@ for (const script of manifest.content_scripts || []) {
   }
 }
 if (!geminiScript) fail("content/gemini.js is not a content script");
-if (manifest.version !== "1.7.4") fail(`version should be 1.7.4, got ${manifest.version}`);
+if (manifest.version !== "1.7.5") fail(`version should be 1.7.5, got ${manifest.version}`);
 let chatgptFrames = false;
 for (const script of manifest.content_scripts || []) {
   const isChatgpt = (script.js || []).includes("content/chatgpt.js");
@@ -152,6 +153,7 @@ const referenced = new Set([
   "src/search-query.js",
   "src/activity-time.js",
   "src/preview.js",
+  "src/deleted-visits.js",
   "src/conversation-url.js",
   "src/current-tab.js",
   "src/i18n.js",
@@ -191,6 +193,7 @@ for (const rel of [
   "content/gemini.js",
   "content/shared.js",
   "content/images.js",
+  "content/deleted.js",
 ]) {
   const src = read(rel);
   if (/XMLHttpRequest|prototype\.fetch|window\.fetch\s*=/.test(src)) {
@@ -265,6 +268,8 @@ if (/innerHTML|insertAdjacentHTML|outerHTML/.test(read("content/images.js") + re
 }
 for (const rel of [
   "background.js",
+  "content/deleted.js",
+  "src/deleted-visits.js",
   "content/chatgpt.js",
   "content/claude.js",
   "content/grok.js",
@@ -302,6 +307,22 @@ for (const rel of [
   if (/batchexecute|_\/BardChatUi/i.test(src)) fail(`${rel} must not touch Gemini internal endpoints`);
 }
 const syncPolicy = read("src/sync-policy.js");
+for (const rel of ["content/deleted.js", "src/deleted-visits.js"]) {
+  if (/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(read(rel))) fail(`${rel} must use DOM APIs`);
+}
+for (const entry of manifest.content_scripts) {
+  if (!entry.js.includes("content/deleted.js") || entry.js.indexOf("content/deleted.js") <= entry.js.indexOf("content/shared.js")) {
+    fail("every platform must load deleted evidence after shared.js");
+  }
+}
+if (!/export const DELETED_GRACE_MS = 8000/.test(read("src/deleted-visits.js"))) fail("deleted evidence needs its 8-second guard");
+for (const [name, value] of [["RECHECK_MS", 1200], ["RECHECK_LIMIT", 12], ["RECHECK_WINDOW_MS", 20000]]) {
+  if (!read("content/deleted.js").includes(`const ${name} = ${value};`)) fail(`deleted evidence must retain bounded ${name}`);
+}
+if (!/deleted=/.test(read("content/shared.js"))) fail("diag must include deleted hit counts");
+for (const locale of LOCALE_ORDER) {
+  if (!CATALOG[locale].siteDeleted || (locale !== "en" && CATALOG[locale].siteDeleted === CATALOG.en.siteDeleted)) fail(`${locale} needs translated site-deleted copy`);
+}
 const syncRunner = read("src/sync-runner.js");
 const syncUi = read("sidepanel/sync-ui.js");
 if (!/export const SYNC_GAP_MIN_MS = 20000/.test(syncPolicy)) fail("sync gap minimum must stay 20 seconds");
@@ -1198,6 +1219,7 @@ for (const rel of [
   "content/gemini.js",
   "content/shared.js",
   "content/images.js",
+  "content/deleted.js",
 ]) {
   if (/innerHTML|insertAdjacentHTML|outerHTML|\beval\s*\(/.test(read(rel))) {
     fail(`${rel} must not use innerHTML or eval`);

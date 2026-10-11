@@ -111,6 +111,7 @@ function bundle(code) {
     injectMissing: say("injectMissing"),
     error: say("error"),
     archivedBadge: say("archivedBadge"),
+    siteDeleted: say("siteDeleted"),
     restoreActive: say("restoreActive"),
     remove: say("remove"),
     confirmRemoveTitle: say("confirmRemoveTitle"),
@@ -375,6 +376,12 @@ function render(items, { emptyKind, error }) {
       badge.className = "badge-archived";
       badge.textContent = t.archivedBadge;
       meta.append(badge);
+      if (conv.archiveSource === "site-deleted") {
+        const deleted = document.createElement("span");
+        deleted.className = "deleted-note";
+        deleted.textContent = t.siteDeleted;
+        meta.append(deleted);
+      }
     }
     btn.dataset.id = conv.id || "";
     if (currentKey && String(conv.id || "").toLowerCase() === currentKey) {
@@ -529,7 +536,8 @@ async function openChat(url) {
   if (await reuseOpenTab({ type: "FOCUS_ORIGINAL", url })) return;
   try {
     if (chrome.tabs?.create) {
-      await chrome.tabs.create({ url });
+      const tab = await chrome.tabs.create({ url });
+      if (Number.isInteger(tab?.id)) await chrome.runtime.sendMessage({ type: "DELETED_VISIT_START", tabId: tab.id, url });
       return;
     }
   } catch {

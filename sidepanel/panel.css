@@ -873,3 +873,10 @@ body.is-images .image-pane {
 button {
   font-family: inherit;
 }
+
+.deleted-note {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.deleted-note[hidden] { display: none; }

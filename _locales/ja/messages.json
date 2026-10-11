@@ -91,6 +91,9 @@
   "archivedBadge": {
     "message": "アーカイブ済み"
   },
+  "siteDeleted": {
+    "message": "元のサイトで削除済み"
+  },
   "restoreActive": {
     "message": "元に戻す"
   },
