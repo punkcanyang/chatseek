@@ -286,3 +286,19 @@ PR #26 先不合。第 3 輪複審（01a1250f）REQUEST_CHANGES 唯一必修未�
 - 修法：區分歷史側欄（nav／aside／已知側欄容器）與正文清單；保留隱藏／殘留正文阻擋；deleted-test.mjs 補四家 <ol hidden><li> 與 role="list" 回歸。
 - 本 commit 含上一次中斷留下的未完成修改（未經測試）。
 - 注意：Codex 01a12503 曾因被中斷留下「already has an active writer」鎖，接續前要先處理（或另開新寫碼 session 並記錄）。
+
+## 暫停後接續確認（基準 a94baed，僅第三輪 01a1250f 的 P1）
+
+依使用者接續指示重新讀取上節並檢查 WIP。`a94baed` 已包含正確的狹義 `TRANSCRIPT_NAV` 與四家回歸，直接沿用；正文收集及可見性檢查不再使用廣泛 `TITLE_CONTEXT`，ol／ul／role=list 中已識別正文仍參與 hidden／aria-hidden／CSS 可見性與 SPA residual 阻擋。刪除候選的側欄標題排除、歷史 redirect timing 及其他原有防護保留。本次沒有新增產品碼或測試修改，只補本節實際驗證紀錄；本次接續 session 可正常寫入工作區，未遇到前述 active writer 鎖。
+
+Node v26.10.0，本次直接執行使用者指定的三個指令，全部 **exit 0**：
+
+| 指令 | 通過數字 | exit |
+|---|---|---:|
+| `npm run verify` | 2/2 腳本（守門＋ChatGPT fixture） | 0 |
+| `npm run test:deleted` | 1719 checks；4 平台、9 語、防抖 8000ms | 0 |
+| `npm run test:search` | 30/30 腳本；含 deleted 1719、panel 310、e2e-ui 8 checks | 0 |
+
+四家清單正文回歸涵蓋 ol/li、ul/li、role=list/listitem × 四種隱藏形式，實際 adapter／observer／background／DB 觀察 14 秒，確認 blocked、零刪除證據、不封存、正文及活動時間保留；可見與殘留正文回歸也通過。原有側欄標題與 redirect 負例一起通過，未放寬斷言或門檻。獨立 Codex session `/root/review_175_resume` 唯讀複查 **PASS**，獨立 deleted-test **1719 checks、exit 0**。兩個 JS 的 node --check 與 git diff --check 通過。新 log：`/tmp/chatseek-175-resume-*.log`，不提交；本次只重跑上述三個指令，其他測試結果仍是前次紀錄。
+
+本項 P1 的接續驗證已完成；PR #26 仍交由外部主控處理，不 commit／push／merge。DB **4**、版本 **1.7.5**、permissions **["sidePanel"]**、host／CSP 原樣，未新增網路請求或 HTML 字串注入，不改圖片／未追蹤草稿／其他功能。已識別的隱藏或殘留正文仍會保守阻擋，未知正文 DOM 與真站驗證限制照舊。
