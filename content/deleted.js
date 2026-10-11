@@ -6,6 +6,9 @@
   const ERROR_CONTAINER = "[role='alert'], [data-error-code], [data-testid*='not-found'], [data-testid*='deleted'], [data-testid*='error']";
   const TITLE_CONTEXT = `${SIDEBAR}, a[href]`;
   const EXCLUDE = `${TRANSCRIPT}, ${TITLE_CONTEXT}, form, textarea, [contenteditable='true'], pre, code, blockquote, script, style, template, noscript, [hidden], [aria-hidden='true']`;
+  // Broad title/list exclusions only apply to error wording. Recognized turns
+  // inside ordinary lists must remain evidence, including hidden/old SPA turns.
+  const TRANSCRIPT_NAV = "nav, aside, [role='navigation']";
   const exact = [
     "conversation not found", "chat not found", "this conversation was deleted", "this chat was deleted",
     "this conversation has been deleted", "this chat has been deleted", "this conversation does not exist",
@@ -57,7 +60,7 @@
   }
   Chatseek.readDeletedPage = (doc = document, loc = location) => {
     const main = doc.querySelector("main, [role='main']");
-    const transcripts = [...doc.querySelectorAll(TRANSCRIPT)].filter((node) => !node.closest(TITLE_CONTEXT) && (node.textContent || "").trim());
+    const transcripts = [...doc.querySelectorAll(TRANSCRIPT)].filter((node) => !node.closest(TRANSCRIPT_NAV) && (node.textContent || "").trim());
     let observation = observations.get(doc);
     if (!observation) observations.set(doc, observation = { href: loc.href, nodes: [], residual: new WeakSet() });
     if (observation.href !== loc.href) {
@@ -106,7 +109,7 @@
       blocked: !!blocked || login, body, homeReady: !blocked && !login && !body && shell };
   };
   function visibleTranscript(node) {
-    return !node.closest(`${TITLE_CONTEXT}, [hidden], [aria-hidden='true'], [aria-busy='true']`)
+    return !node.closest(`${TRANSCRIPT_NAV}, [hidden], [aria-hidden='true'], [aria-busy='true']`)
       && !node.querySelector("[role='progressbar']") && displayed(node);
   }
   let timer = 0;

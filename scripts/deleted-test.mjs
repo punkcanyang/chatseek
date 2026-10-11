@@ -354,6 +354,46 @@ for (const platform of Object.keys(urls)) {
   await check;
   assert(!pending.sent.some((msg) => msg.type === "DELETED_OBSERVATION"), `${platform}: BFCache cancels in-flight context before any observation`);
 }
+// PR #26 third review: a list is not necessarily conversation history. Keep
+// recognized turns inside lists so hidden/residual bodies still veto deletion.
+for (const platform of Object.keys(urls)) {
+  const conv = conversationFromUrl(urls[platform]);
+  const wrappers = [
+    ["ol", (body, attr = "") => `<ol ${attr}><li>${body}</li></ol>`],
+    ["ul", (body, attr = "") => `<ul ${attr}><li>${body}</li></ul>`],
+    ["role=list", (body, attr = "") => `<div role="list" ${attr}><div role="listitem">${body}</div></div>`],
+  ];
+  for (const [label, wrap] of wrappers) {
+    for (const attr of ["hidden", 'aria-hidden="true"', 'style="display:none"', 'style="visibility:hidden"']) {
+      await db.restoreConversation(conv.id);
+      const before = await db.readConversation(conv.id);
+      const clock = virtualClock();
+      const h = harness(platform, `<main><h1>Conversation not found</h1></main>${wrap(normal(platform), attr)}`,
+        urls[platform], true, { clock, observe: true });
+      if (platform === "chatgpt" || platform === "gemini") h.api.observe(() => h.api.platforms[platform].capture());
+      await clock.advance(14000);
+      assert(h.sent.some((msg) => msg.type === "DELETED_VISIT_CONTEXT"), `${platform}: ${label} ${attr} runs the real adapter deletion check`);
+      const stored = await db.readConversation(conv.id);
+      assert(!stored.conversation.archived && stored.conversation.archiveSource !== "site-deleted",
+        `${platform}: ${label} ${attr} transcript cannot archive after 14 seconds`);
+      const page = h.api.readDeletedPage();
+      assert(page.blocked && !page.body && !page.hits && !page.homeReady,
+        `${platform}: ${label} ${attr} recognized transcript is unknown, not absence`);
+      assert(!h.sent.some((msg) => msg.type === "DELETED_OBSERVATION" && msg.hits > 0),
+        `${platform}: ${label} ${attr} never sends positive deletion evidence`);
+      assert(stored.messages[0].body === before.messages[0].body && stored.conversation.updatedAt === before.conversation.updatedAt,
+        `${platform}: ${label} ${attr} preserves stored body and activity`);
+      h.dom.window.dispatchEvent(new h.dom.window.Event("pagehide"));
+    }
+    const live = harness(platform, `<main><h1>Conversation not found</h1></main>${wrap(normal(platform))}`);
+    const livePage = live.api.readDeletedPage();
+    assert(livePage.body && !livePage.blocked && !livePage.hits, `${platform}: ${label} visible recognized transcript is still body`);
+    const otherUrl = urls[platform].replaceAll("71", "92");
+    live.dom.reconfigure({ url: otherUrl });
+    const residual = live.api.readDeletedPage();
+    assert(residual.blocked && !residual.body && !residual.hits, `${platform}: ${label} retained SPA transcript veto survives URL change`);
+  }
+}
 const localized = ["找不到這段對話", "此对话已删除", "Conversation not found", "このチャットは削除されました", "이 대화에 접근할 권한이 없습니다", "conversación no encontrada", "cette conversation a été supprimée", "diese unterhaltung wurde gelöscht", "esta conversa foi excluída"];
 for (const platform of Object.keys(urls)) for (const text of localized) {
   const h = harness(platform, `<main><p role="alert">${text}</p></main>`);

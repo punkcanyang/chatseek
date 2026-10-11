@@ -244,3 +244,45 @@ panel 回歸 **310 checks**，主 session 單獨跑兩次及完整 test:search �
 | `npm run test:e2e-ui` | 1/1 | 0 |
 
 完整 test:search 與單跑 test:deleted 均為 **1455 checks**；panel **310 checks**、e2e-ui **8 checks**。`node --check` 三個產品檔案、deleted-test 與兩支 `scripts/e2e-chatgpt.mjs`／`scripts/e2e-sync.mjs` **6/6 通過**；`git diff --check` 通過。log 在 `/tmp/chatseek-175-p1-*.log`，不提交。瀏覽器 test:e2e／test:e2e-sync 本輪未在沙箱執行；外部重跑方式仍使用上文的 CfT 155 兩條指令。
+
+## 第三輪複審 P1 修復（基準 871ff92）
+
+PR #26 第三輪獨立複審 **REQUEST_CHANGES** 指出上一輪正文收集誤用了刪除文案的 `TITLE_CONTEXT`。該選擇器包含所有 ol／ul／role=list 等清單，已識別的對話正文在清單內就被先丟掉，不能進入 `ambiguous` 的隱藏／舊 SPA 正文防護。同頁主內容出現明確刪除文案時，因而把「正文未知」誤當「沒有正文」並封存。
+
+修正僅在 `content/deleted.js`：正文收集與 `visibleTranscript()` 改用狹義 `TRANSCRIPT_NAV`（nav／aside／role=navigation），保留一般清單內已識別的正文，繼續依 hidden／aria-hidden／CSS 可見性、頁面身分與 SPA residual 檢查決定 body／blocked。廣泛 `TITLE_CONTEXT` 繼續只用於刪除文案候選；側欄／連結／歷史清單與父元素繼承文案的排除完全保留。歷史 redirect timing、BFCache／popstate、背景二次 visit 時間核對、8 秒多次觀察、有界重檢與廣播去重均未改。
+
+`scripts/deleted-test.mjs` 新增 **264 checks**：四平台各自將正常正文包入 ol/li、ul/li、role=list/listitem，分別用 hidden、aria-hidden、display:none、visibility:hidden 隱藏，主內容顯示 `Conversation not found`。共 **48 個隱藏正文場景**使用真正 adapter／observer／background／DB 觀察 **14000ms**，確認沒有封存、blocked=true、body=false、hits=0、homeReady=false、未送正刪除證據、原本訊息與活動時間保留；另有 **12 組可見正文及 URL 切換殘留檢查**，確認清單正文仍能識別且舊 SPA 節點不能授權刪除。所有舊斷言與門檻原樣保留。
+
+新增回歸先在未改產品碼的 `871ff92` 執行，**exit 1**：`chatgpt: ol hidden transcript cannot archive after 14 seconds`（`/tmp/chatseek-175-r3-before.log`）；修後單跑 **1719 checks、exit 0**（1455＋264），四平台九語、防抖 8000ms。只有人工範例資料，沒有帳號或真實內容。JSDOM 既有無效 CSS 攻擊樣本的八行 stylesheet warning 仍不影響 exit。
+
+獨立 Codex session `/root/review_175_r3` 唯讀複查 **PASS**，獨立跑 deleted-test **1719 checks、exit 0**，核對舊碼失敗 log；兩個改動 JS 的 node --check 與 git diff --check 通過。確認刪除候選排除、歷史 navigation／BFCache 與背景時間核對均未改。
+
+限制：這是已識別正文的保護修復，不擴大四家正文選擇器；未知 DOM 仍可能漏判。隱藏／殘留正文若一直不移除，會保守阻擋刪除及恢復；一般歷史清單若包含看似正文的結構，也可能造成漏判。四家錯誤頁文案仍為公開知識推定，未經真實帳號驗證；本輪未啟動瀏覽器 e2e 或重新量測效能，不能沿用先前 CfT 結果宣稱本輪 Chrome 已通過。
+
+版本 **1.7.5**、permissions 恰好 **["sidePanel"]**、DB **4**；manifest／host／CSP／verify／background 未改，沒有網路請求、HTML 字串注入或新 schema。不改圖片、未追蹤草稿、`.codewhale/`、`docs/readme-assets/`、xsched，不做 1.7.6。未 commit／push，交由主控處理。
+
+本輪 Node v26.10.0，verify 與全部 **11 個離線 `test:*`** 均直接執行、**exit 0**。下表是指令串接的通過腳本數，斷言數另列。
+
+| 指令 | 通過腳本數 | exit |
+|---|---:|---:|
+| `npm run verify` | 2/2 | 0 |
+| `npm run test:search` | 30/30 | 0 |
+| `npm run test:fixture` | 4/4 | 0 |
+| `npm run test:integrity` | 3/3 | 0 |
+| `npm run test:upgrade` | 5/5 | 0 |
+| `npm run test:sync` | 1/1 | 0 |
+| `npm run test:gemini` | 2/2 | 0 |
+| `npm run test:spa` | 5/5 | 0 |
+| `npm run test:skeleton` | 2/2 | 0 |
+| `npm run test:progress` | 2/2 | 0 |
+| `npm run test:deleted` | 1/1 | 0 |
+| `npm run test:e2e-ui` | 1/1 | 0 |
+
+完整 test:search 與單跑 test:deleted 均 **1719 checks**，panel **310 checks**、e2e-ui **8 checks**。修改的兩個 JS 及 `scripts/e2e-chatgpt.mjs`／`scripts/e2e-sync.mjs` 的 node --check **4/4 通過**，git diff --check 通過。完整 log 位於 `/tmp/chatseek-175-r3-*.log`，不提交；瀏覽器 e2e 仍由外部環境執行。
+
+## 暫停（2026-10-11 11:10，商務拓展排程）
+PR #26 先不合。第 3 輪複審（01a1250f）REQUEST_CHANGES 唯一必修未完成：
+- P1：content/deleted.js:60 以 TITLE_CONTEXT 排除所有 ol／ul／role="list"，正文若在這些容器（如 <ol hidden><li>）會在 ambiguous 檢查前被丟棄；主內容顯示 Conversation not found 時四家都誤封存為 site-deleted（cb1509d 是 blocked）。
+- 修法：區分歷史側欄（nav／aside／已知側欄容器）與正文清單；保留隱藏／殘留正文阻擋；deleted-test.mjs 補四家 <ol hidden><li> 與 role="list" 回歸。
+- 本 commit 含上一次中斷留下的未完成修改（未經測試）。
+- 注意：Codex 01a12503 曾因被中斷留下「already has an active writer」鎖，接續前要先處理（或另開新寫碼 session 並記錄）。
