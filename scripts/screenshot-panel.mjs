@@ -345,7 +345,7 @@ async function main() {
   const origin = `http://127.0.0.1:${port}`;
   const sampleSkeleton = await buildSampleSkeleton();
   const browser = await puppeteer.launch({
-    executablePath: "/usr/bin/google-chrome",
+    executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome",
     headless: true,
     args: [
       "--no-sandbox",
@@ -399,7 +399,7 @@ async function main() {
     }, currentUrl, sampleSkeleton);
 
     await prepare(page, origin);
-    const docs = join(root, "docs");
+    const docs = process.env.CHATSEEK_SCREENSHOTS || join(root, "docs");
     // Best-effort copy target for CI artifacts. Some sandboxes do not allow
     // writing outside the workspace, which must not fail the docs screenshots.
     const artifacts = process.env.CHATSEEK_ARTIFACTS || "/opt/cursor/artifacts";

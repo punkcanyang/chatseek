@@ -40,6 +40,9 @@ let view = null;
 const imageMap = new Map();
 const fetchedImages = new Set();
 let shownIds = [];
+let imageEpoch = 0;
+let refreshPending = false;
+let refreshRun = null;
 
 const REUSE_WAIT_MS = 1500;
 
@@ -81,6 +84,7 @@ async function load() {
 }
 
 async function loadImages(ids, replace = false) {
+  const epoch = imageEpoch;
   const need = (ids || []).filter((id) => id && (replace || !fetchedImages.has(id)));
   if (!need.length || !parsed.id) return;
   need.forEach((id) => fetchedImages.add(id));
@@ -88,9 +92,10 @@ async function loadImages(ids, replace = false) {
   try {
     found = await readImagesForMessages(need);
   } catch {
-    need.forEach((id) => fetchedImages.delete(id));
+    if (epoch === imageEpoch) need.forEach((id) => fetchedImages.delete(id));
     return;
   }
+  if (epoch !== imageEpoch) return;
   if (replace) {
     for (const id of need) imageMap.delete(id);
   } else if (!found.length) {
@@ -107,16 +112,19 @@ async function loadImages(ids, replace = false) {
   view?.setImages(imageMap);
 }
 
-function show() {
+function show(position = view?.position?.()) {
   const locale = localeFor(localePref);
   if (!app) return;
+  view?.destroy?.();
+  view = null;
+  shownIds = [];
   if (failed) {
-    mountReader(app, { error: true, locale, query: parsed.query, onOpenOriginal: openOriginal });
+    view = mountReader(app, { error: true, locale, query: parsed.query, onOpenOriginal: openOriginal });
     document.title = "Chatseek";
     return;
   }
   if (!row?.conversation) {
-    mountReader(app, { missing: true, locale, query: parsed.query, onOpenOriginal: openOriginal });
+    view = mountReader(app, { missing: true, locale, query: parsed.query, onOpenOriginal: openOriginal });
     document.title = "Chatseek";
     return;
   }
@@ -126,6 +134,7 @@ function show() {
     locale,
     query: parsed.query,
     images: imageMap,
+    position,
     focus: parsed.imageIndex >= 0 && parsed.messageId
       ? { messageId: parsed.messageId, index: parsed.imageIndex }
       : null,
@@ -159,22 +168,62 @@ function applyClock(conv) {
   view.setActivity(row.conversation);
 }
 
-async function refreshClock() {
-  if (!parsed.id || !view) return;
-  let conv = null;
-  try {
-    conv = await readConversationRow(parsed.id);
-  } catch {
+function invalidateImages() {
+  imageEpoch += 1;
+  imageMap.clear();
+  fetchedImages.clear();
+}
+
+async function refreshContent() {
+  if (!parsed.id) return;
+  const conv = await readConversationRow(parsed.id);
+  if (!conv) {
+    if (row || failed) {
+      row = null;
+      failed = false;
+      invalidateImages();
+      show(null);
+    }
     return;
   }
-  applyClock(conv);
+  const old = row?.conversation;
+  const changed = !old || ["contentRevision", "messageCount", "title", "url", "platform", "firstSeenAt"]
+    .some((key) => conv[key] !== old[key]);
+  if (!changed) {
+    applyClock(conv);
+    return;
+  }
+  // Read body and revision in one snapshot. A following notification queues
+  // another check, so writes during this read cannot leave the reader stale.
+  const next = await readConversation(parsed.id);
+  const position = row ? view?.position?.() : null;
+  row = next;
+  failed = false;
+  invalidateImages();
+  show(position);
+}
+
+function refreshReader() {
+  refreshPending = true;
+  if (refreshRun) return refreshRun;
+  refreshRun = (async () => {
+    while (refreshPending) {
+      refreshPending = false;
+      try { await refreshContent(); }
+      catch { /* Keep the current view; another notification/focus retries. */ }
+    }
+  })().finally(() => {
+    refreshRun = null;
+    if (refreshPending) return refreshReader();
+  });
+  return refreshRun;
 }
 
 if (chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === "INDEX_UPDATED") refreshClock();
+    if (msg?.type === "INDEX_UPDATED") return refreshReader();
     if (msg?.type !== "IMAGE_CACHE_UPDATED") return;
-    for (const id of shownIds) fetchedImages.delete(id);
+    invalidateImages();
     loadImages(shownIds, true);
   });
 }
@@ -200,8 +249,12 @@ function startReaderClock() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopReaderClock();
-  else startReaderClock();
+  else {
+    startReaderClock();
+    refreshReader();
+  }
 });
+window.addEventListener("focus", refreshReader);
 startReaderClock();
 
 window.addEventListener("storage", (event) => {
@@ -211,3 +264,6 @@ window.addEventListener("storage", (event) => {
   localePref = pref;
   show();
 });
+
+// Catch a write between the initial snapshot and listener registration.
+await refreshReader();

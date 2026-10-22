@@ -474,7 +474,13 @@ async function restoreActive(conv) {
     render([], { error: true });
     return;
   }
+  notifyIndexChange();
   refresh();
+}
+
+function notifyIndexChange() {
+  const sent = chrome.runtime?.sendMessage?.({ type: "INDEX_UPDATED" });
+  sent?.catch?.(() => {});
 }
 
 function askRemove(conv) {
@@ -489,6 +495,7 @@ function askRemove(conv) {
       render([], { error: true });
       return;
     }
+    notifyIndexChange();
     refresh();
   };
   removeCancel?.focus();
@@ -967,6 +974,7 @@ clearBtn.addEventListener("click", async () => {
     return;
   }
   chrome.action?.setBadgeText?.({ text: "" })?.catch?.(() => {});
+  notifyIndexChange();
   listEl.replaceChildren();
   countsEl.textContent = t.counts(0, 0);
   await refreshImageCache();
