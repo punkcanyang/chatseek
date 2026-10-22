@@ -18,12 +18,14 @@ import {
 
 let chain = Promise.resolve();
 let memory = null;
+let persisted = null;
 
 async function loadState() {
   if (memory) return memory;
   try {
     const saved = await readSyncSession();
     memory = saved && typeof saved.status === "string" ? saved : emptySyncState();
+    persisted = saved ? memory : null;
   } catch {
     memory = emptySyncState();
   }
@@ -32,8 +34,13 @@ async function loadState() {
 
 async function commit(state) {
   memory = state;
+  // stepSync returns the same object for an unchanged wait/inspection. Keep
+  // deadlines durable at transitions without rewriting the queue every tick.
+  // Failed writes leave persisted behind, so the next tick still retries.
+  if (state === persisted) return;
   try {
     await writeSyncSession(state);
+    persisted = state;
   } catch {
     // The in-memory copy still answers the panel. The next successful write catches up.
   }

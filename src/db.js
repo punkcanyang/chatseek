@@ -877,10 +877,18 @@ async function writeMessages(db, conversation, messages, meta = {}) {
     ).filter((id) => !skippedIds.has(id));
     const orderKey = ORDER_PREFIX + conv.id;
     const storedOrder = titleOnly ? null : await requestDone(metaStore.get(orderKey));
+    const oldOrder = titleOnly ? [] : (storedOrder?.ids || conv.messageOrder || []);
+    const nextOrder = mergeMessageOrder(oldOrder, orderIds);
+    if (changed || identityChanged || nextOrder.length !== oldOrder.length ||
+        nextOrder.some((id, index) => id !== oldOrder[index])) {
+      // A new token also distinguishes removal/recreation in the same clock
+      // tick. Readers can detect same-count edits without loading all bodies.
+      conv.contentRevision = crypto.randomUUID();
+    }
     metaStore.put({
       key: orderKey,
       conversationId: conv.id,
-      ids: mergeMessageOrder(titleOnly ? [] : (storedOrder?.ids || conv.messageOrder), orderIds),
+      ids: nextOrder,
     });
     delete conv.messageOrder;
     convStore.put(conv);
@@ -1958,6 +1966,7 @@ async function repairConversationProgress(db, convId, options = {}) {
         conv.lastPreviewRole = keptTail.role;
       }
     }
+    conv.contentRevision = crypto.randomUUID();
     convStore.put(conv);
     await completed;
     return { dropped: dropToKeep.size, groups: plans.length, remaining };

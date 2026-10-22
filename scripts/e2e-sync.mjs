@@ -280,8 +280,8 @@ async function main() {
   try {
     browser = await puppeteer.launch({
       executablePath: chromePath,
-      headless: false,
-      enableExtensions: true,
+      headless: process.env.HEADLESS === "1",
+      enableExtensions: [root],
       protocolTimeout: 20000,
       userDataDir: profile,
       args: [

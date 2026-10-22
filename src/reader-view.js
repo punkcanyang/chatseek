@@ -307,6 +307,8 @@ export function mountReader(root, options = {}) {
     : null;
   let focusDone = false;
   let flashTimer = 0;
+  let resizeObserver = null;
+  let destroyed = false;
   const heights = messages.map(estimateHeight);
   let prefix = buildPrefix(heights);
   let live = new Map();
@@ -645,13 +647,15 @@ function focusHit() {
   // itself lets a remount (language switch) drop the old view with its node.
   if (typeof view?.ResizeObserver === "function") {
     let lastWidth = -1;
-    new view.ResizeObserver(() => {
+    resizeObserver = new view.ResizeObserver(() => {
+      if (destroyed) return;
       const width = scroller.clientWidth;
       if (width === lastWidth) return;
       lastWidth = width;
       renderWindow({ force: true });
-      if (hitIndex >= 0) focusHit();
-    }).observe(scroller);
+      if (hitIndex >= 0 && !options.position) focusHit();
+    });
+    resizeObserver.observe(scroller);
   }
 
   function findFocusSlot() {
@@ -698,9 +702,30 @@ function focusHit() {
     return true;
   }
 
+  const position = options.position;
+  if (position?.hit) {
+    const oldHit = position.hit;
+    let found = -1;
+    let distance = Infinity;
+    hits.forEach((hit, index) => {
+      if (hit.where !== oldHit.where ||
+          (hit.where !== "title" && messages[hit.messageIndex]?.id !== oldHit.messageId)) return;
+      // Edits before the active match can shift its character offsets.
+      const gap = Math.abs(hit.range[0] - oldHit.range[0]);
+      if (gap < distance) { found = index; distance = gap; }
+    });
+    if (found >= 0) hitIndex = found;
+  }
   applyCopy();
   const focusIdx = focusMessageIndex();
-  if (focusIdx >= 0) {
+  if (position && messages.length) {
+    const found = messages.findIndex((msg) => msg.id === position.messageId);
+    const anchor = found >= 0 ? found : Math.min(messages.length - 1, Math.max(0, position.index || 0));
+    const offset = Number.isFinite(position.offset) ? position.offset : 0;
+    focusDone = true;
+    setViewTop(prefix[anchor] + offset);
+    renderWindow({ anchor, offset, force: true });
+  } else if (focusIdx >= 0) {
     setViewTop(Math.max(0, prefix[focusIdx] - HIT_MARGIN_PX));
     renderWindow({ anchor: focusIdx, offset: -HIT_MARGIN_PX, force: true });
     revealFocus();
@@ -708,6 +733,21 @@ function focusHit() {
   else renderWindow({ force: true });
 
   return {
+    position() {
+      const index = indexAt(prefix, viewTop());
+      const hit = hits[hitIndex];
+      return {
+        messageId: messages[index]?.id,
+        index,
+        offset: viewTop() - (prefix[index] || 0),
+        hit: hit ? { ...hit, messageId: messages[hit.messageIndex]?.id } : null,
+      };
+    },
+    destroy() {
+      destroyed = true;
+      resizeObserver?.disconnect();
+      clearTimeout(flashTimer);
+    },
     hitCount: () => hits.length,
     hitIndex: () => hitIndex,
     prev: () => step(-1),

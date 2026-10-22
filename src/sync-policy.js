@@ -179,6 +179,7 @@ export function classifySyncPage(signals) {
 }
 
 function finiteOrNull(value) {
+  if (value == null || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -406,8 +407,17 @@ function applyReport(state, report, now, limits, random) {
       next.failed += 1;
       return stopped(next, kind);
     }
-    const count = Math.max(0, Math.floor(Number(report.messageCount) || 0));
     const age = now - (state.openedAt || now);
+    const expected = conversationFromUrl(state.queue[state.index]?.url);
+    const actual = conversationFromUrl(report.href);
+    if (!expected || actual?.id !== expected.id) {
+      // A navigation may briefly answer from the previous document. Wait for
+      // the requested thread, but never count another thread (or home) as it.
+      return age < limits.report
+        ? { state, effect: { op: "inspect" } }
+        : stopped(state, "uncertain");
+    }
+    const count = Math.max(0, Math.floor(Number(report.messageCount) || 0));
     // A missing storedCount means the caller already treated the page as saved
     // (unit tests). A real probe always sends the number the capture wrote.
     const awaitingStore = count > 0 && Number.isFinite(Number(report.storedCount)) &&
